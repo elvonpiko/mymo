@@ -1,0 +1,13 @@
+# Binaries
+/mymo
+dist/
+
+# Test and coverage artifacts
+*.test
+coverage.out
+
+# Editor and OS noise
+.DS_Store
+.idea/
+.vscode/
+*.swp
