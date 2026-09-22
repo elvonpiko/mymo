@@ -29,13 +29,14 @@ func TestHelp(t *testing.T) {
 	}
 }
 
-func TestNoArgsPrintsUsage(t *testing.T) {
-	var out, errb bytes.Buffer
-	if code := Run(context.Background(), nil, &out, &errb); code != 0 {
-		t.Fatalf("exit code = %d, want 0", code)
+func TestNoArgsWithoutTerminal(t *testing.T) {
+	s := newSession(t)
+	code, _, errStr := s.run(t)
+	if code != exitErr {
+		t.Fatalf("exit code = %d, want %d", code, exitErr)
 	}
-	if !strings.Contains(out.String(), "Usage:") {
-		t.Errorf("output missing usage header:\n%s", out.String())
+	if !strings.Contains(errStr, "interactive terminal") {
+		t.Errorf("stderr = %q, want terminal hint", errStr)
 	}
 }
 

@@ -4,10 +4,12 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
 
+	"github.com/elvonpiko/mymo/internal/tui"
 	"github.com/elvonpiko/mymo/internal/version"
 )
 
@@ -24,8 +26,7 @@ const (
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	_ = ctx // reserved for cancellable remote operations
 	if len(args) == 0 {
-		fmt.Fprint(stdout, usage())
-		return exitOK
+		return runTUI(stderr)
 	}
 	cmd, rest := args[0], args[1:]
 	switch cmd {
@@ -56,4 +57,21 @@ func usage() string {
 	b.WriteString("  mymo version              print version\n")
 	b.WriteString("  mymo help                 print help\n")
 	return b.String()
+}
+
+// runTUI launches the interactive fleet TUI for bare "mymo" invocations.
+func runTUI(stderr io.Writer) int {
+	store, ok := openStore(stderr)
+	if !ok {
+		return exitErr
+	}
+	if err := tui.Run(store); err != nil {
+		if errors.Is(err, tui.ErrNoTerminal) {
+			fmt.Fprintln(stderr, `mymo: the TUI needs an interactive terminal; use "mymo node list" for non-interactive output`)
+			return exitErr
+		}
+		fmt.Fprintf(stderr, "mymo: %v\n", err)
+		return exitErr
+	}
+	return exitOK
 }
