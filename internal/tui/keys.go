@@ -9,11 +9,12 @@ type fleetKeymap struct {
 	navigate key.Binding
 	open     key.Binding
 	add      key.Binding
-	apps     key.Binding
-	deploy   key.Binding
+	filter   key.Binding
 	settings key.Binding
 	help     key.Binding
 	quit     key.Binding
+	apps     key.Binding
+	deploy   key.Binding
 }
 
 func newFleetKeymap() fleetKeymap {
@@ -21,21 +22,22 @@ func newFleetKeymap() fleetKeymap {
 		navigate: key.NewBinding(key.WithKeys("up", "down"), key.WithHelp("↑↓", "navigate")),
 		open:     key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open")),
 		add:      key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "add node")),
-		apps:     key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "apps")),
-		deploy:   key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "deploy")),
+		filter:   key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter")),
 		settings: key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "settings")),
 		help:     key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 		quit:     key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
+		apps:     key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "apps")),
+		deploy:   key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "deploy")),
 	}
 }
 
 func (k fleetKeymap) ShortHelp() []key.Binding {
-	return []key.Binding{k.navigate, k.open, k.add, k.apps, k.deploy, k.settings, k.help, k.quit}
+	return []key.Binding{k.navigate, k.open, k.add, k.filter, k.help, k.quit}
 }
 
 func (k fleetKeymap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.navigate, k.open},
+		{k.navigate, k.open, k.filter},
 		{k.add, k.apps, k.deploy, k.settings},
 		{k.help, k.quit},
 	}

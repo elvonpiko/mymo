@@ -41,7 +41,7 @@ func (m Model) updateIntro(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// introView renders the intro, centered on the full canvas.
+// introView renders the intro, centered on the frame's canvas.
 func (m Model) introView() string {
 	lines := []string{brandStyle.Render("mymo"), ""}
 	if m.introStep >= 1 {
@@ -56,6 +56,8 @@ func (m Model) introView() string {
 	if m.introErr != "" {
 		lines = append(lines, "", errStyle.Render(m.introErr))
 	}
-	return lipgloss.Place(m.width, m.height,
+	w := max(1, m.width-2)
+	h := max(1, m.height-2)
+	return lipgloss.Place(w, h,
 		lipgloss.Center, lipgloss.Center, strings.Join(lines, "\n"))
 }

@@ -128,7 +128,7 @@ func factsPanel(n domain.Node, fields ...string) string {
 		b.WriteString(textStyle.Render(r[1]))
 		b.WriteString("\n")
 	}
-	return panelStyle.Render(strings.TrimRight(b.String(), "\n"))
+	return factsPanelStyle.Render(strings.TrimRight(b.String(), "\n"))
 }
 
 // inspectView renders the node's full stored record.

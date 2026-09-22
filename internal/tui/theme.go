@@ -37,10 +37,21 @@ var (
 
 	sectionLabelStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colMauve))
 
+	// frameStyle is mymo's signature: the workspace canvas is always drawn
+	// inside a mauve border, so the app is recognizable in any terminal.
+	frameStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(colMauve))
+
 	panelStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color(colSurface)).
 			Padding(1, 3)
 
 	factsLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(colFaint))
+
+	// factsPanelStyle is a compact facts card: tighter than panelStyle so
+	// node screens keep all actions visible on short terminals.
+	factsPanelStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color(colSurface)).
+			Padding(0, 1)
 )

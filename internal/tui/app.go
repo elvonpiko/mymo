@@ -286,6 +286,8 @@ func (m Model) runAction(a actionItem) (tea.Model, tea.Cmd) {
 func (m *Model) openNode(n domain.Node) {
 	m.selNode = n
 	m.actions = newActionsList()
+	// the rebuilt list must be sized to the window, not its default
+	m.actions.SetSize(m.contentWidth, len(actionDefs())+1)
 	m.push(screen{kind: scNode, node: n.Name})
 }
 
@@ -322,19 +324,19 @@ func (m *Model) reloadFleet() {
 }
 
 // layout recomputes the frame and sizes all widgets to the window.
-// Frame layout: header + rule + content + help + status.
+// The signature frame takes a border row at top and bottom plus one
+// footer row inside, leaving the rest as the screen content area.
 func (m *Model) layout() {
-	m.contentWidth = m.width
-	m.contentHeight = m.height - 4
-	if m.contentHeight < 1 {
-		m.contentHeight = 1
-	}
+	m.contentWidth = max(1, m.width-2)
+	m.contentHeight = max(1, m.height-3)
 	fleetH := m.contentHeight - 4
 	if fleetH < 1 {
 		fleetH = 1
 	}
 	m.fleet.SetSize(m.contentWidth, fleetH)
 	m.actions.SetSize(m.contentWidth, len(actionDefs()))
+	m.help.SetWidth(m.contentWidth)
+	m.fullHelp.SetWidth(max(10, m.contentWidth-8))
 	if m.addNode.form != nil {
 		w := m.contentWidth - 2
 		if w > 72 {
@@ -343,7 +345,7 @@ func (m *Model) layout() {
 		if w < 30 {
 			w = 30
 		}
-		m.addNode.form = m.addNode.form.WithWidth(w).WithHeight(m.contentHeight - 2)
+		m.addNode.form = m.addNode.form.WithWidth(w).WithHeight(m.contentHeight - 1)
 	}
 }
 
@@ -351,7 +353,7 @@ func (m *Model) layout() {
 func (m Model) View() tea.View {
 	var content string
 	if !m.introDone {
-		content = m.introView()
+		content = m.frame(m.introView())
 	} else {
 		content = m.workspaceView()
 	}
@@ -392,65 +394,91 @@ func (m Model) workspaceView() string {
 			content = m.addView()
 		}
 	}
-	return m.frame(content)
+	return m.frame(content + "\n" + m.footerRow())
 }
 
-// frame wraps screen content with the shared header, rule, and footer,
-// padding the content to an exact height so the frame always fills the
-// terminal.
+// frame wraps content in the signature mymo border: the brand and
+// breadcrumbs ride the top line, the version rides the bottom, and toast
+// notifications appear at the top right. The frame is the workspace's
+// recognizable canvas — the user is never lost in a borderless void.
 func (m Model) frame(content string) string {
+	innerW := max(1, m.width-2)
+	innerH := max(1, m.height-2)
 	var b strings.Builder
-	b.WriteString(m.headerView())
+	b.WriteString(m.topBorder(innerW))
 	b.WriteString("\n")
-	b.WriteString(faintStyle.Render(strings.Repeat("─", max(0, m.width))))
-	b.WriteString("\n")
-	b.WriteString(fitHeight(content, m.contentHeight))
-	b.WriteString("\n")
-	b.WriteString(m.footerView())
+	for _, line := range fitLines(content, innerW, innerH) {
+		b.WriteString(frameStyle.Render("│"))
+		b.WriteString(line)
+		b.WriteString(frameStyle.Render("│"))
+		b.WriteString("\n")
+	}
+	b.WriteString(m.bottomBorder(innerW))
 	return b.String()
 }
 
-// headerView renders brand, breadcrumbs, and the toast slot.
-func (m Model) headerView() string {
-	line := brandStyle.Render("mymo")
-	for _, part := range m.crumbs() {
-		line += faintStyle.Render(" / ") + subtextStyle.Render(part)
+// topBorder renders the top frame line: brand and breadcrumbs at the
+// left, the toast (if one is active) at the right.
+func (m Model) topBorder(w int) string {
+	var mid strings.Builder
+	mid.WriteString(frameStyle.Render("─"))
+	mid.WriteString(brandStyle.Render(" mymo "))
+	for _, c := range m.crumbs() {
+		mid.WriteString(frameStyle.Render("── "))
+		mid.WriteString(subtextStyle.Render(c))
+		mid.WriteString(frameStyle.Render(" "))
 	}
+	midText := mid.String()
+	midW := lipgloss.Width(midText)
+
+	right := ""
 	if m.toast != nil {
-		t := m.toast.view()
-		if gap := m.width - lipgloss.Width(line) - lipgloss.Width(t); gap > 0 {
-			line += strings.Repeat(" ", gap) + t
+		right = " " + m.toast.view() + " "
+	}
+	avail := w - midW - lipgloss.Width(right) - 1
+	if avail < 0 {
+		right = "" // the toast does not fit at this width
+		avail = w - midW - 1
+	}
+	if avail < 0 {
+		avail = 0
+	}
+	return frameStyle.Render("╭") + midText +
+		frameStyle.Render(strings.Repeat("─", avail)) + right +
+		frameStyle.Render("─╮")
+}
+
+// bottomBorder renders the bottom frame line: the fleet status at the
+// left, the version at the right.
+func (m Model) bottomBorder(w int) string {
+	left := faintStyle.Render(" " + m.statusTextPlain() + " ")
+	right := faintStyle.Render(" mymo " + version.Version + " ")
+	fill := w - lipgloss.Width(left) - lipgloss.Width(right)
+	if fill < 0 {
+		// not enough room: the version wins, the status drops
+		left = ""
+		fill = w - lipgloss.Width(right)
+		if fill < 0 {
+			fill = 0
 		}
 	}
-	return line
+	return frameStyle.Render("╰") + left +
+		frameStyle.Render(strings.Repeat("─", fill)) + right +
+		frameStyle.Render("╯")
 }
 
-// footerView renders the per-screen key help and the global status line.
-func (m Model) footerView() string {
-	helpLine := m.help.View(m.keymap())
-	status := m.statusText()
-	if gap := m.width - lipgloss.Width(helpLine) - lipgloss.Width(status); gap > 0 {
-		return helpLine + strings.Repeat(" ", gap) + status + "\n" + m.versionLine()
-	}
-	return helpLine + "\n" + status + "  " + m.versionLine()
+// footerRow renders the in-frame footer: the current screen's key help.
+func (m Model) footerRow() string {
+	return m.help.View(m.keymap())
 }
 
-// statusText summarizes the fleet: node and application counts.
-func (m Model) statusText() string {
+// statusTextPlain summarizes the fleet: node and application counts.
+func (m Model) statusTextPlain() string {
 	nodeWord := "nodes"
 	if len(m.nodes) == 1 {
 		nodeWord = "node"
 	}
-	return faintStyle.Render(fmt.Sprintf("%d %s · 0 applications", len(m.nodes), nodeWord))
-}
-
-// versionLine shows the running version, right-aligned on the status row.
-func (m Model) versionLine() string {
-	line := faintStyle.Render("mymo " + version.Version)
-	if gap := m.width - lipgloss.Width(line); gap > 0 {
-		return strings.Repeat(" ", gap) + line
-	}
-	return line
+	return fmt.Sprintf("%d %s · 0 applications", len(m.nodes), nodeWord)
 }
 
 // keymap returns the help keymap for the current screen.
@@ -490,4 +518,22 @@ func fitHeight(s string, h int) string {
 		lines = append(lines, "")
 	}
 	return strings.Join(lines, "\n")
+}
+
+// fitLines pads (or clips) a block to exactly h lines of exactly w visible
+// columns, so the frame's side borders always align.
+func fitLines(s string, w, h int) []string {
+	lines := strings.Split(s, "\n")
+	if len(lines) > h {
+		lines = lines[:h]
+	}
+	for len(lines) < h {
+		lines = append(lines, "")
+	}
+	for i, line := range lines {
+		if gap := w - lipgloss.Width(line); gap > 0 {
+			lines[i] = line + strings.Repeat(" ", gap)
+		}
+	}
+	return lines
 }
