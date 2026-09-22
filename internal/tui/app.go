@@ -86,6 +86,29 @@ func (m Model) Init() tea.Cmd {
 
 // Update satisfies tea.Model.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// While the embedded add-node form is active it owns every message:
+	// huh advances its fields through its own internal commands, and the
+	// messages those produce must be routed back to the form — not just
+	// key presses.
+	if m.formActive() {
+		switch msg := msg.(type) {
+		case tea.WindowSizeMsg:
+			m.width, m.height = msg.Width, msg.Height
+			m.layout()
+			return m, nil
+
+		case toastExpiredMsg:
+			if m.toast != nil && m.toast.id == msg.id {
+				m.toast = nil
+			}
+			return m, nil
+
+		case introTickMsg:
+			return m, nil
+		}
+		return m.updateAddForm(msg)
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -115,14 +138,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m.forward(msg)
 }
 
+// formActive reports whether the embedded add-node form is receiving input.
+func (m Model) formActive() bool {
+	return m.cur().kind == scAddNode && m.addNode.stage == anForm && m.addNode.form != nil
+}
+
 // updateKeys routes workspace key presses.
 func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	s := m.cur()
-
-	// The embedded add-node form owns every key while it is active.
-	if s.kind == scAddNode && m.addNode.stage == anForm {
-		return m.updateAddForm(msg)
-	}
 
 	// Keys typed into the fleet filter belong to the filter.
 	if m.filterActive() && msg.String() != "ctrl+c" {

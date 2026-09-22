@@ -37,15 +37,19 @@ type addNodeValues struct {
 type addNodeState struct {
 	stage addNodeStage
 	form  *huh.Form
-	vals  addNodeValues
-	node  domain.Node
-	err   string
+	// vals is a pointer shared with the form's bound accessors: the Model
+	// struct is copied between updates, so a value field would fork from
+	// the memory huh writes into.
+	vals *addNodeValues
+	node domain.Node
+	err  string
 }
 
 // startAddNode opens the add-node workflow on top of the navigation stack.
 func (m Model) startAddNode() (tea.Model, tea.Cmd) {
-	m.addNode = addNodeState{stage: anForm, vals: addNodeValues{port: "22", auth: domain.AuthKey}}
-	v := &m.addNode.vals
+	vals := &addNodeValues{port: "22", auth: domain.AuthKey}
+	m.addNode = addNodeState{stage: anForm, vals: vals}
+	v := vals
 	form := huh.NewForm(
 		huh.NewGroup(
 			huh.NewInput().Title("Name").

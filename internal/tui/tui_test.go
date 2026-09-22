@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -71,14 +72,72 @@ func keyMsg(s string) tea.KeyPressMsg {
 func press(t *testing.T, m tea.Model, keys ...string) Model {
 	t.Helper()
 	for _, k := range keys {
-		next, _ := m.Update(keyMsg(k))
-		m = next
+		m = step(t, m, keyMsg(k))
 	}
-	mm, ok := m.(Model)
-	if !ok {
-		t.Fatalf("Update returned %T, want Model", m)
+	return m.(Model)
+}
+
+// step feeds one message to the model, then drains returned commands the
+// way bubbletea's event loop would — but only while the embedded form is
+// active, and keeping only huh's structural messages (field and group
+// advances). Slow commands (cursor blink ticks, timers) are dropped so
+// the driver never blocks on real-time waits.
+func step(t *testing.T, m tea.Model, msg tea.Msg) Model {
+	t.Helper()
+	next, cmd := m.Update(msg)
+	mm := next.(Model)
+	if !mm.formActive() || cmd == nil {
+		return mm
+	}
+	queue := []tea.Cmd{cmd}
+	for i := 0; len(queue) > 0 && i < 64; i++ {
+		c := queue[0]
+		queue = queue[1:]
+
+		res, ok := runCmdTimed(c, 20*time.Millisecond)
+		if !ok {
+			continue // timer-based command: irrelevant to the flow
+		}
+		switch r := res.(type) {
+		case nil:
+			// no message produced
+		case tea.BatchMsg:
+			queue = append(queue, r...)
+		default:
+			if !isHuhMsg(r) {
+				continue
+			}
+			n2, c2 := mm.Update(r)
+			mm = n2.(Model)
+			if !mm.formActive() {
+				return mm
+			}
+			if c2 != nil {
+				queue = append(queue, c2)
+			}
+		}
 	}
 	return mm
+}
+
+// runCmdTimed executes a command and reports whether it finished within
+// the timeout. Cursor blink and timer commands block on real time and are
+// dropped instead.
+func runCmdTimed(c tea.Cmd, d time.Duration) (tea.Msg, bool) {
+	ch := make(chan tea.Msg, 1)
+	go func() { ch <- c() }()
+	select {
+	case msg := <-ch:
+		return msg, true
+	case <-time.After(d):
+		return nil, false
+	}
+}
+
+// isHuhMsg reports whether a message is one of huh's internal messages.
+func isHuhMsg(msg tea.Msg) bool {
+	t := reflect.TypeOf(msg)
+	return t != nil && t.PkgPath() == "charm.land/huh/v2"
 }
 
 func view(m tea.Model) string {
@@ -249,7 +308,7 @@ func TestAddNodeWorkflowCancel(t *testing.T) {
 func TestAddNodeReviewSavesNode(t *testing.T) {
 	s := readyStore(t)
 	m := New(s)
-	m.addNode.vals = addNodeValues{
+	m.addNode.vals = &addNodeValues{
 		name: "prod-01",
 		host: "203.0.113.10",
 		port: "22",
@@ -280,13 +339,57 @@ func TestAddNodeReviewSavesNode(t *testing.T) {
 
 func TestAddNodeReviewValidationFailure(t *testing.T) {
 	m := New(readyStore(t))
-	m.addNode.vals = addNodeValues{name: "BAD", host: "203.0.113.10", port: "22", user: "root", auth: domain.AuthAgent}
+	m.addNode.vals = &addNodeValues{name: "BAD", host: "203.0.113.10", port: "22", user: "root", auth: domain.AuthAgent}
 	m.completeAddForm()
 	if m.addNode.stage != anReview {
 		t.Fatalf("stage = %v, want anReview", m.addNode.stage)
 	}
 	if m.addNode.err == "" {
 		t.Fatal("validation error not surfaced")
+	}
+}
+
+func TestAddNodeWorkflowTypedCompletion(t *testing.T) {
+	s := readyStore(t)
+	m := New(s)
+	m = press(t, m, "n")
+
+	// name
+	m = press(t, m, "p", "r", "o", "d", "-", "0", "1", "enter")
+	// host
+	m = press(t, m, "2", "0", "3", ".", "0", ".", "1", "1", "3", ".", "1", "0", "enter")
+	// port (22 is prefilled)
+	m = press(t, m, "enter")
+	// user
+	m = press(t, m, "r", "o", "o", "t", "enter")
+	// authentication: switch to SSH agent and accept
+	m = press(t, m, "down", "enter")
+	// key path: empty is valid with agent auth
+	m = press(t, m, "enter")
+
+	if m.addNode.stage != anReview {
+		t.Fatalf("stage = %v, want anReview after completing the form", m.addNode.stage)
+	}
+	got := view(m)
+	for _, want := range []string{"Review new node", "prod-01", "203.0.113.10"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("review missing %q:\n%s", want, got)
+		}
+	}
+	if m.addNode.node.Name != "prod-01" || m.addNode.node.Host != "203.0.113.10" {
+		t.Fatalf("review node = %+v", m.addNode.node)
+	}
+
+	m = press(t, m, "c")
+	stored, err := s.GetNode("prod-01")
+	if err != nil {
+		t.Fatalf("node not saved: %v", err)
+	}
+	if stored.User != "root" || stored.Auth != domain.AuthAgent {
+		t.Fatalf("stored node = %+v", stored)
+	}
+	if m.toast == nil || !strings.Contains(m.toast.text, "prod-01") {
+		t.Fatalf("no add toast: %+v", m.toast)
 	}
 }
 
