@@ -27,7 +27,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprint(stdout, usage())
 		return exitOK
 	}
-	cmd := args[0]
+	cmd, rest := args[0], args[1:]
 	switch cmd {
 	case "help", "--help", "-h":
 		fmt.Fprint(stdout, usage())
@@ -35,6 +35,10 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	case "version", "--version", "-v":
 		fmt.Fprintln(stdout, "mymo "+version.Version)
 		return exitOK
+	case "node":
+		return runNode(rest, stdout, stderr)
+	case "app":
+		return runApp(rest, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown command %q\n\n%s", cmd, usage())
 		return exitUsage
