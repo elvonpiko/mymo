@@ -32,7 +32,9 @@ mymo is in early development. Implemented so far:
 - Local state store (`~/.mymo`, JSON, restrictive permissions)
 - Node model: connection metadata, observe mode, validation
 - CLI: `mymo node list / add / inspect / rm`, `mymo version`
-- TUI: fleet screen with node list and node detail
+- TUI: a full-window workspace — fleet, node overview and actions,
+  settings, add-node workflow, first-run intro, toasts, and per-screen
+  key help
 
 SSH discovery, node bootstrap, and application deployment land in the next
 phases.
@@ -50,7 +52,8 @@ github.com/elvonpiko/mymo@latest` will work once releases exist.
 
 ## Usage
 
-Run `mymo` with no arguments for the interactive fleet TUI:
+Run `mymo` with no arguments for the interactive workspace TUI. Inside
+it, `?` shows the key help for the current screen, and `q` quits:
 
     mymo
 
