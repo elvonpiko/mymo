@@ -167,20 +167,24 @@ func (s *Store) DeleteNode(name string) error {
 	return s.saveNodes(kept)
 }
 
-// saveNodes writes the nodes document atomically: a temp file in the same
-// directory, fsync, then rename over the target.
+// saveNodes writes the nodes document atomically via writeDoc.
 func (s *Store) saveNodes(nodes []domain.Node) error {
 	if nodes == nil {
 		nodes = []domain.Node{}
 	}
-	doc := nodesDoc{SchemaVersion: SchemaVersion, Nodes: nodes}
+	return s.writeDoc(nodesFile, nodesDoc{SchemaVersion: SchemaVersion, Nodes: nodes})
+}
+
+// writeDoc encodes doc as pretty JSON and replaces the state file named
+// name atomically: temp file in the same directory, fsync, rename.
+func (s *Store) writeDoc(name string, doc any) error {
 	b, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
-		return fmt.Errorf("encode %s: %w", nodesFile, err)
+		return fmt.Errorf("encode %s: %w", name, err)
 	}
 	b = append(b, '\n')
 
-	tmp, err := os.CreateTemp(s.dir, "."+nodesFile+".tmp-")
+	tmp, err := os.CreateTemp(s.dir, "."+name+".tmp-")
 	if err != nil {
 		return fmt.Errorf("create temp file: %w", err)
 	}
@@ -202,8 +206,8 @@ func (s *Store) saveNodes(nodes []domain.Node) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close %s: %w", tmpName, err)
 	}
-	if err := os.Rename(tmpName, filepath.Join(s.dir, nodesFile)); err != nil {
-		return fmt.Errorf("replace %s: %w", nodesFile, err)
+	if err := os.Rename(tmpName, filepath.Join(s.dir, name)); err != nil {
+		return fmt.Errorf("replace %s: %w", name, err)
 	}
 	return nil
 }
