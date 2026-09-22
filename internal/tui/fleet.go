@@ -3,25 +3,22 @@ package tui
 import (
 	"fmt"
 	"io"
-	"strconv"
 	"strings"
-	"time"
 
 	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/elvonpiko/mymo/internal/domain"
 )
 
 // fleetItem adapts a domain node for the fleet list.
-type fleetItem struct {
-	node domain.Node
-}
+type fleetItem struct{ node domain.Node }
 
 // FilterValue makes fleet items filterable by node name.
 func (i fleetItem) FilterValue() string { return i.node.Name }
 
-// fleetDelegate renders fleet rows: cursor, name, user@address, mode badge.
+// fleetDelegate renders fleet rows: cursor, dot, name, address, mode badge.
 type fleetDelegate struct{}
 
 func (fleetDelegate) Height() int                             { return 1 }
@@ -41,9 +38,11 @@ func (fleetDelegate) Render(w io.Writer, m list.Model, index int, item list.Item
 	}
 	addr := fmt.Sprintf("%s@%s", it.node.User, it.node.Address())
 	line := cursor +
-		nameStyle.Width(24).Render(it.node.Name) +
-		dimStyle.Width(32).Render(addr) +
-		modeBadge(it.node.Mode)
+		faintStyle.Render("● ") +
+		nameStyle.Width(20).Render(it.node.Name) +
+		dimStyle.Width(30).Render(addr) +
+		modeBadge(it.node.Mode) +
+		"  " + faintStyle.Render("unverified")
 	fmt.Fprint(w, line)
 }
 
@@ -51,19 +50,24 @@ func (fleetDelegate) Render(w io.Writer, m list.Model, index int, item list.Item
 func modeBadge(mode domain.NodeMode) string {
 	switch mode {
 	case domain.ModeAppHost:
-		return appHostStyle.Render("[app-host]")
+		return accentStyle.Render("[app-host]")
 	default:
-		return dimStyle.Render("[observe]")
+		return faintStyle.Render("[observe]")
 	}
 }
 
-// newFleetList builds the fleet list model for the given nodes.
-func newFleetList(nodes []domain.Node) list.Model {
+// fleetItems converts nodes to list items.
+func fleetItems(nodes []domain.Node) []list.Item {
 	items := make([]list.Item, 0, len(nodes))
 	for _, n := range nodes {
 		items = append(items, fleetItem{node: n})
 	}
-	l := list.New(items, fleetDelegate{}, 80, 20)
+	return items
+}
+
+// newFleetList builds the fleet list model for the given nodes.
+func newFleetList(nodes []domain.Node) list.Model {
+	l := list.New(fleetItems(nodes), fleetDelegate{}, 80, 20)
 	l.SetShowTitle(false)
 	l.SetShowStatusBar(false)
 	l.SetShowHelp(false)
@@ -71,76 +75,49 @@ func newFleetList(nodes []domain.Node) list.Model {
 	return l
 }
 
-// fleetView renders the fleet screen.
+// fleetView renders the fleet screen: the NODES list over an
+// APPLICATIONS summary, filling the content area.
 func (m Model) fleetView() string {
-	var b strings.Builder
-	b.WriteString(m.header("fleet", strconv.Itoa(len(m.nodes))+" nodes"))
-	b.WriteString("\n\n")
-	switch {
-	case m.loadErr != nil:
-		b.WriteString(errStyle.Render("failed to load state: " + m.loadErr.Error()))
-	case len(m.nodes) == 0:
-		b.WriteString(emptyHint())
-	default:
-		b.WriteString(m.fleet.View())
+	if m.loadErr != nil {
+		return m.loadErrView()
 	}
+	if len(m.nodes) == 0 {
+		return m.emptyFleetView()
+	}
+	var b strings.Builder
+	b.WriteString(sectionLabel("NODES"))
 	b.WriteString("\n")
-	b.WriteString(dimStyle.Render(m.help.View(fleetKeys)))
-	return b.String()
-}
-
-// nodeView renders the node detail screen.
-func (m Model) nodeView() string {
-	var b strings.Builder
-	b.WriteString(m.header("node "+m.sel.Name, string(m.sel.Mode)))
+	b.WriteString(m.fleet.View())
 	b.WriteString("\n\n")
-	b.WriteString(nodeDetail(m.sel))
+	b.WriteString(sectionLabel("APPLICATIONS"))
 	b.WriteString("\n")
-	b.WriteString(dimStyle.Render(m.help.View(nodeKeys)))
-	return b.String()
+	b.WriteString(faintStyle.Render("none managed yet · press d for the deploy workflow"))
+	return fitHeight(b.String(), m.contentHeight)
 }
 
-// header renders the shared top line.
-func (m Model) header(title, right string) string {
-	h := appStyle.Render("mymo") + " " + titleStyle.Render(title)
-	if right != "" {
-		h += " " + dimStyle.Render("· "+right)
-	}
-	return h
+// loadErrView renders a state-loading failure.
+func (m Model) loadErrView() string {
+	inner := errStyle.Render("mymo could not read its local state") + "\n\n" +
+		textStyle.Render(m.loadErr.Error()) + "\n\n" +
+		faintStyle.Render("state lives in ~/.mymo as plain JSON; fix the file and relaunch")
+	panel := panelStyle.Render(inner)
+	return lipgloss.Place(m.contentWidth, m.contentHeight,
+		lipgloss.Center, lipgloss.Center, panel)
 }
 
-// emptyHint renders the empty-fleet hint box.
-func emptyHint() string {
-	lines := []string{
-		"No nodes yet.",
-		"",
-		"Add your first node with:",
-		"  mymo node add",
-	}
-	return borderStyle.Render(strings.Join(lines, "\n"))
+// emptyFleetView renders the first-run fleet: no servers yet.
+func (m Model) emptyFleetView() string {
+	inner := titleStyle.Render("No servers yet") + "\n\n" +
+		"mymo manages your fleet from a single window:\n" +
+		"nodes, applications, deployments, health.\n\n" +
+		accentStyle.Render("[n]") + textStyle.Render(" add your first VPS") + "\n\n" +
+		faintStyle.Render("mymo never modifies a server without your approval")
+	panel := panelStyle.Render(inner)
+	return lipgloss.Place(m.contentWidth, m.contentHeight,
+		lipgloss.Center, lipgloss.Center, panel)
 }
 
-// nodeDetail renders the key/value panel for a stored node record.
-func nodeDetail(n domain.Node) string {
-	rows := [][2]string{
-		{"host", n.Host},
-		{"port", strconv.Itoa(n.Port)},
-		{"user", n.User},
-		{"auth", string(n.Auth)},
-	}
-	if n.KeyPath != "" {
-		rows = append(rows, [2]string{"key path", n.KeyPath})
-	}
-	rows = append(rows,
-		[2]string{"mode", string(n.Mode)},
-		[2]string{"added", n.AddedAt.Format(time.RFC3339)},
-	)
-	var b strings.Builder
-	for _, r := range rows {
-		b.WriteString(labelStyle.Width(12).Render(r[0] + ":"))
-		b.WriteString(" ")
-		b.WriteString(r[1])
-		b.WriteString("\n")
-	}
-	return borderStyle.Render(strings.TrimRight(b.String(), "\n"))
+// sectionLabel renders a section heading like "NODES".
+func sectionLabel(s string) string {
+	return sectionLabelStyle.Render(s)
 }
