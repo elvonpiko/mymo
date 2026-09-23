@@ -39,6 +39,9 @@ type Model struct {
 
 	addNode addNodeState
 
+	descShown int  // letters of the description revealed so far
+	descAnim  bool // whether the typewriter is running
+
 	introDone bool
 	introStep int
 	introErr  string
@@ -49,7 +52,7 @@ type Model struct {
 func New(store *state.Store) Model {
 	m := Model{
 		store:    store,
-		stack:    []screen{{kind: scFleet}},
+		stack:    []screen{{kind: scHome}},
 		help:     help.New(),
 		fullHelp: help.New(),
 		width:    80,
@@ -70,6 +73,9 @@ func New(store *state.Store) Model {
 			m.introDone = meta.IntroSeen
 		}
 	}
+	// A returning user lands on home with the description already
+	// typing; a first-timer meets the intro first.
+	m.descAnim = m.introDone
 	m.fleet = newFleetList(m.nodes)
 	m.actions = newActionsList()
 	applyHelpPalette(&m.help)
@@ -83,7 +89,7 @@ func (m Model) Init() tea.Cmd {
 	if !m.introDone {
 		return m.nextIntroTick()
 	}
-	return nil
+	return animDesc()
 }
 
 // Update satisfies tea.Model.
@@ -130,6 +136,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case descTickMsg:
+		if m.descAnim {
+			cmd := m.advanceDesc()
+			return m, cmd
+		}
+		return m, nil
+
 	case tea.KeyPressMsg:
 		if !m.introDone {
 			return m.updateIntro(msg)
@@ -169,6 +182,8 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch s.kind {
+	case scHome:
+		return m.updateHomeKeys(msg)
 	case scFleet:
 		return m.updateFleetKeys(msg)
 	case scNode:
@@ -183,13 +198,58 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
+// updateHomeKeys handles keys on the home hub: small letters navigate,
+// capital N creates a node.
+func (m Model) updateHomeKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "q":
+		return m, tea.Quit
+	case "n":
+		m.push(screen{kind: scFleet})
+		if m.fleetEmpty() {
+			cmd := m.beginDesc()
+			return m, cmd
+		}
+		return m, nil
+	case "N":
+		return m.addNodeScreen()
+	case "a":
+		m.push(screen{kind: scApps})
+		return m, nil
+	case "d":
+		m.push(screen{kind: scDeploy})
+		return m, nil
+	case "s":
+		m.push(screen{kind: scSettings})
+		return m, nil
+	}
+	return m, nil
+}
+
+// addNodeScreen opens the add-node workflow with the fleet beneath it,
+// so saving or aborting lands on the node list.
+func (m Model) addNodeScreen() (tea.Model, tea.Cmd) {
+	if m.cur().kind != scFleet {
+		m.push(screen{kind: scFleet})
+	}
+	return m.startAddNode()
+}
+
+// fleetEmpty reports whether the node list has nothing to show.
+func (m Model) fleetEmpty() bool {
+	return len(m.nodes) == 0
+}
+
 // updateFleetKeys handles keys on the fleet screen.
 func (m Model) updateFleetKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q":
 		return m, tea.Quit
-	case "n":
-		return m.startAddNode()
+	case "esc":
+		m.pop()
+		return m, nil
+	case "N":
+		return m.addNodeScreen()
 	case "a":
 		m.push(screen{kind: scApps})
 		return m, nil
@@ -376,6 +436,8 @@ func (m Model) workspaceView() string {
 		content = m.helpView()
 	} else {
 		switch s := m.cur(); s.kind {
+		case scHome:
+			content = m.homeView()
 		case scFleet:
 			content = m.fleetView()
 		case scNode:
@@ -486,6 +548,8 @@ func (m Model) statusTextPlain() string {
 // keymap returns the help keymap for the current screen.
 func (m Model) keymap() help.KeyMap {
 	switch s := m.cur(); s.kind {
+	case scHome:
+		return newHomeKeymap()
 	case scFleet:
 		return newFleetKeymap()
 	case scNode:

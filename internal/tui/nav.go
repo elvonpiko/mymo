@@ -4,7 +4,8 @@ package tui
 type screenKind int
 
 const (
-	scFleet       screenKind = iota // the node list, the workspace home
+	scHome        screenKind = iota // the home hub: what mymo is, where to go
+	scFleet                         // the node list
 	scNode                          // one node: facts and actions
 	scNodeApps                      // applications on a node
 	scNodeInspect                   // a node's full stored record

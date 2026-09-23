@@ -105,16 +105,19 @@ func (m Model) loadErrView() string {
 		lipgloss.Center, lipgloss.Center, panel)
 }
 
-// emptyFleetView renders the first-run fleet: no servers yet.
+// emptyFleetView renders the node list with nothing in it: what mymo
+// is, the teaching card, and every key that leads somewhere.
 func (m Model) emptyFleetView() string {
 	inner := titleStyle.Render("No servers yet") + "\n\n" +
 		"mymo manages your fleet from a single window:\n" +
 		"nodes, applications, deployments, health.\n\n" +
-		accentStyle.Render("[n]") + textStyle.Render(" add your first VPS") + "\n\n" +
+		accentStyle.Render("[N]") + textStyle.Render(" add your first VPS") + "\n\n" +
 		faintStyle.Render("mymo never modifies a server without your approval")
-	panel := panelStyle.Render(inner)
+	block := m.revealedDesc() + "\n\n" +
+		panelStyle.Render(inner) + "\n\n" +
+		homeShortcutLine()
 	return lipgloss.Place(m.contentWidth, m.contentHeight,
-		lipgloss.Center, lipgloss.Center, panel)
+		lipgloss.Center, lipgloss.Center, block)
 }
 
 // sectionLabel renders a section heading like "NODES".

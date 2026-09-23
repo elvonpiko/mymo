@@ -4,11 +4,47 @@ import (
 	"charm.land/bubbles/v2/key"
 )
 
+// Home keymap: the hub that leads everywhere.
+type homeKeymap struct {
+	nodes    key.Binding
+	add      key.Binding
+	apps     key.Binding
+	deploy   key.Binding
+	settings key.Binding
+	help     key.Binding
+	quit     key.Binding
+}
+
+func newHomeKeymap() homeKeymap {
+	return homeKeymap{
+		nodes:    key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "nodes")),
+		add:      key.NewBinding(key.WithKeys("N"), key.WithHelp("N", "add node")),
+		apps:     key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "apps")),
+		deploy:   key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "deploy")),
+		settings: key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "settings")),
+		help:     key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
+		quit:     key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
+	}
+}
+
+// ShortHelp stays minimal: the home page itself is the key guide.
+func (k homeKeymap) ShortHelp() []key.Binding {
+	return []key.Binding{k.help, k.quit}
+}
+
+func (k homeKeymap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{
+		{k.nodes, k.add, k.apps, k.deploy, k.settings},
+		{k.help, k.quit},
+	}
+}
+
 // Fleet keymap: navigation, node selection, and workspace shortcuts.
 type fleetKeymap struct {
 	navigate key.Binding
 	open     key.Binding
 	add      key.Binding
+	back     key.Binding
 	filter   key.Binding
 	settings key.Binding
 	help     key.Binding
@@ -21,7 +57,8 @@ func newFleetKeymap() fleetKeymap {
 	return fleetKeymap{
 		navigate: key.NewBinding(key.WithKeys("up", "down"), key.WithHelp("↑↓", "navigate")),
 		open:     key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open")),
-		add:      key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "add node")),
+		add:      key.NewBinding(key.WithKeys("N"), key.WithHelp("N", "add node")),
+		back:     key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "home")),
 		filter:   key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter")),
 		settings: key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "settings")),
 		help:     key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
@@ -37,7 +74,7 @@ func (k fleetKeymap) ShortHelp() []key.Binding {
 
 func (k fleetKeymap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.navigate, k.open, k.filter},
+		{k.navigate, k.open, k.filter, k.back},
 		{k.add, k.apps, k.deploy, k.settings},
 		{k.help, k.quit},
 	}

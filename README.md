@@ -32,9 +32,9 @@ mymo is in early development. Implemented so far:
 - Local state store (`~/.mymo`, JSON, restrictive permissions)
 - Node model: connection metadata, observe mode, validation
 - CLI: `mymo node list / add / inspect / rm`, `mymo version`
-- TUI: a full-window workspace — fleet, node overview and actions,
-  settings, add-node workflow, first-run intro, toasts, and per-screen
-  key help
+- TUI: a full-window workspace — home hub with an animated
+  description, fleet, node overview and actions, settings, add-node
+  workflow, first-run intro, toasts, and per-screen key help
 
 SSH discovery, node bootstrap, and application deployment land in the next
 phases.

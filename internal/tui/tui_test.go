@@ -173,7 +173,7 @@ func TestFirstRunShowsIntro(t *testing.T) {
 	if !meta.IntroSeen {
 		t.Fatal("intro completion not persisted to meta")
 	}
-	if got := view(mm); !strings.Contains(got, "fleet") {
+	if got := view(mm); !strings.Contains(got, "add node") {
 		t.Fatalf("workspace not entered after intro:\n%s", got)
 	}
 }
@@ -184,8 +184,8 @@ func TestIntroSkippedOnSecondRun(t *testing.T) {
 	if !m.introDone {
 		t.Fatal("intro active on second run, want skipped")
 	}
-	if got := view(m); !strings.Contains(got, "No servers yet") {
-		t.Fatalf("second run should land on the fleet:\n%s", got)
+	if got := view(m); !strings.Contains(got, "add node") {
+		t.Fatalf("second run should land on home:\n%s", got)
 	}
 }
 
@@ -202,9 +202,9 @@ func TestReplayIntroFromSettings(t *testing.T) {
 }
 
 func TestFleetEmptyState(t *testing.T) {
-	m := New(readyStore(t))
+	m := press(t, New(readyStore(t)), "n")
 	got := view(m)
-	for _, want := range []string{"No servers yet", "add your first VPS"} {
+	for _, want := range []string{"No servers yet", "[N]", "add your first VPS"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("empty fleet missing %q:\n%s", want, got)
 		}
@@ -215,7 +215,7 @@ func TestFleetShowsNodes(t *testing.T) {
 	s := readyStore(t)
 	seedNode(t, s, "web-1")
 	seedNode(t, s, "web-2")
-	got := view(New(s))
+	got := view(press(t, New(s), "n"))
 	for _, want := range []string{"web-1", "web-2", "[observe]", "unverified"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("fleet missing %q:\n%s", want, got)
@@ -226,7 +226,7 @@ func TestFleetShowsNodes(t *testing.T) {
 func TestNavigationStack(t *testing.T) {
 	s := readyStore(t)
 	seedNode(t, s, "web-1")
-	m := press(t, New(s), "enter")
+	m := press(t, New(s), "n", "enter")
 	if got := view(m); !strings.Contains(got, "ACTIONS") {
 		t.Fatalf("enter did not open the node screen:\n%s", got)
 	}
@@ -234,13 +234,17 @@ func TestNavigationStack(t *testing.T) {
 	if got := view(m); !strings.Contains(got, "NODES") {
 		t.Fatalf("esc did not return to the fleet:\n%s", got)
 	}
+	m = press(t, m, "esc")
+	if m.cur().kind != scHome {
+		t.Fatalf("esc did not return home from the fleet: %v", m.cur().kind)
+	}
 }
 
 func TestNodeActionsNavigation(t *testing.T) {
 	s := readyStore(t)
 	seedNode(t, s, "web-1")
 
-	m := press(t, New(s), "enter", "enter") // action 0: Applications
+	m := press(t, New(s), "n", "enter", "enter") // action 0: Applications
 	if got := view(m); !strings.Contains(got, "no mymo-managed applications") {
 		t.Fatalf("applications action missing:\n%s", got)
 	}
@@ -275,7 +279,7 @@ func TestRemoveNodeFlow(t *testing.T) {
 	s := readyStore(t)
 	seedNode(t, s, "web-1")
 	seedNode(t, s, "web-2")
-	m := press(t, New(s), "enter", "down", "down", "down", "enter", "y")
+	m := press(t, New(s), "n", "enter", "down", "down", "down", "enter", "y")
 	if _, err := s.GetNode("web-1"); !errors.Is(err, state.ErrNodeNotFound) {
 		t.Fatalf("node still present after confirm: %v", err)
 	}
@@ -289,9 +293,9 @@ func TestRemoveNodeFlow(t *testing.T) {
 
 func TestAddNodeWorkflowCancel(t *testing.T) {
 	s := readyStore(t)
-	m := press(t, New(s), "n")
+	m := press(t, New(s), "N")
 	if m.cur().kind != scAddNode {
-		t.Fatalf("n did not open the workflow: stack top = %v", m.cur().kind)
+		t.Fatalf("N did not open the workflow: stack top = %v", m.cur().kind)
 	}
 	if got := view(m); !strings.Contains(got, "Name") {
 		t.Fatalf("workflow form not rendered:\n%s", got)
@@ -352,7 +356,7 @@ func TestAddNodeReviewValidationFailure(t *testing.T) {
 func TestAddNodeWorkflowTypedCompletion(t *testing.T) {
 	s := readyStore(t)
 	m := New(s)
-	m = press(t, m, "n")
+	m = press(t, m, "N")
 
 	// name
 	m = press(t, m, "p", "r", "o", "d", "-", "0", "1", "enter")
@@ -407,7 +411,7 @@ func TestQuitFromFleet(t *testing.T) {
 func TestTypingQInFilterDoesNotQuit(t *testing.T) {
 	s := readyStore(t)
 	seedNode(t, s, "web-1")
-	m := press(t, New(s), "/")
+	m := press(t, New(s), "n", "/")
 	if !m.filterActive() {
 		t.Fatal("/ did not activate the fleet filter")
 	}
@@ -425,7 +429,7 @@ func TestTypingQInFilterDoesNotQuit(t *testing.T) {
 func TestHelpOverlay(t *testing.T) {
 	s := readyStore(t)
 	seedNode(t, s, "web-1")
-	m := press(t, New(s), "?")
+	m := press(t, New(s), "n", "?")
 	if got := view(m); !strings.Contains(got, "Keyboard help") {
 		t.Fatalf("? did not open the help overlay:\n%s", got)
 	}
@@ -459,6 +463,79 @@ func TestLoadErrorSurfaces(t *testing.T) {
 	}
 	if got := view(New(s)); !strings.Contains(got, "could not read its local state") {
 		t.Fatalf("load error not surfaced:\n%s", got)
+	}
+}
+
+func TestHomeLandingAndKeys(t *testing.T) {
+	s := readyStore(t)
+	seedNode(t, s, "web-1")
+	m := New(s)
+	if m.cur().kind != scHome {
+		t.Fatalf("stack root = %v, want home", m.cur().kind)
+	}
+	if got := view(m); !strings.Contains(got, "add node") {
+		t.Fatalf("home missing its key guide:\n%s", got)
+	}
+	// small n leads to the nodes page
+	m = press(t, m, "n")
+	if m.cur().kind != scFleet {
+		t.Fatalf("n did not open the nodes page: %v", m.cur().kind)
+	}
+	// esc returns home
+	m = press(t, m, "esc")
+	if m.cur().kind != scHome {
+		t.Fatalf("esc did not return home: %v", m.cur().kind)
+	}
+	// capital N opens the add-node workflow
+	m = press(t, m, "N")
+	if m.cur().kind != scAddNode {
+		t.Fatalf("N did not open the add workflow: %v", m.cur().kind)
+	}
+	// aborting the workflow lands on the fleet beneath it
+	m = press(t, m, "ctrl+c")
+	if m.cur().kind != scFleet {
+		t.Fatalf("abort did not land on the fleet: %v", m.cur().kind)
+	}
+}
+
+func TestDescriptionTypewriter(t *testing.T) {
+	m := New(readyStore(t))
+	if !m.descAnim {
+		t.Fatal("typewriter not running on landing")
+	}
+	next, _ := m.Update(descTickMsg{})
+	m = next.(Model)
+	if m.descShown == 0 {
+		t.Fatal("first tick revealed nothing")
+	}
+	for m.descAnim {
+		next, _ := m.Update(descTickMsg{})
+		m = next.(Model)
+	}
+	if got := view(m); !strings.Contains(got, "local-first, from one terminal.") {
+		t.Fatalf("full description missing:\n%s", got)
+	}
+}
+
+func TestEmptyFleetShowsDescriptionAndShortcuts(t *testing.T) {
+	s := readyStore(t)
+	m := press(t, New(s), "n")
+	if !m.descAnim {
+		t.Fatal("empty fleet did not restart the typewriter")
+	}
+	for m.descAnim {
+		next, _ := m.Update(descTickMsg{})
+		m = next.(Model)
+	}
+	got := view(m)
+	for _, want := range []string{
+		"opinionated window onto your fleet:",
+		"No servers yet",
+		"esc", "home",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("empty fleet missing %q:\n%s", want, got)
+		}
 	}
 }
 

@@ -38,7 +38,9 @@ func (m Model) updateIntro(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.introErr = err.Error()
 		}
 	}
-	return m, nil
+	// The intro hands over to home, where the description starts typing.
+	cmd := m.beginDesc()
+	return m, cmd
 }
 
 // introView renders the intro, centered on the frame's canvas.
