@@ -72,6 +72,8 @@ func New(store *state.Store) Model {
 	}
 	m.fleet = newFleetList(m.nodes)
 	m.actions = newActionsList()
+	applyHelpPalette(&m.help)
+	applyHelpPalette(&m.fullHelp)
 	m.layout()
 	return m
 }
@@ -324,28 +326,32 @@ func (m *Model) reloadFleet() {
 }
 
 // layout recomputes the frame and sizes all widgets to the window.
-// The signature frame takes a border row at top and bottom plus one
-// footer row inside, leaving the rest as the screen content area.
+// The signature frame reserves its two border rows plus the sticky header
+// and divider; the in-frame footer takes one more row inside. What
+// remains is the screen content area.
 func (m *Model) layout() {
 	m.contentWidth = max(1, m.width-2)
-	m.contentHeight = max(1, m.height-3)
+	m.contentHeight = max(1, m.height-5)
 	fleetH := m.contentHeight - 4
 	if fleetH < 1 {
 		fleetH = 1
 	}
 	m.fleet.SetSize(m.contentWidth, fleetH)
-	m.actions.SetSize(m.contentWidth, len(actionDefs()))
+	m.actions.SetSize(m.contentWidth, len(actionDefs())+1)
 	m.help.SetWidth(m.contentWidth)
 	m.fullHelp.SetWidth(max(10, m.contentWidth-8))
 	if m.addNode.form != nil {
-		w := m.contentWidth - 2
+		w := m.contentWidth - 12 // card border and padding
 		if w > 72 {
 			w = 72
 		}
 		if w < 30 {
 			w = 30
 		}
-		m.addNode.form = m.addNode.form.WithWidth(w).WithHeight(m.contentHeight - 1)
+		// The form renders its fields plus its in-card help line inside
+		// this many rows; an explicit height keeps the help visible and
+		// the card compact. Update when adding fields.
+		m.addNode.form = m.addNode.form.WithWidth(w).WithHeight(14)
 	}
 }
 
@@ -397,17 +403,20 @@ func (m Model) workspaceView() string {
 	return m.frame(content + "\n" + m.footerRow())
 }
 
-// frame wraps content in the signature mymo border: the brand and
-// breadcrumbs ride the top line, the version rides the bottom, and toast
-// notifications appear at the top right. The frame is the workspace's
-// recognizable canvas — the user is never lost in a borderless void.
+// frame wraps content in the signature mymo border. The border stays
+// plain; identity lives one row below it in the sticky header: the icon,
+// the brand, and the breadcrumb of the current screen.
 func (m Model) frame(content string) string {
 	innerW := max(1, m.width-2)
 	innerH := max(1, m.height-2)
 	var b strings.Builder
 	b.WriteString(m.topBorder(innerW))
 	b.WriteString("\n")
-	for _, line := range fitLines(content, innerW, innerH) {
+	b.WriteString(m.headerRow(innerW))
+	b.WriteString("\n")
+	b.WriteString(dividerStyle.Render(strings.Repeat("─", innerW)))
+	b.WriteString("\n")
+	for _, line := range fitLines(content, innerW, innerH-2) {
 		b.WriteString(frameStyle.Render("│"))
 		b.WriteString(line)
 		b.WriteString(frameStyle.Render("│"))
@@ -417,35 +426,26 @@ func (m Model) frame(content string) string {
 	return b.String()
 }
 
-// topBorder renders the top frame line: brand and breadcrumbs at the
-// left, the toast (if one is active) at the right.
+// topBorder renders the plain top frame line.
 func (m Model) topBorder(w int) string {
-	var mid strings.Builder
-	mid.WriteString(frameStyle.Render("─"))
-	mid.WriteString(brandStyle.Render(" mymo "))
-	for _, c := range m.crumbs() {
-		mid.WriteString(frameStyle.Render("── "))
-		mid.WriteString(subtextStyle.Render(c))
-		mid.WriteString(frameStyle.Render(" "))
-	}
-	midText := mid.String()
-	midW := lipgloss.Width(midText)
+	return frameStyle.Render("╭" + strings.Repeat("─", w) + "╮")
+}
 
-	right := ""
-	if m.toast != nil {
-		right = " " + m.toast.view() + " "
+// headerRow renders the sticky header: mymo's icon and brand with the
+// breadcrumb of the current screen, and any active toast at the right.
+func (m Model) headerRow(w int) string {
+	left := brandIcon() + " " + brandStyle.Render("mymo")
+	for _, c := range m.crumbs() {
+		left += faintStyle.Render(" / ") + subtextStyle.Render(c)
 	}
-	avail := w - midW - lipgloss.Width(right) - 1
-	if avail < 0 {
-		right = "" // the toast does not fit at this width
-		avail = w - midW - 1
+	if m.toast == nil {
+		return left
 	}
-	if avail < 0 {
-		avail = 0
+	t := m.toast.view()
+	if gap := w - lipgloss.Width(left) - lipgloss.Width(t); gap > 0 {
+		return left + strings.Repeat(" ", gap) + t
 	}
-	return frameStyle.Render("╭") + midText +
-		frameStyle.Render(strings.Repeat("─", avail)) + right +
-		frameStyle.Render("─╮")
+	return left
 }
 
 // bottomBorder renders the bottom frame line: the fleet status at the
@@ -492,6 +492,9 @@ func (m Model) keymap() help.KeyMap {
 		}
 		return newNodeKeymap()
 	case scAddNode:
+		if m.addNode.stage == anForm {
+			return newFormKeymap()
+		}
 		return newAddReviewKeymap()
 	default:
 		return newSimpleKeymap()

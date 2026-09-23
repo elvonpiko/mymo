@@ -53,7 +53,7 @@ func (m Model) startAddNode() (tea.Model, tea.Cmd) {
 	form := huh.NewForm(
 		huh.NewGroup(
 			huh.NewInput().Title("Name").
-				Description("lowercase letters, digits, dashes").
+				Placeholder("web-1").
 				Value(&v.name).
 				Validate(domain.ValidateNodeName),
 			huh.NewInput().Title("Host or IP address").
@@ -82,7 +82,7 @@ func (m Model) startAddNode() (tea.Model, tea.Cmd) {
 					return nil
 				}),
 		),
-	).WithShowHelp(true)
+	).WithShowHelp(true).WithTheme(HuhTheme())
 	m.addNode.form = form
 	m.push(screen{kind: scAddNode})
 	m.layout()
@@ -177,10 +177,12 @@ func (m Model) addView() string {
 	return m.addReviewView()
 }
 
-// addFormView renders the embedded huh form centered in the content area.
+// addFormView renders the embedded huh form as an interactive card,
+// centered in the canvas both horizontally and vertically.
 func (m Model) addFormView() string {
-	centered := lipgloss.PlaceHorizontal(m.contentWidth, lipgloss.Center, m.addNode.form.View())
-	return fitHeight(centered, m.contentHeight)
+	card := cardStyle.Render(m.addNode.form.View())
+	return lipgloss.Place(m.contentWidth, m.contentHeight,
+		lipgloss.Center, lipgloss.Center, card)
 }
 
 // addReviewView renders the review step: the record to be saved, the
@@ -199,7 +201,7 @@ func (m Model) addReviewView() string {
 		inner += "\n\n" + errStyle.Render(m.addNode.err)
 	}
 	return lipgloss.Place(m.contentWidth, m.contentHeight,
-		lipgloss.Center, lipgloss.Center, panelStyle.Render(inner))
+		lipgloss.Center, lipgloss.Center, cardStyle.Render(inner))
 }
 
 // nonEmpty and portInput are the small validators shared by the form.

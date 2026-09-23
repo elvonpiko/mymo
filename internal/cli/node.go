@@ -16,7 +16,14 @@ import (
 
 	"github.com/elvonpiko/mymo/internal/domain"
 	"github.com/elvonpiko/mymo/internal/state"
+	"github.com/elvonpiko/mymo/internal/tui"
 )
+
+// newForm builds a huh form themed with mymo's Catppuccin palette, so the
+// CLI's standalone forms match the workspace.
+func newForm(groups ...*huh.Group) *huh.Form {
+	return huh.NewForm(groups...).WithTheme(tui.HuhTheme())
+}
 
 func runNode(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
@@ -256,7 +263,7 @@ func (in *nodeInput) prompt() error {
 	if auth == "" {
 		auth = domain.AuthKey
 	}
-	form := huh.NewForm(
+	form := newForm(
 		huh.NewGroup(
 			huh.NewInput().Title("Node name").Placeholder("web-1").Value(&in.name).
 				Validate(func(s string) error { return domain.ValidateNodeName(s) }),
@@ -283,7 +290,7 @@ func (in *nodeInput) prompt() error {
 	}
 	in.port = port
 	if in.auth == domain.AuthKey && strings.TrimSpace(in.keyPath) == "" {
-		form := huh.NewForm(
+		form := newForm(
 			huh.NewGroup(
 				huh.NewInput().Title("Private key path").Placeholder("/home/user/.ssh/id_ed25519").
 					Value(&in.keyPath).
@@ -326,7 +333,7 @@ func runNodeRemove(args []string, stdout, stderr io.Writer) int {
 			return exitUsage
 		}
 		confirmed := false
-		form := huh.NewForm(
+		form := newForm(
 			huh.NewGroup(
 				huh.NewConfirm().
 					Title(fmt.Sprintf("Remove node %q from mymo? The server itself is not touched.", name)).

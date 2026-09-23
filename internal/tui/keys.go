@@ -122,6 +122,26 @@ func (k addReviewKeymap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{{k.confirm, k.cancel}, {k.help, k.quit}}
 }
 
+// formKeymap applies while an embedded form owns every key; only the
+// abort key is honest to show, since typing goes to the fields.
+type formKeymap struct {
+	cancel key.Binding
+}
+
+func newFormKeymap() formKeymap {
+	return formKeymap{
+		cancel: key.NewBinding(key.WithKeys("ctrl+c"), key.WithHelp("ctrl+c", "cancel")),
+	}
+}
+
+func (k formKeymap) ShortHelp() []key.Binding {
+	return []key.Binding{k.cancel}
+}
+
+func (k formKeymap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{{k.cancel}}
+}
+
 // confirmKeymap applies to destructive-action confirmations.
 type confirmKeymap struct {
 	confirm key.Binding

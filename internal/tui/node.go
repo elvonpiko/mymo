@@ -167,5 +167,5 @@ func (m Model) removeConfirmView() string {
 		accentStyle.Render("[y]") + textStyle.Render(" remove    ") +
 		accentStyle.Render("[esc]") + textStyle.Render(" cancel")
 	return lipgloss.Place(m.contentWidth, m.contentHeight,
-		lipgloss.Center, lipgloss.Center, panelStyle.Render(inner))
+		lipgloss.Center, lipgloss.Center, dangerCardStyle.Render(inner))
 }
