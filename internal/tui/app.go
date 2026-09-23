@@ -391,7 +391,13 @@ func (m *Model) reloadFleet() {
 // remains is the screen content area.
 func (m *Model) layout() {
 	m.contentWidth = max(1, m.width-2)
-	m.contentHeight = max(1, m.height-5)
+	// Chromeless pages (home, intro) keep two border rows and one
+	// footer row; header pages add the header and its divider.
+	rows := 3
+	if m.showHeader() {
+		rows = 5
+	}
+	m.contentHeight = max(1, m.height-rows)
 	fleetH := m.contentHeight - 4
 	if fleetH < 1 {
 		fleetH = 1
@@ -465,20 +471,34 @@ func (m Model) workspaceView() string {
 	return m.frame(content + "\n" + m.footerRow())
 }
 
-// frame wraps content in the signature mymo border. The border stays
-// plain; identity lives one row below it in the sticky header: the icon,
-// the brand, and the breadcrumb of the current screen.
+// showHeader reports whether the sticky header belongs on the current
+// screen. Home is the identity itself and carries no chrome; neither
+// does the intro, which is the same splash family.
+func (m Model) showHeader() bool {
+	return m.introDone && m.cur().kind != scHome
+}
+
+// frame wraps content in the signature mymo border. Inner pages hang
+// their identity from the sticky header: icon, brand, breadcrumb. Home
+// and the intro skip it — their content is the identity — leaving just
+// the canvas.
 func (m Model) frame(content string) string {
 	innerW := max(1, m.width-2)
 	innerH := max(1, m.height-2)
+	contentH := innerH
+	if m.showHeader() {
+		contentH = max(1, innerH-2) // header and divider rows
+	}
 	var b strings.Builder
 	b.WriteString(m.topBorder(innerW))
 	b.WriteString("\n")
-	b.WriteString(m.headerRow(innerW))
-	b.WriteString("\n")
-	b.WriteString(dividerStyle.Render(strings.Repeat("─", innerW)))
-	b.WriteString("\n")
-	for _, line := range fitLines(content, innerW, innerH-2) {
+	if m.showHeader() {
+		b.WriteString(m.headerRow(innerW))
+		b.WriteString("\n")
+		b.WriteString(dividerStyle.Render(strings.Repeat("─", innerW)))
+		b.WriteString("\n")
+	}
+	for _, line := range fitLines(content, innerW, contentH) {
 		b.WriteString(frameStyle.Render("│"))
 		b.WriteString(line)
 		b.WriteString(frameStyle.Render("│"))
@@ -488,9 +508,19 @@ func (m Model) frame(content string) string {
 	return b.String()
 }
 
-// topBorder renders the plain top frame line.
+// topBorder renders the plain top frame line; on chromeless pages an
+// active toast rides the border's right end.
 func (m Model) topBorder(w int) string {
-	return frameStyle.Render("╭" + strings.Repeat("─", w) + "╮")
+	plain := "╭" + strings.Repeat("─", w) + "╮"
+	if m.showHeader() || m.toast == nil {
+		return frameStyle.Render(plain)
+	}
+	t := m.toast.view()
+	dashes := w - lipgloss.Width(t) - 4
+	if dashes < 1 {
+		return frameStyle.Render(plain)
+	}
+	return frameStyle.Render("╭" + strings.Repeat("─", dashes) + " " + t + " ╮")
 }
 
 // headerRow renders the sticky header: mymo's icon and brand with the

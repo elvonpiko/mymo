@@ -22,11 +22,16 @@ type screen struct {
 	node string // node context for node-related screens
 }
 
-// push appends a screen to the navigation stack.
-func (m *Model) push(s screen) { m.stack = append(m.stack, s) }
+// push appends a screen to the navigation stack and re-lays out the
+// canvas for the page that just gained focus.
+func (m *Model) push(s screen) {
+	m.stack = append(m.stack, s)
+	m.layout()
+}
 
 // pop removes the top screen of the navigation stack, keeping the root.
-// Popping the add-node workflow also resets its state.
+// Popping the add-node workflow also resets its state. The canvas
+// re-lays out for the page that resurfaces.
 func (m *Model) pop() {
 	if len(m.stack) <= 1 {
 		return
@@ -35,6 +40,7 @@ func (m *Model) pop() {
 		m.addNode = addNodeState{}
 	}
 	m.stack = m.stack[:len(m.stack)-1]
+	m.layout()
 }
 
 // cur returns the top of the navigation stack.

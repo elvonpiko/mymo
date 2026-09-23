@@ -539,6 +539,22 @@ func TestEmptyFleetShowsDescriptionAndShortcuts(t *testing.T) {
 	}
 }
 
+func TestHomeIsChromeless(t *testing.T) {
+	s := readyStore(t)
+	seedNode(t, s, "web-1")
+	m := New(s)
+	got := view(m)
+	// the mark renders two half-blocks per appearance: home shows it
+	// once, in its content — a second appearance would mean the header
+	if n := strings.Count(got, "▀"); n != 2 {
+		t.Fatalf("home shows the mark %d times, want once:\n%s", n/2, got)
+	}
+	m = press(t, m, "n")
+	if got := view(m); !strings.Contains(got, "fleet") {
+		t.Fatalf("subpage lost the sticky header breadcrumb:\n%s", got)
+	}
+}
+
 func TestRunRequiresTerminal(t *testing.T) {
 	if err := Run(testStore(t)); !errors.Is(err, ErrNoTerminal) {
 		t.Fatalf("Run() = %v, want ErrNoTerminal", err)

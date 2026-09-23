@@ -59,7 +59,7 @@ func (m Model) introView() string {
 		lines = append(lines, "", errStyle.Render(m.introErr))
 	}
 	w := max(1, m.width-2)
-	h := max(1, m.height-4)
+	h := max(1, m.height-2) // chromeless: the frame's full inner height
 	return lipgloss.Place(w, h,
 		lipgloss.Center, lipgloss.Center, strings.Join(lines, "\n"))
 }
