@@ -433,8 +433,10 @@ func (m Model) topBorder(w int) string {
 
 // headerRow renders the sticky header: mymo's icon and brand with the
 // breadcrumb of the current screen, and any active toast at the right.
+// The icon sits one cell in from the frame so its blocks never touch
+// the border.
 func (m Model) headerRow(w int) string {
-	left := brandIcon() + " " + brandStyle.Render("mymo")
+	left := " " + brandIcon() + " " + brandStyle.Render("mymo")
 	for _, c := range m.crumbs() {
 		left += faintStyle.Render(" / ") + subtextStyle.Render(c)
 	}
