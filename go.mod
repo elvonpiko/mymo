@@ -7,6 +7,7 @@ require (
 	charm.land/bubbletea/v2 v2.0.9
 	charm.land/huh/v2 v2.0.3
 	charm.land/lipgloss/v2 v2.0.6
+	golang.org/x/crypto v0.57.0
 	golang.org/x/term v0.46.0
 )
 
