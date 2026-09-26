@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/elvonpiko/mymo/internal/facts"
 )
 
 // DefaultSSHPort is the SSH port used when a node does not specify one.
@@ -45,6 +47,10 @@ type Node struct {
 	KeyPath string     `json:"key_path,omitempty"`
 	Mode    NodeMode   `json:"mode"`
 	AddedAt time.Time  `json:"added_at"`
+
+	// Facts is the last discovery snapshot for this node, refreshed by
+	// probes. CollectedAt doubles as the last-seen marker.
+	Facts facts.Node `json:"facts,omitzero"`
 }
 
 // nodeNamePattern allows 1-40 lowercase names built from letters, digits,

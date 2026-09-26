@@ -4,10 +4,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/elvonpiko/mymo/internal/domain"
+	"github.com/elvonpiko/mymo/internal/facts"
 )
 
 func testNode(name string) domain.Node {
@@ -130,6 +132,59 @@ func TestUpdateNodeNotFound(t *testing.T) {
 	err := s.UpdateNode(testNode("ghost"))
 	if !errors.Is(err, ErrNodeNotFound) {
 		t.Fatalf("UpdateNode() = %v, want ErrNodeNotFound", err)
+	}
+}
+
+func TestNodeFactsRoundTrip(t *testing.T) {
+	s := openTestStore(t)
+	if err := s.AddNode(testNode("web-1")); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := s.GetNode("web-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := facts.Node{
+		Hostname:    "web-1.example",
+		OS:          "Debian GNU/Linux 12 (bookworm)",
+		Kernel:      "6.1.0-13-amd64",
+		Arch:        "x86_64",
+		CPUs:        8,
+		Uptime:      42 * time.Hour,
+		MemTotal:    8 * 1024 * 1024 * 1024,
+		MemAvail:    4 * 1024 * 1024 * 1024,
+		DiskTotal:   25 * 1024 * 1024 * 1024,
+		DiskFree:    13 * 1024 * 1024 * 1024,
+		Docker:      "Docker version 27.3.1, build 1234",
+		Caddy:       "v2.8.4",
+		Systemd:     true,
+		User:        "root",
+		CollectedAt: time.Now().Truncate(time.Second),
+	}
+	updated.Facts = want
+	if err := s.UpdateNode(updated); err != nil {
+		t.Fatalf("UpdateNode() = %v, want nil", err)
+	}
+	got, err := s.GetNode("web-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Facts != want {
+		t.Fatalf("facts round trip mismatch:\ngot  %+v\nwant %+v", got.Facts, want)
+	}
+}
+
+func TestNodeWithoutFactsOmitsField(t *testing.T) {
+	s := openTestStore(t)
+	if err := s.AddNode(testNode("plain")); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(s.Dir(), nodesFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "facts") {
+		t.Fatalf("nodes file grew a facts key for a never-probed node:\n%s", b)
 	}
 }
 

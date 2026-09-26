@@ -1,7 +1,8 @@
 // Package ssh is mymo's SSH transport: one authenticated connection
 // per node carrying explicit-argument-vector commands with enforced
 // timeouts, structured errors, and trust-on-first-use host key
-// verification. It is the only package that talks to nodes.
+// verification. It is the only package that opens connections to nodes;
+// discovery and later stages build on it.
 package ssh
 
 import (
