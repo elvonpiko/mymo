@@ -20,156 +20,18 @@ import (
 	"golang.org/x/crypto/ssh/agent"
 
 	"github.com/elvonpiko/mymo/internal/domain"
+	"github.com/elvonpiko/mymo/internal/sshtest"
 )
 
-// newTestHostKey generates the server's host key.
-func newTestHostKey(t *testing.T) ssh.Signer {
-	t.Helper()
-	_, priv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	signer, err := ssh.NewSignerFromKey(priv)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return signer
-}
-
-// writeTestKey materializes a private key file and returns its path and
-// the raw private key (for the agent test).
-func writeTestKey(t *testing.T) (string, ed25519.PrivateKey) {
-	t.Helper()
-	_, priv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	block, err := ssh.MarshalPrivateKey(priv, "mymo-test")
-	if err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(t.TempDir(), "id_ed25519")
-	if err := os.WriteFile(path, pem.EncodeToMemory(block), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	return path, priv
-}
-
-// testServer is a minimal in-process SSH server built directly on
-// x/crypto/ssh: it accepts any public key and answers exec requests
-// through a test-provided handler. No third-party server dependency.
-type testServer struct {
-	listener net.Listener
-	config   *ssh.ServerConfig
-	handler  func(cmd string) (string, int)
-}
-
-func newTestServer(t *testing.T, handler func(cmd string) (string, int)) *testServer {
-	t.Helper()
-	cfg := &ssh.ServerConfig{
-		PublicKeyCallback: func(_ ssh.ConnMetadata, _ ssh.PublicKey) (*ssh.Permissions, error) {
-			return &ssh.Permissions{}, nil
-		},
-	}
-	cfg.AddHostKey(newTestHostKey(t))
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	srv := &testServer{listener: ln, config: cfg, handler: handler}
-	t.Cleanup(func() { ln.Close() })
-	go srv.serve()
-	return srv
-}
-
-func (s *testServer) addr() string { return s.listener.Addr().String() }
-
-// node returns a domain.Node pointing at the test server with key auth.
-func (s *testServer) node(t *testing.T, keyPath string) domain.Node {
-	t.Helper()
-	host, portStr, err := net.SplitHostPort(s.addr())
-	if err != nil {
-		t.Fatal(err)
-	}
-	port, err := strconv.Atoi(portStr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return domain.Node{
-		Name:    "test-node",
-		Host:    host,
-		Port:    port,
-		User:    "root",
-		Auth:    domain.AuthKey,
-		KeyPath: keyPath,
-	}
-}
-
-func (s *testServer) serve() {
-	for {
-		conn, err := s.listener.Accept()
-		if err != nil {
-			return
-		}
-		go s.handleConn(conn)
-	}
-}
-
-func (s *testServer) handleConn(conn net.Conn) {
-	sconn, chans, reqs, err := ssh.NewServerConn(conn, s.config)
-	if err != nil {
-		conn.Close()
-		return
-	}
-	defer sconn.Close()
-	go ssh.DiscardRequests(reqs)
-	for newChan := range chans {
-		if newChan.ChannelType() != "session" {
-			_ = newChan.Reject(ssh.UnknownChannelType, "only sessions")
-			continue
-		}
-		ch, requests, err := newChan.Accept()
-		if err != nil {
-			continue
-		}
-		go s.handleSession(ch, requests)
-	}
-}
-
-func (s *testServer) handleSession(ch ssh.Channel, requests <-chan *ssh.Request) {
-	for req := range requests {
-		if req.Type != "exec" {
-			_ = req.Reply(false, nil)
-			continue
-		}
-		var payload struct{ Command string }
-		if err := ssh.Unmarshal(req.Payload, &payload); err != nil {
-			_ = req.Reply(false, nil)
-			_ = ch.Close()
-			return
-		}
-		_ = req.Reply(true, nil)
-		out, code := s.handler(payload.Command)
-		if code < 0 {
-			code = 127
-		}
-		_, _ = ch.Write([]byte(out))
-		_, _ = ch.SendRequest("exit-status", false,
-			ssh.Marshal(struct{ Status uint32 }{Status: uint32(code)}))
-		_ = ch.Close()
-		return
-	}
-}
-
 func TestDialRunEcho(t *testing.T) {
-	keyPath, _ := writeTestKey(t)
-	srv := newTestServer(t, func(cmd string) (string, int) {
+	keyPath, _ := sshtest.NewKey(t)
+	srv := sshtest.NewServer(t, func(cmd string) (string, int) {
 		if cmd == "uptime" {
 			return "up 42 days\n", 0
 		}
 		return "", 0
 	})
-	client := New(srv.node(t, keyPath), "")
+	client := New(srv.Node(t, keyPath), "")
 	if err := client.Dial(context.Background()); err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -184,11 +46,11 @@ func TestDialRunEcho(t *testing.T) {
 }
 
 func TestRunExitCodeIsAResult(t *testing.T) {
-	keyPath, _ := writeTestKey(t)
-	srv := newTestServer(t, func(cmd string) (string, int) {
+	keyPath, _ := sshtest.NewKey(t)
+	srv := sshtest.NewServer(t, func(cmd string) (string, int) {
 		return "boom\n", 3
 	})
-	client := New(srv.node(t, keyPath), "")
+	client := New(srv.Node(t, keyPath), "")
 	if err := client.Dial(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -206,16 +68,16 @@ func TestRunExitCodeIsAResult(t *testing.T) {
 }
 
 func TestRunSendsQuotedArgv(t *testing.T) {
-	keyPath, _ := writeTestKey(t)
+	keyPath, _ := sshtest.NewKey(t)
 	var mu sync.Mutex
 	var received string
-	srv := newTestServer(t, func(cmd string) (string, int) {
+	srv := sshtest.NewServer(t, func(cmd string) (string, int) {
 		mu.Lock()
 		received = cmd
 		mu.Unlock()
 		return "", 0
 	})
-	client := New(srv.node(t, keyPath), "")
+	client := New(srv.Node(t, keyPath), "")
 	if err := client.Dial(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -232,12 +94,12 @@ func TestRunSendsQuotedArgv(t *testing.T) {
 }
 
 func TestRunTimesOut(t *testing.T) {
-	keyPath, _ := writeTestKey(t)
-	srv := newTestServer(t, func(cmd string) (string, int) {
+	keyPath, _ := sshtest.NewKey(t)
+	srv := sshtest.NewServer(t, func(cmd string) (string, int) {
 		time.Sleep(2 * time.Second)
 		return "", 0
 	})
-	client := New(srv.node(t, keyPath), "")
+	client := New(srv.Node(t, keyPath), "")
 	if err := client.Dial(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -261,21 +123,23 @@ func TestRunTimesOut(t *testing.T) {
 }
 
 func TestRunRequiresConnection(t *testing.T) {
-	keyPath, _ := writeTestKey(t)
+	keyPath, _ := sshtest.NewKey(t)
 	client := New(domain.Node{Name: "x", Host: "h", Port: 22, User: "u", Auth: domain.AuthKey, KeyPath: keyPath}, "")
 	if _, _, err := client.Run(context.Background(), "uptime"); err == nil {
 		t.Fatal("run without dial must fail")
 	}
 }
 
-func newRejectingServer(t *testing.T) (net.Listener, *ssh.ServerConfig) {
+// newRejectingServer starts a server whose public-key callback refuses
+// every credential.
+func newRejectingServer(t *testing.T) net.Listener {
 	t.Helper()
 	cfg := &ssh.ServerConfig{
 		PublicKeyCallback: func(_ ssh.ConnMetadata, _ ssh.PublicKey) (*ssh.Permissions, error) {
 			return nil, errors.New("rejected")
 		},
 	}
-	cfg.AddHostKey(newTestHostKey(t))
+	cfg.AddHostKey(sshtest.NewHostKey(t))
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -300,12 +164,12 @@ func newRejectingServer(t *testing.T) (net.Listener, *ssh.ServerConfig) {
 			}()
 		}
 	}()
-	return ln, cfg
+	return ln
 }
 
 func TestDialAuthRejected(t *testing.T) {
-	keyPath, _ := writeTestKey(t)
-	ln, _ := newRejectingServer(t)
+	keyPath, _ := sshtest.NewKey(t)
+	ln := newRejectingServer(t)
 	host, portStr, _ := net.SplitHostPort(ln.Addr().String())
 	port, _ := strconv.Atoi(portStr)
 	client := New(domain.Node{Name: "x", Host: host, Port: port, User: "u", Auth: domain.AuthKey, KeyPath: keyPath}, "")
@@ -333,9 +197,9 @@ func TestDialUnreachable(t *testing.T) {
 }
 
 func TestHostKeyTofuFile(t *testing.T) {
-	keyPath, _ := writeTestKey(t)
-	srv := newTestServer(t, func(cmd string) (string, int) { return "", 0 })
-	node := srv.node(t, keyPath)
+	keyPath, _ := sshtest.NewKey(t)
+	srv := sshtest.NewServer(t, func(cmd string) (string, int) { return "", 0 })
+	node := srv.Node(t, keyPath)
 	knownHosts := filepath.Join(t.TempDir(), "known_hosts.json")
 
 	// first contact records the key
@@ -349,8 +213,8 @@ func TestHostKeyTofuFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("known hosts not written: %v", err)
 	}
-	if !strings.Contains(string(data), srv.addr()) {
-		t.Fatalf("known hosts missing %s:\n%s", srv.addr(), data)
+	if !strings.Contains(string(data), srv.Addr()) {
+		t.Fatalf("known hosts missing %s:\n%s", srv.Addr(), data)
 	}
 
 	// second contact must match and succeed
@@ -361,7 +225,7 @@ func TestHostKeyTofuFile(t *testing.T) {
 	c2.Close()
 
 	// a different key for the same host is refused
-	doc := map[string]string{srv.addr(): "not-the-recorded-key"}
+	doc := map[string]string{srv.Addr(): "not-the-recorded-key"}
 	if err := writeKnownHosts(knownHosts, doc); err != nil {
 		t.Fatal(err)
 	}
@@ -373,7 +237,7 @@ func TestHostKeyTofuFile(t *testing.T) {
 }
 
 func TestAgentAuth(t *testing.T) {
-	_, priv := writeTestKey(t)
+	_, priv := sshtest.NewKey(t)
 
 	// an in-memory agent served over a real unix socket
 	ring := agent.NewKeyring()
@@ -397,19 +261,18 @@ func TestAgentAuth(t *testing.T) {
 	}()
 	t.Setenv("SSH_AUTH_SOCK", sock)
 
-	keyPath, _ := writeTestKey(t)
-	srv := newTestServer(t, func(cmd string) (string, int) {
+	keyPath, _ := sshtest.NewKey(t)
+	srv := sshtest.NewServer(t, func(cmd string) (string, int) {
 		return "agent-ok\n", 0
 	})
-	node := srv.node(t, keyPath)
+	node := srv.Node(t, keyPath)
 	node.Auth = domain.AuthAgent
 	client := New(node, "")
 	if err := client.Dial(context.Background()); err != nil {
 		t.Fatalf("agent dial: %v", err)
 	}
 	defer client.Close()
-	out, code, err := client.Run(context.Background(), "whoami")
-	t.Logf("DEBUG run: out=%q code=%d err=%v SSH_AUTH_SOCK=%q", out, code, err, os.Getenv("SSH_AUTH_SOCK"))
+	out, _, err := client.Run(context.Background(), "whoami")
 	if err != nil {
 		t.Fatal(err)
 	}
