@@ -24,7 +24,6 @@ const (
 // code. It never calls os.Exit and never touches os.Stdout/os.Stderr
 // directly, so it stays testable.
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	_ = ctx // reserved for cancellable remote operations
 	if len(args) == 0 {
 		return runTUI(stderr)
 	}
@@ -37,7 +36,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "mymo "+version.Version)
 		return exitOK
 	case "node":
-		return runNode(rest, stdout, stderr)
+		return runNode(ctx, rest, stdout, stderr)
 	case "app":
 		return runApp(rest, stdout, stderr)
 	default:

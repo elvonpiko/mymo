@@ -3,7 +3,6 @@ package tui
 import (
 	"errors"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -13,6 +12,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/elvonpiko/mymo/internal/domain"
+	"github.com/elvonpiko/mymo/internal/ssh"
 )
 
 // addNodeStage identifies the workflow's current step.
@@ -162,8 +162,8 @@ func (m Model) saveNewNode(n domain.Node) error {
 		return errors.New("state store unavailable")
 	}
 	if n.Auth == domain.AuthKey {
-		if fi, err := os.Stat(n.KeyPath); err != nil || fi.IsDir() {
-			return fmt.Errorf("key file %q is not readable", n.KeyPath)
+		if err := ssh.CheckKeyFile(n.KeyPath); err != nil {
+			return fmt.Errorf("key file %q: %v", n.KeyPath, err)
 		}
 	}
 	return m.store.AddNode(n)

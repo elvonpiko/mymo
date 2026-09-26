@@ -228,6 +228,17 @@ func (c *Client) authMethods() ([]ssh.AuthMethod, net.Conn, error) {
 	}
 }
 
+// CheckKeyFile verifies that path names a readable private key mymo
+// can actually use — the validation node add performs so a bad key
+// surfaces at entry, not at first connect. Passphrase-protected keys
+// are refused with a pointer at agent auth, matching the transport.
+func CheckKeyFile(path string) error {
+	if _, err := loadKeySigner(path); err != nil {
+		return err
+	}
+	return nil
+}
+
 // loadKeySigner reads and parses the node's private key file.
 func loadKeySigner(path string) (ssh.Signer, error) {
 	p, err := expandHome(path)

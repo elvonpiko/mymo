@@ -3,11 +3,11 @@ package cli
 import (
 	"bytes"
 	"context"
-	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/elvonpiko/mymo/internal/sshtest"
 )
 
 // session is a CLI test session pinned to one HOME directory so that
@@ -31,10 +31,7 @@ func (s *session) run(t *testing.T, args ...string) (int, string, string) {
 
 func writeTestKey(t *testing.T) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "id_ed25519")
-	if err := os.WriteFile(path, []byte("test key"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	path, _ := sshtest.NewKey(t)
 	return path
 }
 

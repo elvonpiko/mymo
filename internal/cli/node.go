@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/elvonpiko/mymo/internal/domain"
+	"github.com/elvonpiko/mymo/internal/ssh"
 	"github.com/elvonpiko/mymo/internal/state"
 	"github.com/elvonpiko/mymo/internal/tui"
 )
@@ -25,7 +27,7 @@ func newForm(groups ...*huh.Group) *huh.Form {
 	return huh.NewForm(groups...).WithTheme(tui.HuhTheme())
 }
 
-func runNode(args []string, stdout, stderr io.Writer) int {
+func runNode(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintf(stderr, "mymo node requires a subcommand.\n\n%s", nodeUsage())
 		return exitUsage
@@ -38,6 +40,10 @@ func runNode(args []string, stdout, stderr io.Writer) int {
 		return runNodeAdd(rest, stdout, stderr)
 	case "inspect":
 		return runNodeInspect(rest, stdout, stderr)
+	case "check":
+		return runNodeCheck(ctx, rest, stdout, stderr)
+	case "ssh":
+		return runNodeSSH(rest, stderr)
 	case "rm":
 		return runNodeRemove(rest, stdout, stderr)
 	case "help", "--help", "-h":
@@ -56,6 +62,8 @@ func nodeUsage() string {
 	b.WriteString("  mymo node list                list known nodes\n")
 	b.WriteString("  mymo node add [flags]         add a node\n")
 	b.WriteString("  mymo node inspect <name>      show a node's stored record\n")
+	b.WriteString("  mymo node check <name>        probe a node over SSH and store what it finds\n")
+	b.WriteString("  mymo node ssh <name>          open an interactive shell on the node\n")
 	b.WriteString("  mymo node rm <name> [-f]      remove a node from local state\n")
 	b.WriteString("\nFlags for \"mymo node add\":\n")
 	b.WriteString("  -name string   node name (lowercase letters, digits, dashes)\n")
@@ -236,8 +244,8 @@ func runNodeAdd(args []string, stdout, stderr io.Writer) int {
 		return exitErr
 	}
 	if node.Auth == domain.AuthKey {
-		if fi, err := os.Stat(node.KeyPath); err != nil || fi.IsDir() {
-			fmt.Fprintf(stderr, "mymo node add: key file %q is not readable\n", node.KeyPath)
+		if err := ssh.CheckKeyFile(node.KeyPath); err != nil {
+			fmt.Fprintf(stderr, "mymo node add: key file %q: %v\n", node.KeyPath, err)
 			return exitErr
 		}
 	}
