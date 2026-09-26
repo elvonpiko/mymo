@@ -2,16 +2,13 @@ package tui
 
 import (
 	"context"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/elvonpiko/mymo/internal/domain"
 	"github.com/elvonpiko/mymo/internal/facts"
-	"github.com/elvonpiko/mymo/internal/ssh"
 )
 
 // liveEvery is the sampling cadence: one `cat` of three proc files over
@@ -30,12 +27,7 @@ type liveSample struct {
 }
 
 // Live messages carry the session they belong to. A stale message from
-// a stopped session is ignored instead of corrupting a newer one.
-type liveReadyMsg struct {
-	seq    int
-	client *ssh.Client
-}
-
+// a superseded session is ignored instead of corrupting a newer one.
 type liveSampleMsg struct {
 	seq int
 	s   liveSample
@@ -46,23 +38,8 @@ type liveErrMsg struct {
 	err error
 }
 
-// runLiveToggle turns live sampling on or off for the selected node.
-func (m Model) runLiveToggle() (tea.Model, tea.Cmd) {
-	if m.live {
-		m.stopLive()
-		return m, nil
-	}
-	if m.store == nil {
-		return m, m.notify("state store unavailable", toastErr)
-	}
-	m.live = true
-	m.liveErr = ""
-	m.liveSeq++
-	return m, m.liveDial(m.selNode, m.liveSeq)
-}
-
-// stopLive ends sampling and drops the connection. A deliberate stop
-// returns the strip to its hint; failures record why instead.
+// stopLive ends sampling and drops the connection; the next entry
+// opens a fresh one.
 func (m *Model) stopLive() {
 	m.live = false
 	if m.liveClient != nil {
@@ -73,21 +50,6 @@ func (m *Model) stopLive() {
 	m.liveCPU = -1
 	m.liveSparkCPU = m.liveSparkCPU[:0]
 	m.liveSparkMem = m.liveSparkMem[:0]
-}
-
-// liveDial opens the connection live samples ride on. The transport's
-// TOFU policy applies exactly as for probes.
-func (m Model) liveDial(n domain.Node, seq int) tea.Cmd {
-	knownHosts := filepath.Join(m.store.Dir(), "known_hosts.json")
-	return func() tea.Msg {
-		client := ssh.New(n, knownHosts)
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		if err := client.Dial(ctx); err != nil {
-			return liveErrMsg{seq: seq, err: err}
-		}
-		return liveReadyMsg{seq: seq, client: client}
-	}
 }
 
 // sampleLive takes one sample over the open connection.
@@ -105,18 +67,6 @@ func (m Model) sampleLive(seq int) tea.Cmd {
 		}
 		return liveSampleMsg{seq: seq, s: parseLive(out)}
 	}
-}
-
-// handleLiveReady stores the live connection and takes the first
-// sample. A ready message from a superseded session closes its
-// connection instead of leaking it.
-func (m Model) handleLiveReady(msg liveReadyMsg) (tea.Model, tea.Cmd) {
-	if !m.live || msg.seq != m.liveSeq {
-		msg.client.Close()
-		return m, nil
-	}
-	m.liveClient = msg.client
-	return m, m.sampleLive(msg.seq)
 }
 
 // handleLiveSample records one sample: cpu percent from jiffy deltas,
@@ -146,9 +96,9 @@ func (m Model) handleLiveSample(msg liveSampleMsg) (tea.Model, tea.Cmd) {
 	})
 }
 
-// handleLiveErr stops sampling honestly: the strip says why it
-// stopped, and never pretends stale numbers are fresh. Silent retries
-// would be guessing.
+// handleLiveErr stops sampling honestly: the line says why it stopped,
+// and never pretends stale numbers are fresh. Silent retries would be
+// guessing — leaving and re-entering observes again.
 func (m Model) handleLiveErr(msg liveErrMsg) (tea.Model, tea.Cmd) {
 	if !m.live || msg.seq != m.liveSeq {
 		return m, nil
@@ -162,42 +112,38 @@ func (m Model) handleLiveErr(msg liveErrMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// liveStrip renders the one-line live readout riding the bottom of
-// the discovered card.
-func (m Model) liveStrip() string {
-	switch {
-	case m.live && m.liveClient != nil && m.liveCPU >= 0:
-		return strings.Join([]string{
-			okStyle.Render("● live"),
-			liveMetric("cpu", spark(m.liveSparkCPU), strconv.Itoa(m.liveCPU)+"%"),
-			liveMetric("mem", spark(m.liveSparkMem), m.memLiveText()),
-			liveMetric("load", "", m.liveCur.load),
-		}, "  ")
-	case m.live && m.liveClient != nil:
-		return okStyle.Render("● live") + "  " + subtextStyle.Render("warming up")
-	case m.live:
-		return okStyle.Render("● live") + "  " + subtextStyle.Render("connecting")
-	case m.liveErr != "":
-		return faintStyle.Render("live stopped · " + m.liveErr)
-	default:
-		return faintStyle.Render("[l] live — cpu, memory, load sampled every 2s, read-only")
+// liveLine renders the card's live row: the green pulse dot and the
+// node's moving numbers. A stopped line keeps showing the last known
+// memory, labeled as a snapshot — honest about what is live and what
+// is not.
+func (m Model) liveLine() string {
+	if m.live && m.liveClient != nil {
+		cpu := "warming"
+		if m.liveCPU >= 0 {
+			cpu = codeStyle.Render(spark(m.liveSparkCPU)) + " " + textStyle.Render(strconv.Itoa(m.liveCPU)+"%")
+		}
+		return okStyle.Render("● live") + "  " +
+			liveMetric("cpu", cpu) + "  " +
+			liveMetric("mem", codeStyle.Render(spark(m.liveSparkMem))+" "+textStyle.Render(m.memLiveText())) + "  " +
+			liveMetric("load", textStyle.Render(orDash(m.liveCur.load)))
 	}
+	if m.liveErr != "" {
+		return faintStyle.Render("● live stopped · "+m.liveErr) + "  " +
+			faintStyle.Render("mem "+m.memLiveText()+" (snapshot)")
+	}
+	return faintStyle.Render("mem " + m.memLiveText() + " (snapshot)")
 }
 
-// liveMetric renders one "label spark value" group.
-func liveMetric(label, sparkline, value string) string {
-	s := ""
-	if sparkline != "" {
-		s = codeStyle.Render(sparkline) + " "
-	}
-	return faintStyle.Render(label+" ") + s + textStyle.Render(value)
+// liveMetric renders one "label value" group.
+func liveMetric(label, value string) string {
+	return faintStyle.Render(label+" ") + value
 }
 
-// memLiveText renders the live memory readout: "3.2/3.8 GiB avail".
+// memLiveText renders the memory readout: "3.2/3.8 GiB avail".
 func (m Model) memLiveText() string {
 	s := m.liveCur
 	if s.memTotal == 0 {
-		return "?"
+		return "unknown"
 	}
 	total := facts.FormatBytes(s.memTotal)
 	if s.memAvail == 0 {
@@ -302,4 +248,11 @@ func clampInt(v, lo, hi int) int {
 		return hi
 	}
 	return v
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "—"
+	}
+	return s
 }

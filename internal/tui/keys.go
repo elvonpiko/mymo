@@ -80,14 +80,35 @@ func (k fleetKeymap) FullHelp() [][]key.Binding {
 	}
 }
 
-// Node keymap: the node's action list plus direct check, ssh, and
-// live keys.
+// loadingKeymap applies while a probe runs on entry: only leaving and
+// quitting are honest keys.
+type loadingKeymap struct {
+	back key.Binding
+	help key.Binding
+	quit key.Binding
+}
+
+func newLoadingKeymap() loadingKeymap {
+	return loadingKeymap{
+		back: key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
+		help: key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
+		quit: key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
+	}
+}
+
+func (k loadingKeymap) ShortHelp() []key.Binding {
+	return []key.Binding{k.back, k.help, k.quit}
+}
+
+func (k loadingKeymap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{{k.back}, {k.help, k.quit}}
+}
+
+// Node keymap: the observe page's action list plus direct ssh.
 type nodeKeymap struct {
 	navigate key.Binding
 	open     key.Binding
-	check    key.Binding
 	ssh      key.Binding
-	live     key.Binding
 	back     key.Binding
 	help     key.Binding
 	quit     key.Binding
@@ -97,9 +118,7 @@ func newNodeKeymap() nodeKeymap {
 	return nodeKeymap{
 		navigate: key.NewBinding(key.WithKeys("up", "down"), key.WithHelp("↑↓", "navigate")),
 		open:     key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "select")),
-		check:    key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "check")),
 		ssh:      key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "ssh")),
-		live:     key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "live")),
 		back:     key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
 		help:     key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 		quit:     key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
@@ -107,15 +126,12 @@ func newNodeKeymap() nodeKeymap {
 }
 
 func (k nodeKeymap) ShortHelp() []key.Binding {
-	// enter stays in full help only: c, s, and l cover the primary
-	// verbs, keeping the footer within one line on 80 columns.
-	return []key.Binding{k.navigate, k.check, k.ssh, k.live, k.back, k.help, k.quit}
+	return []key.Binding{k.navigate, k.open, k.ssh, k.back, k.help, k.quit}
 }
 
 func (k nodeKeymap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.navigate, k.open},
-		{k.check, k.ssh, k.live},
+		{k.navigate, k.open, k.ssh},
 		{k.back},
 		{k.help, k.quit},
 	}

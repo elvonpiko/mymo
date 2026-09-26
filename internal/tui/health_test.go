@@ -7,6 +7,7 @@ import (
 
 	"github.com/elvonpiko/mymo/internal/domain"
 	"github.com/elvonpiko/mymo/internal/facts"
+	"github.com/elvonpiko/mymo/internal/ssh"
 	"github.com/elvonpiko/mymo/internal/state"
 )
 
@@ -78,44 +79,92 @@ func nodeWithFacts(t *testing.T, s *state.Store, name string) domain.Node {
 	return n
 }
 
-func TestNodeScreenShowsDiscoveredFacts(t *testing.T) {
-	s := readyStore(t)
-	nodeWithFacts(t, s, "web-1")
-	got := view(press(t, New(s), "n", "enter"))
-	for _, want := range []string{
-		"Ubuntu 24.04.5 LTS", "x86_64", "6.8.0-31-generic",
-		"2", "1 day 18 hours", "3.2 GiB/3.8 GiB avail", "32 GiB/39 GiB free",
-		"27.3.1", "not installed", "checked just now",
-	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("node screen missing %q:\n%s", want, got)
-		}
+// fakeClient is an undialed client standing in for the probe's open
+// connection; Close is safe on it.
+func fakeClient() *ssh.Client { return ssh.New(domain.Node{}, "") }
+
+// observe settles a successful entry probe for the named node, as if
+// the transport had answered: the observe page is open and live.
+func observe(t *testing.T, m Model, name string, snap facts.Node) Model {
+	t.Helper()
+	return step(t, m, checkDoneMsg{node: name, snap: snap, client: fakeClient(), seq: m.checkSeq})
+}
+
+func richSnapshot(name string) facts.Node {
+	return facts.Node{
+		Hostname: name, OS: "Ubuntu 24.04.5 LTS", Kernel: "6.8.0-31-generic",
+		Arch: "x86_64", CPUs: 2, Uptime: 42 * time.Hour,
+		MemTotal: 4106280960, MemAvail: 3445256192,
+		DiskTotal: 42024214528, DiskFree: 34596003840,
+		Docker: "Docker version 27.3.1, build abc", Systemd: true, User: "root",
+		CollectedAt: time.Now(),
 	}
 }
 
-func TestNodeScreenUncheckedHint(t *testing.T) {
+func TestEnteringObservesWithLoadingPage(t *testing.T) {
 	s := readyStore(t)
 	seedNode(t, s, "web-1")
-	got := view(press(t, New(s), "n", "enter"))
-	for _, want := range []string{"no snapshot yet", "check now", "read-only commands", "unchecked"} {
+	m := press(t, New(s), "n", "enter")
+
+	if !m.probing || m.probingName != "web-1" {
+		t.Fatalf("enter did not start a probe: probing=%v name=%q", m.probing, m.probingName)
+	}
+	got := view(m)
+	for _, want := range []string{"mymo", "observing web-1 over SSH", "ten read-only commands", "cancel"} {
 		if !strings.Contains(got, want) {
-			t.Errorf("unchecked node missing %q:\n%s", want, got)
+			t.Errorf("loading page missing %q:\n%s", want, got)
 		}
+	}
+	if strings.Contains(got, "ACTIONS") {
+		t.Errorf("loading page showed the observe page early:\n%s", got)
+	}
+
+	// esc cancels the visit: back on the fleet, probe flag cleared
+	m = press(t, m, "esc")
+	if m.probing || m.cur().kind != scFleet {
+		t.Fatalf("esc did not cancel: probing=%v screen=%v", m.probing, m.cur().kind)
 	}
 }
 
-func TestNodeScreenFailedCheckKeepsFacts(t *testing.T) {
+func TestObservePageShowsFactsAndLive(t *testing.T) {
 	s := readyStore(t)
-	nodeWithFacts(t, s, "web-1")
+	seedNode(t, s, "web-1")
 	m := press(t, New(s), "n", "enter")
-	mm := step(t, m, checkDoneMsg{node: "web-1", err: errString("unreachable: connection refused")})
+	m = observe(t, m, "web-1", richSnapshot("web-1"))
 
-	if mm.probing {
-		t.Fatal("probe state not cleared")
+	got := view(m)
+	for _, want := range []string{
+		"Ubuntu 24.04.5 LTS", "x86_64", "6.8.0-31-generic", "1 day 18 hours",
+		"32 GiB/39 GiB free", "27.3.1", "not installed", "checked just now",
+		"● live", "3.2 GiB/3.8 GiB avail", "warming", "load",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("observe page missing %q:\n%s", want, got)
+		}
 	}
-	if mm.toast == nil || !strings.Contains(mm.toast.text, "check failed") {
-		t.Fatalf("no failure toast: %+v", mm.toast)
+	// memory and cpu live in the live line only — never twice
+	if strings.Contains(got, "memory") {
+		t.Errorf("observe page still shows a captured memory row:\n%s", got)
 	}
+	// the page itself is the feedback: no extra toast while on it
+	if m.toast != nil {
+		t.Fatalf("unexpected toast on the observe page: %+v", m.toast)
+	}
+	// the probe's connection became the live session
+	if !m.live || m.liveClient == nil {
+		t.Fatal("probe connection not adopted for live stats")
+	}
+	if m.liveCur.memAvail != 3445256192 || m.liveCur.memTotal != 4106280960 {
+		t.Fatalf("live memory not seeded from the snapshot: %+v", m.liveCur)
+	}
+}
+
+func TestObservePageAfterFailedFirstCheck(t *testing.T) {
+	s := readyStore(t)
+	seedNode(t, s, "web-1")
+	m := press(t, New(s), "n", "enter")
+	m = step(t, m, checkDoneMsg{node: "web-1", err: errString("unreachable: connection refused"), seq: m.checkSeq})
+
 	n, err := s.GetNode("web-1")
 	if err != nil {
 		t.Fatal(err)
@@ -123,80 +172,91 @@ func TestNodeScreenFailedCheckKeepsFacts(t *testing.T) {
 	if n.LastCheck.Error == "" {
 		t.Fatal("failure not recorded in LastCheck")
 	}
-	// the last good snapshot must survive a failed attempt
-	if n.Facts.OS != "Ubuntu 24.04.5 LTS" || n.Facts.Docker == "" {
-		t.Fatalf("facts clobbered by failed check: %+v", n.Facts)
-	}
-	got := view(mm)
-	if !strings.Contains(got, "Ubuntu 24.04.5 LTS") {
-		t.Errorf("failed-check node screen lost its facts:\n%s", got)
-	}
-	if !strings.Contains(got, "last check failed") {
-		t.Errorf("failed-check node screen missing the failure:\n%s", got)
-	}
-}
-
-func TestCheckKeyStartsProbe(t *testing.T) {
-	s := readyStore(t)
-	seedNode(t, s, "web-1")
-	m := press(t, New(s), "n", "enter", "c")
-	if !m.probing || m.probingName != "web-1" {
-		t.Fatalf("c did not start a probe: probing=%v name=%q", m.probing, m.probingName)
-	}
 	got := view(m)
-	if !strings.Contains(got, "checking over SSH") {
-		t.Errorf("probing node screen missing spinner state:\n%s", got)
+	for _, want := range []string{"first check failed", "connection refused", "re-enter to retry"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("failed-first-check page missing %q:\n%s", want, got)
+		}
 	}
-
-	// a second c while probing is refused with a toast, not silently
-	m = press(t, m, "c")
-	if m.toast == nil || !strings.Contains(m.toast.text, "already checking web-1") {
-		t.Fatalf("no already-checking toast: %+v", m.toast)
+	if m.live || m.liveClient != nil {
+		t.Fatal("failed probe must not leave a live session")
 	}
 }
 
-func TestCheckDoneUpdatesEverything(t *testing.T) {
+func TestFailedCheckKeepsFactsAndStopsLive(t *testing.T) {
 	s := readyStore(t)
-	seedNode(t, s, "web-1")
-	m := press(t, New(s), "n", "enter", "c")
-	snap := facts.Node{
-		Hostname: "web-1", OS: "Debian GNU/Linux 12", Docker: "Docker version 24.0.7, build x",
-		CollectedAt: time.Now(),
-	}
-	m2, _ := m.Update(checkDoneMsg{node: "web-1", snap: snap})
-	mm := m2.(Model)
+	nodeWithFacts(t, s, "web-1")
+	m := press(t, New(s), "n", "enter")
+	m = step(t, m, checkDoneMsg{node: "web-1", err: errString("unreachable: connection refused"), seq: m.checkSeq})
 
-	if mm.probing {
+	if m.probing {
 		t.Fatal("probe state not cleared")
 	}
-	if mm.toast == nil || !strings.Contains(mm.toast.text, "checked web-1") {
-		t.Fatalf("no success toast: %+v", mm.toast)
+	// staying on the page: the card is the feedback, no toast
+	if m.toast != nil {
+		t.Fatalf("unexpected toast on the observe page: %+v", m.toast)
 	}
 	n, err := s.GetNode("web-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n.Facts.OS != "Debian GNU/Linux 12" {
-		t.Fatalf("snapshot not persisted: %+v", n.Facts)
+	// the last good snapshot must survive a failed attempt
+	if n.Facts.OS != "Ubuntu 24.04.5 LTS" || n.Facts.Docker == "" {
+		t.Fatalf("facts clobbered by failed check: %+v", n.Facts)
 	}
-	if n.LastCheck.Error != "" || n.LastCheck.At.IsZero() {
-		t.Fatalf("LastCheck not recorded: %+v", n.LastCheck)
+	got := view(m)
+	if !strings.Contains(got, "Ubuntu 24.04.5 LTS") {
+		t.Errorf("failed-check page lost its facts:\n%s", got)
 	}
-	got := view(mm)
-	if !strings.Contains(got, "Debian GNU/Linux 12") {
-		t.Errorf("node screen not refreshed with new facts:\n%s", got)
+	if !strings.Contains(got, "last check failed") {
+		t.Errorf("failed-check page missing the failure:\n%s", got)
 	}
-	if strings.Contains(got, "checking over SSH") {
-		t.Errorf("spinner state leaked after completion:\n%s", got)
+	// the live line degrades honestly, marking the last known memory
+	// as a snapshot instead of pretending to be live
+	if !strings.Contains(got, "live stopped") || !strings.Contains(got, "(snapshot)") {
+		t.Errorf("stopped live line not shown:\n%s", got)
+	}
+}
+
+func TestProbeResultRecordsAndToastsAfterLeaving(t *testing.T) {
+	s := readyStore(t)
+	seedNode(t, s, "web-1")
+	m := press(t, New(s), "n", "enter")
+	// leave while the probe is still running
+	m = press(t, m, "esc")
+	if m.cur().kind != scFleet {
+		t.Fatal("esc did not return to the fleet")
+	}
+	// the result arrives late: still recorded, still toasted
+	m = step(t, m, checkDoneMsg{
+		node: "web-1", snap: richSnapshot("web-1"),
+		client: fakeClient(), seq: m.checkSeq,
+	})
+	if m.toast == nil || !strings.Contains(m.toast.text, "checked web-1") {
+		t.Fatalf("no toast for the missed result: %+v", m.toast)
+	}
+	n, err := s.GetNode("web-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n.Facts.OS != "Ubuntu 24.04.5 LTS" || n.LastCheck.At.IsZero() {
+		t.Fatalf("late result not recorded: %+v %+v", n.Facts, n.LastCheck)
+	}
+	// and the unused connection was closed, not adopted
+	if m.liveClient != nil {
+		t.Fatal("connection adopted while off the node page")
 	}
 }
 
 func TestSSHKeyToastsWithoutBinary(t *testing.T) {
 	s := readyStore(t)
 	seedNode(t, s, "web-1")
-	// an empty PATH: no ssh client to find
+	// an empty PATH: no ssh client to find. The key only exists once
+	// the probe has settled and the observe page is up.
 	t.Setenv("PATH", t.TempDir())
-	m := press(t, New(s), "n", "enter", "s")
+	m := press(t, New(s), "n", "enter")
+	m = observe(t, m, "web-1", richSnapshot("web-1"))
+	m = press(t, m, "s")
 	if m.toast == nil || !strings.Contains(m.toast.text, "ssh") {
 		t.Fatalf("no missing-binary toast: %+v", m.toast)
 	}
@@ -205,10 +265,14 @@ func TestSSHKeyToastsWithoutBinary(t *testing.T) {
 func TestInspectShowsRecordAndFacts(t *testing.T) {
 	s := readyStore(t)
 	nodeWithFacts(t, s, "web-1")
-	// three downs land on Inspect (fourth action)
-	got := view(press(t, New(s), "n", "enter", "down", "down", "down", "enter"))
+	m := press(t, New(s), "n", "enter")
+	m = observe(t, m, "web-1", richSnapshot("web-1"))
+	// two downs land on Inspect record (third action)
+	m = press(t, m, "down", "down", "enter")
+	got := view(m)
 	for _, want := range []string{
 		"Stored record", "Discovered", "Ubuntu 24.04.5 LTS", "just now", "last check", "ok just now",
+		"3.2 GiB/3.8 GiB avail", // the inspect record keeps memory
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("inspect missing %q:\n%s", want, got)

@@ -16,20 +16,33 @@ import (
 	"github.com/elvonpiko/mymo/internal/ssh"
 )
 
-// checkTimeout bounds one whole probe attempt launched from the TUI.
+// checkTimeout bounds one whole probe attempt.
 const checkTimeout = 90 * time.Second
 
-// checkDoneMsg reports a probe attempt's outcome. Err is nil when the
-// node answered with a fresh snapshot.
+// checkDoneMsg reports a probe attempt's outcome. On success the
+// connection is still open, carried along so the observe page can
+// adopt it for live stats — entering a node costs exactly one dial.
 type checkDoneMsg struct {
-	node string
-	snap facts.Node
-	err  error
+	node   string
+	snap   facts.Node
+	err    error
+	client *ssh.Client // open on success; already closed on failure
+	seq    int         // which entry started this probe
 }
 
 // sshFinishedMsg reports the interactive session handed to the system
 // ssh client ending.
 type sshFinishedMsg struct{ err error }
+
+// fleetSetChecking rebuilds the fleet rows, marking the named node
+// as being probed; an empty name clears every flag.
+func (m *Model) fleetSetChecking(name string) {
+	items := make([]list.Item, 0, len(m.nodes))
+	for _, n := range m.nodes {
+		items = append(items, fleetItem{node: n, checking: n.Name == name})
+	}
+	m.fleet.SetItems(items)
+}
 
 // newCheckSpinner builds the probe spinner: accent-colored braille
 // dots animating while a check runs.
@@ -40,53 +53,53 @@ func newCheckSpinner() spinner.Model {
 	)
 }
 
-// runCheck starts a probe of the selected node, animating until the
-// result arrives. One probe runs at a time.
-func (m Model) runCheck() (tea.Model, tea.Cmd) {
-	if m.probing {
-		return m, m.notify("already checking "+m.probingName, toastWarn)
-	}
-	if m.store == nil {
-		return m, m.notify("state store unavailable", toastErr)
-	}
-	m.probing = true
-	m.probingName = m.selNode.Name
-	m.fleetSetChecking(m.selNode.Name)
-	return m, tea.Batch(m.spinner.Tick, m.beginCheck(m.selNode))
-}
-
-// beginCheck probes the node in the background and reports back with
-// checkDoneMsg. The probe is read-only; a failure never touches the
-// node's last good snapshot.
-func (m Model) beginCheck(n domain.Node) tea.Cmd {
-	store := m.store
-	knownHosts := filepath.Join(store.Dir(), "known_hosts.json")
+// beginCheck probes the node in the background. The probe is
+// read-only; a failure never touches the node's last good snapshot.
+func (m Model) beginCheck(n domain.Node, seq int) tea.Cmd {
+	knownHosts := filepath.Join(m.store.Dir(), "known_hosts.json")
 	name := n.Name
 	return func() tea.Msg {
 		client := ssh.New(n, knownHosts)
 		ctx, cancel := context.WithTimeout(context.Background(), checkTimeout)
 		defer cancel()
 		if err := client.Dial(ctx); err != nil {
-			return checkDoneMsg{node: name, err: err}
+			return checkDoneMsg{node: name, err: err, seq: seq}
 		}
-		defer client.Close()
 		snap, err := facts.Probe(ctx, client)
-		return checkDoneMsg{node: name, snap: snap, err: err}
+		if err != nil {
+			client.Close()
+			return checkDoneMsg{node: name, err: err, seq: seq}
+		}
+		return checkDoneMsg{node: name, snap: snap, client: client, seq: seq}
 	}
 }
 
 // handleCheckDone records the probe outcome in the node's record and
-// refreshes the fleet: a success stores the snapshot, a failure
-// stores why it failed so health never silently reverts to green.
+// refreshes the fleet: a success stores the snapshot, a failure stores
+// why it failed — health never silently reverts to green. When the
+// user is still on the node's page, the probe's connection becomes
+// the live session; otherwise it is closed and the result toasts.
 func (m Model) handleCheckDone(msg checkDoneMsg) (tea.Model, tea.Cmd) {
-	m.probing = false
-	m.probingName = ""
-	m.fleetSetChecking("") // clear the probing row before anything else
+	// A superseded probe (the user left and entered another node) still
+	// records its observation, but must not disturb the running one.
+	if msg.seq == m.checkSeq {
+		m.probing = false
+		m.probingName = ""
+	}
+	m.fleetSetChecking(m.probingName)
+
+	closeClient := func() {
+		if msg.client != nil {
+			msg.client.Close()
+		}
+	}
 	if m.store == nil {
+		closeClient()
 		return m, nil
 	}
 	n, err := m.store.GetNode(msg.node)
 	if err != nil {
+		closeClient()
 		return m, m.notify("state error: "+shorten(err.Error(), 40), toastErr)
 	}
 	if msg.err != nil {
@@ -96,26 +109,36 @@ func (m Model) handleCheckDone(msg checkDoneMsg) (tea.Model, tea.Cmd) {
 		n.LastCheck = domain.CheckState{At: time.Now()}
 	}
 	if err := m.store.UpdateNode(n); err != nil {
+		closeClient()
 		return m, m.notify(err.Error(), toastErr)
 	}
 	m.reloadFleet()
-	if m.cur().kind == scNode && m.cur().node == msg.node {
-		m.selNode = n
-	}
-	if msg.err != nil {
-		return m, m.notify("check failed: "+shorten(msg.err.Error(), 44), toastErr)
-	}
-	return m, m.notify("checked "+msg.node, toastOK)
-}
 
-// fleetSetChecking rebuilds the fleet rows, marking the named node
-// as being probed; an empty name clears every flag.
-func (m *Model) fleetSetChecking(name string) {
-	items := make([]list.Item, 0, len(m.nodes))
-	for _, n := range m.nodes {
-		items = append(items, fleetItem{node: n, checking: n.Name == name})
+	onPage := m.cur().kind == scNode && m.cur().node == msg.node && !m.probing
+	if !onPage {
+		closeClient()
+		if msg.err != nil {
+			return m, m.notify("check failed: "+shorten(msg.err.Error(), 44), toastErr)
+		}
+		return m, m.notify("checked "+msg.node, toastOK)
 	}
-	m.fleet.SetItems(items)
+
+	// The page is showing: its own state change is the feedback, so no
+	// toast. Failure lands in the card; success turns the card live.
+	m.selNode = n
+	if msg.err != nil {
+		m.live = false
+		m.liveErr = shorten(msg.err.Error(), 30)
+		return m, nil
+	}
+	m.live = true
+	m.liveSeq++
+	m.liveClient = msg.client
+	m.liveErr = ""
+	// seed the live memory readout from the fresh snapshot so the card
+	// never shows a blank while the first sample is in flight
+	m.liveCur = liveSample{memAvail: msg.snap.MemAvail, memTotal: msg.snap.MemTotal}
+	return m, m.sampleLive(m.liveSeq)
 }
 
 // runSSH execs the system ssh client for the selected node,

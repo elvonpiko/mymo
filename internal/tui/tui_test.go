@@ -12,6 +12,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/elvonpiko/mymo/internal/domain"
+	"github.com/elvonpiko/mymo/internal/facts"
+	"github.com/elvonpiko/mymo/internal/ssh"
 	"github.com/elvonpiko/mymo/internal/state"
 )
 
@@ -215,8 +217,18 @@ func TestNavigationStack(t *testing.T) {
 	s := readyStore(t)
 	seedNode(t, s, "web-1")
 	m := press(t, New(s), "n", "enter")
+	// entering observes: the loading page is up while the probe runs
+	if got := view(m); !strings.Contains(got, "observing web-1") {
+		t.Fatalf("enter did not start observation:\n%s", got)
+	}
+	m = step(t, m, checkDoneMsg{
+		node:   "web-1",
+		snap:   facts.Node{Hostname: "web-1", CollectedAt: time.Now()},
+		client: ssh.New(domain.Node{}, ""),
+		seq:    m.checkSeq,
+	})
 	if got := view(m); !strings.Contains(got, "ACTIONS") {
-		t.Fatalf("enter did not open the node screen:\n%s", got)
+		t.Fatalf("observe page did not open after the probe:\n%s", got)
 	}
 	m = press(t, m, "esc")
 	if got := view(m); !strings.Contains(got, "NODES") {
@@ -232,30 +244,32 @@ func TestNodeActionsNavigation(t *testing.T) {
 	s := readyStore(t)
 	seedNode(t, s, "web-1")
 
-	// Actions in display order: Check now, SSH, Applications, Inspect
-	// record, Remove. The SSH action execs a real ssh client, so the
-	// journey skips it: this test walks the navigable screens.
+	// Actions in display order: SSH, Applications, Inspect record,
+	// Remove. SSH execs a real ssh client, so the journey skips it:
+	// this test walks the navigable screens.
 	m := press(t, New(s), "n", "enter")
-	if got := view(m); !strings.Contains(got, "ACTIONS") {
-		t.Fatalf("enter did not open the node screen:\n%s", got)
-	}
+	m = step(t, m, checkDoneMsg{
+		node: "web-1", seq: m.checkSeq,
+		snap:   facts.Node{Hostname: "web-1", CollectedAt: time.Now()},
+		client: ssh.New(domain.Node{}, ""),
+	})
 
-	m = press(t, m, "down", "down", "enter") // action 2: Applications
+	m = press(t, m, "down", "enter") // action 1: Applications
 	if got := view(m); !strings.Contains(got, "no mymo-managed applications") {
 		t.Fatalf("applications action missing:\n%s", got)
 	}
 	m = press(t, m, "esc")
 	if got := view(m); !strings.Contains(got, "ACTIONS") {
-		t.Fatalf("esc did not return to the node screen:\n%s", got)
+		t.Fatalf("esc did not return to the observe page:\n%s", got)
 	}
 
-	m = press(t, m, "down", "enter") // action 3: Inspect (index preserved at 2)
+	m = press(t, m, "down", "enter") // action 2: Inspect (index preserved at 1)
 	if got := view(m); !strings.Contains(got, "Stored record") {
 		t.Fatalf("inspect action missing:\n%s", got)
 	}
 	m = press(t, m, "esc")
 
-	m = press(t, m, "down", "enter") // action 4: Remove (index preserved at 3)
+	m = press(t, m, "down", "enter") // action 3: Remove (index preserved at 2)
 	if got := view(m); !strings.Contains(got, "not touched") {
 		t.Fatalf("remove confirmation missing:\n%s", got)
 	}
@@ -269,9 +283,15 @@ func TestRemoveNodeFlow(t *testing.T) {
 	s := readyStore(t)
 	seedNode(t, s, "web-1")
 	seedNode(t, s, "web-2")
-	// five actions: Check, SSH, Applications, Inspect, Remove — four
-	// downs land on Remove.
-	m := press(t, New(s), "n", "enter", "down", "down", "down", "down", "enter", "y")
+	m := press(t, New(s), "n", "enter")
+	m = step(t, m, checkDoneMsg{
+		node: "web-1", seq: m.checkSeq,
+		snap:   facts.Node{Hostname: "web-1", CollectedAt: time.Now()},
+		client: ssh.New(domain.Node{}, ""),
+	})
+	// four actions: SSH, Applications, Inspect, Remove — three downs
+	// land on Remove.
+	m = press(t, m, "down", "down", "down", "enter", "y")
 	if _, err := s.GetNode("web-1"); !errors.Is(err, state.ErrNodeNotFound) {
 		t.Fatalf("node still present after confirm: %v", err)
 	}

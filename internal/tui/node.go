@@ -5,6 +5,7 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
@@ -14,22 +15,20 @@ import (
 	"github.com/elvonpiko/mymo/internal/facts"
 )
 
-// actionID identifies a node-screen action.
+// actionID identifies an observe-page action.
 type actionID int
 
 const (
-	actCheck actionID = iota
-	actSSH
+	actSSH actionID = iota
 	actApps
 	actInspect
 	actRemove
 )
 
-// actionDefs lists the node actions in display order. Checking is the
-// primary verb of observe mode, so it leads.
+// actionDefs lists the observe page's actions. Checking is not among
+// them: entering the page is the check.
 func actionDefs() []actionItem {
 	return []actionItem{
-		{actCheck, "Check now", "probe this node and store the snapshot"},
 		{actSSH, "SSH", "open an interactive session on the node"},
 		{actApps, "Applications", "list applications on this node"},
 		{actInspect, "Inspect record", "the full stored state for this node"},
@@ -82,22 +81,12 @@ func newActionsList() list.Model {
 	return l
 }
 
-// nodeView renders the node overview: health heading, the discovered
-// snapshot, and the node's actions.
+// nodeView renders the observe page: health heading, the discovered
+// card with live stats, and the node's actions.
 func (m Model) nodeView() string {
 	n := m.selNode
-
-	// The heading: an animated spinner while probing, the health dot
-	// otherwise.
-	head := nodeStatusLine(n, modeBadge(n.Mode))
-	if m.probing && m.probingName == n.Name {
-		head = m.spinner.View() + " " + titleStyle.Render(n.Name) + " " +
-			modeBadge(n.Mode) + "  " + faintStyle.Render("·") + " " +
-			subtextStyle.Render("checking over SSH")
-	}
-
 	var b strings.Builder
-	b.WriteString(head)
+	b.WriteString(nodeStatusLine(n, modeBadge(n.Mode)))
 	b.WriteString("\n")
 	auth := fmt.Sprintf("%s auth", n.Auth)
 	if n.Auth == domain.AuthKey {
@@ -114,22 +103,43 @@ func (m Model) nodeView() string {
 	return fitHeight(b.String(), m.contentHeight)
 }
 
+// loadingView is the observation ceremony: mymo's mark and word, a
+// spinner, what is running, and how long it has been running —
+// updated live by the spinner's ticks.
+func (m Model) loadingView() string {
+	elapsed := time.Since(m.probeStart).Truncate(time.Second)
+	inner := brandIcon() + " " + brandStyle.Render("mymo") + "\n\n" +
+		m.spinner.View() + " " + subtextStyle.Render("observing "+m.selNode.Name+" over SSH") + "\n" +
+		faintStyle.Render("ten read-only commands · "+elapsed.String()) + "\n" +
+		faintStyle.Render("nothing on the node is modified")
+	return lipgloss.Place(m.contentWidth, m.contentHeight,
+		lipgloss.Center, lipgloss.Center, inner)
+}
+
 // discoveredCard renders the last discovery snapshot as a compact
-// two-column card, with the live strip riding its bottom. An
-// unchecked node is told how to get its first snapshot; a failed
-// check keeps the last good facts and names the failure.
+// two-column card with the live line riding its bottom. Memory and
+// cpu live in the live line — the card never shows them twice. An
+// unchecked node is told how observation works; a failed check keeps
+// the last good facts and names the failure.
 func (m Model) discoveredCard(n domain.Node) string {
 	var inner string
 	switch {
-	case m.probing && m.probingName == n.Name:
-		inner = m.spinner.View() + " " + subtextStyle.Render("checking "+n.Name+" over SSH") + "\n" +
-			faintStyle.Render("ten read-only commands, nothing is modified")
 	case n.Facts.CollectedAt.IsZero() && n.LastCheck.At.IsZero():
 		inner = faintStyle.Render("no snapshot yet") + "\n" +
-			textStyle.Render("press ") + accentStyle.Render("[c]") + textStyle.Render(" check now — mymo connects, runs ten") + "\n" +
-			textStyle.Render("read-only commands, and stores what it finds")
+			textStyle.Render("entering a node observes it — leave and") + "\n" +
+			textStyle.Render("re-enter to try again")
+	case n.Facts.CollectedAt.IsZero():
+		// checked before, never successfully
+		inner = errStyle.Render("first check failed: ") + subtextStyle.Render(shorten(n.LastCheck.Error, 44)) + "\n" +
+			faintStyle.Render("esc, then re-enter to retry")
 	default:
-		rows := m.discoveredRows(n)
+		rows := make([][2]string, 0, len(m.discoveredRows(n)))
+		for _, r := range m.discoveredRows(n) {
+			if r[0] == "memory" {
+				continue // the live line owns memory
+			}
+			rows = append(rows, r)
+		}
 		var b strings.Builder
 		for i := 0; i < len(rows); i += 2 {
 			left := discoveredCell(rows[i])
@@ -144,7 +154,7 @@ func (m Model) discoveredCard(n domain.Node) string {
 			inner += "\n" + errStyle.Render("last check failed: ") + subtextStyle.Render(shorten(n.LastCheck.Error, 44))
 		}
 	}
-	return factsPanelStyle.Render(inner + "\n" + m.liveStrip())
+	return factsPanelStyle.Render(inner + "\n" + m.liveLine())
 }
 
 // discoveredRows builds the snapshot's label/value pairs, one pair per

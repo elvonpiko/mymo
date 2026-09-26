@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/list"
@@ -39,10 +40,13 @@ type Model struct {
 	loadErr       error
 	toast         *toast
 
-	// probe state: one check runs at a time, animating the node
-	// screen and marking the fleet row until checkDoneMsg lands.
+	// probe state: entering a node observes it — the probe runs with
+	// the loading page up, its connection then adopted for live
+	// stats. seq identifies the entry that started it.
 	probing     bool
 	probingName string
+	probeStart  time.Time
+	checkSeq    int
 	spinner     spinner.Model
 
 	// live stats state (node screen). seq identifies the sampling
@@ -179,9 +183,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case sshFinishedMsg:
 		return m.handleSSHFinished(msg)
 
-	case liveReadyMsg:
-		return m.handleLiveReady(msg)
-
 	case liveSampleMsg:
 		return m.handleLiveSample(msg)
 
@@ -306,16 +307,31 @@ func (m Model) updateFleetKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "enter":
 		if item, ok := m.fleet.SelectedItem().(fleetItem); ok {
-			m.openNode(item.node)
+			cmd := m.openNode(item.node)
+			return m, cmd
 		}
 		return m, nil
 	}
 	return m.forward(msg)
 }
 
-// updateNodeKeys handles keys on the node overview screen: the action
-// list, plus check, ssh, and live as direct keys.
+// updateNodeKeys handles keys on the observe page. While a probe is
+// running the loading page owns the keys: esc cancels the visit, q
+// quits; everything else waits.
 func (m Model) updateNodeKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.probing {
+		switch msg.String() {
+		case "q":
+			return m, tea.Quit
+		case "esc":
+			m.probing = false
+			m.probingName = ""
+			m.fleetSetChecking("")
+			m.pop()
+			return m, nil
+		}
+		return m, nil
+	}
 	switch msg.String() {
 	case "q":
 		return m, tea.Quit
@@ -323,12 +339,8 @@ func (m Model) updateNodeKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.stopLive()
 		m.pop()
 		return m, nil
-	case "c":
-		return m.runCheck()
 	case "s":
 		return m.runSSH()
-	case "l":
-		return m.runLiveToggle()
 	case "enter":
 		if a, ok := m.actions.SelectedItem().(actionItem); ok {
 			return m.runAction(a)
@@ -376,11 +388,9 @@ func (m Model) updateRemoveConfirm(str string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// runAction executes a node-screen action.
+// runAction executes an observe-page action.
 func (m Model) runAction(a actionItem) (tea.Model, tea.Cmd) {
 	switch a.id {
-	case actCheck:
-		return m.runCheck()
 	case actSSH:
 		return m.runSSH()
 	case actApps:
@@ -393,15 +403,22 @@ func (m Model) runAction(a actionItem) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// openNode focuses a node: pushes its screen and rebuilds the action
-// list. Entering a different node ends any live session first.
-func (m *Model) openNode(n domain.Node) {
+// openNode enters a node's observe page: entering observes. A fresh
+// probe starts with the loading page up; its connection is adopted
+// for live stats when the snapshot lands.
+func (m *Model) openNode(n domain.Node) tea.Cmd {
 	m.stopLive()
 	m.selNode = n
 	m.actions = newActionsList()
 	// the rebuilt list must be sized to the window, not its default
 	m.actions.SetSize(m.contentWidth, len(actionDefs())+1)
 	m.push(screen{kind: scNode, node: n.Name})
+	m.probing = true
+	m.probingName = n.Name
+	m.probeStart = time.Now()
+	m.checkSeq++
+	m.fleetSetChecking(n.Name)
+	return tea.Batch(m.spinner.Tick, m.beginCheck(n, m.checkSeq))
 }
 
 // filterActive reports whether the fleet filter is receiving keystrokes.
@@ -498,9 +515,12 @@ func (m Model) workspaceView() string {
 		case scFleet:
 			content = m.fleetView()
 		case scNode:
-			if m.confirmRemove {
+			switch {
+			case m.probing:
+				content = m.loadingView()
+			case m.confirmRemove:
 				content = m.removeConfirmView()
-			} else {
+			default:
 				content = m.nodeView()
 			}
 		case scNodeApps:
@@ -632,6 +652,9 @@ func (m Model) keymap() help.KeyMap {
 	case scFleet:
 		return newFleetKeymap()
 	case scNode:
+		if m.probing {
+			return newLoadingKeymap()
+		}
 		if m.confirmRemove {
 			return newConfirmKeymap()
 		}

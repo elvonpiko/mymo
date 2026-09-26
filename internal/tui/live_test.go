@@ -3,9 +3,6 @@ package tui
 import (
 	"strings"
 	"testing"
-
-	"github.com/elvonpiko/mymo/internal/domain"
-	"github.com/elvonpiko/mymo/internal/ssh"
 )
 
 const sampleLiveOut = `0.08 0.10 0.09 1/126 4567
@@ -39,13 +36,11 @@ func TestParseLive(t *testing.T) {
 }
 
 func TestParseLiveEmptyAndGarbage(t *testing.T) {
-	s := parseLive("")
-	if s != (liveSample{}) {
-		t.Fatalf("empty input = %+v, want zero", s)
+	if s := parseLive(""); s != (liveSample{}) {
+		t.Errorf("empty input = %+v, want zero", s)
 	}
-	s = parseLive("garbage\nmore garbage\n")
-	if s != (liveSample{}) {
-		t.Fatalf("garbage input = %+v, want zero", s)
+	if s := parseLive("garbage\nmore garbage\n"); s != (liveSample{}) {
+		t.Errorf("garbage input = %+v, want zero", s)
 	}
 }
 
@@ -62,25 +57,14 @@ func TestSpark(t *testing.T) {
 	}
 }
 
-// liveOn returns a model on web-1's node screen with live toggled on
-// and the given client as its live connection.
-func liveOn(t *testing.T, client *ssh.Client) Model {
-	t.Helper()
+func TestLiveSamplesFlow(t *testing.T) {
 	s := readyStore(t)
 	seedNode(t, s, "web-1")
-	m := press(t, New(s), "n", "enter", "l")
-	if !m.live {
-		t.Fatal("l did not start live sampling")
+	m := press(t, New(s), "n", "enter")
+	m = observe(t, m, "web-1", richSnapshot("web-1"))
+	if !m.live || m.liveClient == nil {
+		t.Fatal("observation did not adopt the probe connection for live")
 	}
-	if got := view(m); !strings.Contains(got, "connecting") {
-		t.Fatalf("live strip missing connecting state:\n%s", got)
-	}
-	m.liveClient = client
-	return m
-}
-
-func TestLiveSamplesFlow(t *testing.T) {
-	m := liveOn(t, ssh.New(domain.Node{}, ""))
 
 	// first sample: no cpu percent until a delta exists
 	m = step(t, m, liveSampleMsg{seq: m.liveSeq, s: liveSample{
@@ -90,8 +74,11 @@ func TestLiveSamplesFlow(t *testing.T) {
 	if m.liveCPU != -1 {
 		t.Fatalf("first sample should not guess cpu: %d", m.liveCPU)
 	}
+	if got := view(m); !strings.Contains(got, "warming") {
+		t.Errorf("cpu should say warming before two samples:\n%s", got)
+	}
 
-	// second sample: 100 of 1000 jiffies went to work -> 10%
+	// second sample: 100 of 1000 new jiffies went to work -> 10%
 	m = step(t, m, liveSampleMsg{seq: m.liveSeq, s: liveSample{
 		load: "0.12", memTotal: 100, memAvail: 40,
 		busy: 200, idle: 1800, total: 2000,
@@ -111,25 +98,27 @@ func TestLiveSamplesFlow(t *testing.T) {
 		t.Fatalf("mem spark = %v, want [50 60]", m.liveSparkMem)
 	}
 	got := view(m)
-	for _, want := range []string{"live", "10%", "▄▅", "40 B/100 B avail", "0.12"} {
+	for _, want := range []string{"● live", "10%", "▄▅", "40 B/100 B avail", "0.12"} {
 		if !strings.Contains(got, want) {
-			t.Errorf("live strip missing %q:\n%s", want, got)
+			t.Errorf("live line missing %q:\n%s", want, got)
 		}
 	}
 
-	// toggle off: the strip returns to its hint, connection dropped
-	m = press(t, m, "l")
+	// leaving the node drops the connection and the live line's data
+	m = press(t, m, "esc")
 	if m.live || m.liveClient != nil {
-		t.Fatalf("live did not stop: live=%v client=%v", m.live, m.liveClient != nil)
+		t.Fatalf("esc did not stop live: live=%v client=%v", m.live, m.liveClient != nil)
 	}
-	got = view(m)
-	if !strings.Contains(got, "[l] live") {
-		t.Errorf("strip did not return to hint:\n%s", got)
+	if m.cur().kind != scFleet {
+		t.Fatalf("esc did not return to the fleet: %v", m.cur().kind)
 	}
 }
 
 func TestLiveErrorStopsSampling(t *testing.T) {
-	m := liveOn(t, ssh.New(domain.Node{}, ""))
+	s := readyStore(t)
+	seedNode(t, s, "web-1")
+	m := press(t, New(s), "n", "enter")
+	m = observe(t, m, "web-1", richSnapshot("web-1"))
 	m = step(t, m, liveErrMsg{seq: m.liveSeq, err: errString("ssh: unreachable: refused")})
 	if m.live || m.liveClient != nil {
 		t.Fatal("live did not stop on error")
@@ -139,53 +128,81 @@ func TestLiveErrorStopsSampling(t *testing.T) {
 	}
 	got := view(m)
 	if !strings.Contains(got, "live stopped") || !strings.Contains(got, "unreachable: refused") {
-		t.Errorf("strip missing the honest stop reason:\n%s", got)
+		t.Errorf("live line missing the honest stop reason:\n%s", got)
+	}
+	// the stopped line keeps the last known memory, labeled a snapshot
+	if !strings.Contains(got, "(snapshot)") {
+		t.Errorf("stopped line missing the snapshot marker:\n%s", got)
 	}
 }
 
 func TestLiveIgnoresStaleSessionMessages(t *testing.T) {
-	m := liveOn(t, ssh.New(domain.Node{}, ""))
-	stale := m.liveSeq
-	m = step(t, m, liveErrMsg{seq: stale + 5, err: errString("old session died")})
+	s := readyStore(t)
+	seedNode(t, s, "web-1")
+	m := press(t, New(s), "n", "enter")
+	m = observe(t, m, "web-1", richSnapshot("web-1"))
+
+	// a message from a superseded session must not stop the live one
+	m = step(t, m, liveErrMsg{seq: m.liveSeq + 5, err: errString("old session died")})
 	if !m.live || m.liveErr != "" {
 		t.Fatal("stale error killed the current session")
 	}
-	// a stale ready message closes its client instead of replacing
-	// the active one
-	old := m.liveClient
-	fresh := ssh.New(domain.Node{}, "")
-	m2 := step(t, m, liveReadyMsg{seq: stale + 5, client: fresh})
-	if m2.liveClient != old {
-		t.Fatal("stale ready replaced the live connection")
+	m = step(t, m, liveSampleMsg{seq: m.liveSeq + 5, s: liveSample{load: "9.99"}})
+	if m.liveCur.load == "9.99" {
+		t.Fatal("stale sample corrupted the current session")
 	}
 }
 
-func TestLiveStopsWhenLeavingNode(t *testing.T) {
-	m := liveOn(t, ssh.New(domain.Node{}, ""))
-	m = press(t, m, "esc")
-	if m.live || m.liveClient != nil {
-		t.Fatal("esc did not stop live sampling")
-	}
-	if m.cur().kind != scFleet {
-		t.Fatalf("esc did not return to the fleet: %v", m.cur().kind)
-	}
-}
-
-func TestLiveStopsWhenOpeningAnotherNode(t *testing.T) {
+func TestEnteringAnotherNodeStopsLive(t *testing.T) {
 	s := readyStore(t)
 	seedNode(t, s, "web-1")
 	seedNode(t, s, "web-2")
-	m := press(t, New(s), "n", "enter", "l")
-	if !m.live {
-		t.Fatal("l did not start live sampling")
+	m := press(t, New(s), "n", "enter")
+	m = observe(t, m, "web-1", richSnapshot("web-1"))
+	if !m.live || m.liveClient == nil {
+		t.Fatal("live session not running")
 	}
-	m.liveClient = ssh.New(domain.Node{}, "")
-	// back to the fleet, then into the other node
+	// back to the fleet, then into the other node — a new observation
 	m = press(t, m, "esc", "down", "enter")
 	if m.live || m.liveClient != nil {
 		t.Fatal("opening another node did not stop the previous live session")
 	}
-	if m.cur().node != "web-2" {
-		t.Fatalf("did not open web-2: %q", m.cur().node)
+	if m.cur().node != "web-2" || !m.probing || m.probingName != "web-2" {
+		t.Fatalf("did not start observing web-2: screen=%q probing=%v", m.cur().node, m.probing)
+	}
+}
+
+func TestSupersededProbeRecordsWithoutDisturbingTheNew(t *testing.T) {
+	s := readyStore(t)
+	seedNode(t, s, "web-1")
+	seedNode(t, s, "web-2")
+	m := press(t, New(s), "n", "enter")
+	oldSeq := m.checkSeq
+	// leave before web-1's probe answers, start observing web-2
+	m = press(t, m, "esc", "down", "enter")
+	if m.checkSeq == oldSeq || !m.probing || m.probingName != "web-2" {
+		t.Fatalf("web-2 observation not running: seq=%d probing=%v", m.checkSeq, m.probing)
+	}
+	// web-1's late result lands: recorded and toasted, but web-2's
+	// loading page keeps running untouched
+	m = step(t, m, checkDoneMsg{
+		node: "web-1", snap: richSnapshot("web-1"),
+		client: fakeClient(), seq: oldSeq,
+	})
+	if !m.probing || m.probingName != "web-2" {
+		t.Fatalf("late result disturbed web-2's probe: probing=%v name=%q", m.probing, m.probingName)
+	}
+	if m.toast == nil || !strings.Contains(m.toast.text, "checked web-1") {
+		t.Fatalf("no toast for the missed result: %+v", m.toast)
+	}
+	if m.liveClient != nil {
+		t.Fatal("late result adopted its connection off-page")
+	}
+	n, err := s.GetNode("web-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n.Facts.OS != "Ubuntu 24.04.5 LTS" {
+		t.Fatalf("superseded probe result not recorded: %+v", n.Facts)
 	}
 }
