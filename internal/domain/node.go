@@ -37,6 +37,13 @@ const (
 	AuthAgent AuthMethod = "agent"
 )
 
+// CheckState is the outcome of the most recent discovery probe attempt,
+// successful or not. Error is empty exactly when the attempt succeeded.
+type CheckState struct {
+	At    time.Time `json:"at,omitzero"`
+	Error string    `json:"error,omitempty"`
+}
+
 // Node is a remote server known to mymo, stored in local state.
 type Node struct {
 	Name    string     `json:"name"`
@@ -51,6 +58,11 @@ type Node struct {
 	// Facts is the last discovery snapshot for this node, refreshed by
 	// probes. CollectedAt doubles as the last-seen marker.
 	Facts facts.Node `json:"facts,omitzero"`
+
+	// LastCheck is the outcome of the most recent probe attempt. A
+	// failed check keeps the last good facts while recording why the
+	// attempt failed, so health never silently reverts to green.
+	LastCheck CheckState `json:"last_check,omitzero"`
 }
 
 // nodeNamePattern allows 1-40 lowercase names built from letters, digits,

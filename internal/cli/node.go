@@ -16,6 +16,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/elvonpiko/mymo/internal/domain"
+	"github.com/elvonpiko/mymo/internal/facts"
 	"github.com/elvonpiko/mymo/internal/ssh"
 	"github.com/elvonpiko/mymo/internal/state"
 	"github.com/elvonpiko/mymo/internal/tui"
@@ -142,9 +143,21 @@ func printNodeDetail(w io.Writer, n domain.Node) {
 		[2]string{"mode", string(n.Mode)},
 		[2]string{"added", n.AddedAt.Format(time.RFC3339)},
 	)
+	if n.LastCheck.At.IsZero() {
+		rows = append(rows, [2]string{"last check", "never"})
+	} else if n.LastCheck.Error != "" {
+		rows = append(rows, [2]string{"last check", "failed " + facts.FormatAge(n.LastCheck.At) + ": " + n.LastCheck.Error})
+	} else {
+		rows = append(rows, [2]string{"last check", "ok " + facts.FormatAge(n.LastCheck.At)})
+	}
 	for _, r := range rows {
 		fmt.Fprintf(w, "%-11s %s\n", r[0]+":", r[1])
 	}
+	if n.Facts.CollectedAt.IsZero() {
+		return
+	}
+	fmt.Fprintln(w)
+	printFacts(w, n.Facts)
 }
 
 // nodeInput gathers node fields from flags and the interactive form.

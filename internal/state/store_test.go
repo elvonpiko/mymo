@@ -135,6 +135,57 @@ func TestUpdateNodeNotFound(t *testing.T) {
 	}
 }
 
+func TestNodeLastCheckRoundTrip(t *testing.T) {
+	s := openTestStore(t)
+	if err := s.AddNode(testNode("web-1")); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := s.GetNode("web-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Now().Truncate(time.Second)
+	updated.LastCheck = domain.CheckState{At: at, Error: "unreachable: connection refused"}
+	if err := s.UpdateNode(updated); err != nil {
+		t.Fatalf("UpdateNode() = %v, want nil", err)
+	}
+	got, err := s.GetNode("web-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.LastCheck != (domain.CheckState{At: at, Error: "unreachable: connection refused"}) {
+		t.Fatalf("last check round trip:\ngot  %+v", got.LastCheck)
+	}
+
+	// a recovering check clears the error and keeps no stale state
+	got.LastCheck = domain.CheckState{At: at.Add(time.Minute)}
+	if err := s.UpdateNode(got); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.GetNode("web-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.LastCheck.Error != "" || !got.LastCheck.At.Equal(at.Add(time.Minute)) {
+		t.Fatalf("recovered check = %+v", got.LastCheck)
+	}
+
+	// a never-checked node carries no last_check key at all
+	if err := s.AddNode(testNode("plain")); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(s.Dir(), nodesFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plainRaw := string(b)
+	if idx := strings.Index(plainRaw, `"plain"`); idx >= 0 {
+		if strings.Contains(plainRaw[idx:], "last_check") {
+			t.Fatalf("never-checked node grew a last_check key:\n%s", b)
+		}
+	}
+}
+
 func TestNodeFactsRoundTrip(t *testing.T) {
 	s := openTestStore(t)
 	if err := s.AddNode(testNode("web-1")); err != nil {

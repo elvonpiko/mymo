@@ -8,7 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
+	"time"
 
 	"github.com/elvonpiko/mymo/internal/domain"
 	"github.com/elvonpiko/mymo/internal/facts"
@@ -42,6 +42,7 @@ func runNodeCheck(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	fmt.Fprintf(stderr, "probing %s (%s)...\n", node.Name, node.Address())
 	client := ssh.New(node, knownHostsPath(store))
 	if err := client.Dial(ctx); err != nil {
+		recordFailedCheck(store, node, err)
 		fmt.Fprintf(stderr, "mymo node check: %v\n", err)
 		return exitErr
 	}
@@ -49,10 +50,12 @@ func runNodeCheck(ctx context.Context, args []string, stdout, stderr io.Writer) 
 
 	snapshot, err := facts.Probe(ctx, client)
 	if err != nil {
+		recordFailedCheck(store, node, err)
 		fmt.Fprintf(stderr, "mymo node check: %v\n", err)
 		return exitErr
 	}
 	node.Facts = snapshot
+	node.LastCheck = domain.CheckState{At: time.Now()}
 	if err := store.UpdateNode(node); err != nil {
 		fmt.Fprintf(stderr, "mymo node check: %v\n", err)
 		return exitErr
@@ -61,16 +64,19 @@ func runNodeCheck(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	return exitOK
 }
 
+// recordFailedCheck stores why a probe attempt failed, keeping the
+// node's last good facts — health must never silently revert to green.
+// Storage errors are secondary to the probe error and are ignored.
+func recordFailedCheck(store *state.Store, node domain.Node, err error) {
+	node.LastCheck = domain.CheckState{At: time.Now(), Error: err.Error()}
+	_ = store.UpdateNode(node)
+}
+
 // runNodeSSH opens an interactive shell on the node by execing the
 // system ssh client. An interactive shell needs a real terminal, so
 // the child inherits the process streams — the one place the CLI
 // bypasses the passed writers; diagnostics printed before the exec
 // still go through stderr. The child's exit code becomes mymo's.
-//
-// The exec'd ssh keeps its own host-key trust store inside mymo's
-// state directory, following the transport's policy: first contact is
-// accepted and remembered, any later mismatch is refused. The user's
-// ~/.ssh/known_hosts is never touched.
 func runNodeSSH(args []string, stderr io.Writer) int {
 	if len(args) != 1 {
 		fmt.Fprintln(stderr, "usage: mymo node ssh <name>")
@@ -87,22 +93,11 @@ func runNodeSSH(args []string, stderr io.Writer) int {
 		return exitErr
 	}
 
-	bin, err := exec.LookPath("ssh")
+	cmd, err := ssh.InteractiveCommand(node, ssh.InteractiveKnownHostsPath(store.Dir()))
 	if err != nil {
-		fmt.Fprintln(stderr, "mymo node ssh: no ssh executable in PATH")
+		fmt.Fprintf(stderr, "mymo node ssh: %v\n", err)
 		return exitErr
 	}
-	sshArgs := []string{
-		"-p", strconv.Itoa(node.Port),
-		"-o", "UserKnownHostsFile=" + filepath.Join(store.Dir(), "known_hosts"),
-		"-o", "StrictHostKeyChecking=accept-new",
-	}
-	if node.Auth == domain.AuthKey {
-		sshArgs = append(sshArgs, "-i", node.KeyPath, "-o", "IdentitiesOnly=yes")
-	}
-	sshArgs = append(sshArgs, node.User+"@"+node.Host)
-
-	cmd := exec.Command(bin, sshArgs...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

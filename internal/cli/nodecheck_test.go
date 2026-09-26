@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/elvonpiko/mymo/internal/sshtest"
 	"github.com/elvonpiko/mymo/internal/state"
@@ -151,6 +150,21 @@ func TestNodeCheckUnreachableNode(t *testing.T) {
 	if !strings.Contains(errStr, "unreachable") {
 		t.Errorf("stderr = %q, want unreachable error", errStr)
 	}
+	// the failure is recorded so health never silently reverts
+	store, err := state.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := store.GetNode("dead-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n.LastCheck.Error == "" || n.LastCheck.At.IsZero() {
+		t.Fatalf("failed check not recorded: %+v", n.LastCheck)
+	}
+	if n.Facts.CollectedAt.IsZero() == false {
+		t.Fatal("failed check should not invent facts")
+	}
 }
 
 func TestNodeSSHExecsSystemSSH(t *testing.T) {
@@ -239,60 +253,5 @@ func TestNodeAddRejectsKeyThatDoesNotParse(t *testing.T) {
 	code, out, _ := s.run(t, "node", "list")
 	if code != exitOK || !strings.Contains(out, "No nodes yet") {
 		t.Errorf("rejected node leaked into state: %q", out)
-	}
-}
-
-func TestFormatBytes(t *testing.T) {
-	cases := []struct {
-		in   uint64
-		want string
-	}{
-		{0, "0 B"},
-		{512, "512 B"},
-		{2048, "2.0 KiB"},
-		{4194304, "4.0 MiB"},
-		{4106280960, "3.8 GiB"},
-		{42024214528, "39 GiB"},
-		{1024 * 1024 * 1024 * 1024, "1.0 TiB"},
-	}
-	for _, tc := range cases {
-		if got := formatBytes(tc.in); got != tc.want {
-			t.Errorf("formatBytes(%d) = %q, want %q", tc.in, got, tc.want)
-		}
-	}
-}
-
-func TestFormatUptime(t *testing.T) {
-	cases := []struct {
-		in   time.Duration
-		want string
-	}{
-		{0, "less than a minute"},
-		{30 * time.Second, "less than a minute"},
-		{5 * time.Minute, "5 minutes"},
-		{90 * time.Minute, "1 hour 30 minutes"},
-		{42 * time.Hour, "1 day 18 hours"},
-		{9*24*time.Hour + 17*time.Hour, "9 days 17 hours"},
-	}
-	for _, tc := range cases {
-		if got := formatUptime(tc.in); got != tc.want {
-			t.Errorf("formatUptime(%v) = %q, want %q", tc.in, got, tc.want)
-		}
-	}
-}
-
-func TestDockerVersion(t *testing.T) {
-	cases := []struct {
-		in, want string
-	}{
-		{"Docker version 27.3.1, build 29.1.3-0ubuntu3~24.04.2", "27.3.1"},
-		{"Docker version 24.0.7", "24.0.7"},
-		{"podman 4.3.1", "podman 4.3.1"},
-		{"", ""},
-	}
-	for _, tc := range cases {
-		if got := dockerVersion(tc.in); got != tc.want {
-			t.Errorf("dockerVersion(%q) = %q, want %q", tc.in, got, tc.want)
-		}
 	}
 }

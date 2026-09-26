@@ -12,13 +12,18 @@ import (
 	"github.com/elvonpiko/mymo/internal/domain"
 )
 
-// fleetItem adapts a domain node for the fleet list.
-type fleetItem struct{ node domain.Node }
+// fleetItem adapts a domain node for the fleet list. Checking marks
+// the row of a probe currently in flight.
+type fleetItem struct {
+	node     domain.Node
+	checking bool
+}
 
 // FilterValue makes fleet items filterable by node name.
 func (i fleetItem) FilterValue() string { return i.node.Name }
 
-// fleetDelegate renders fleet rows: cursor, dot, name, address, mode badge.
+// fleetDelegate renders fleet rows: cursor, dot, name, address, mode
+// badge, and the last check's honest status.
 type fleetDelegate struct{}
 
 func (fleetDelegate) Height() int                             { return 1 }
@@ -37,12 +42,20 @@ func (fleetDelegate) Render(w io.Writer, m list.Model, index int, item list.Item
 		nameStyle = itemSelStyle
 	}
 	addr := fmt.Sprintf("%s@%s", it.node.User, it.node.Address())
+	status := ""
+	statusStyle := faintStyle
+	if it.checking {
+		status = "checking"
+		statusStyle = accentStyle
+	} else {
+		status, statusStyle = healthLabel(it.node)
+	}
 	line := cursor +
-		faintStyle.Render("● ") +
+		statusStyle.Render("● ") +
 		nameStyle.Width(20).Render(it.node.Name) +
 		dimStyle.Width(30).Render(addr) +
 		modeBadge(it.node.Mode) +
-		"  " + faintStyle.Render("unverified")
+		"  " + statusStyle.Render(status)
 	fmt.Fprint(w, line)
 }
 

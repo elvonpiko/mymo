@@ -6,6 +6,7 @@ import (
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/list"
+	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
@@ -36,6 +37,12 @@ type Model struct {
 	selNode       domain.Node
 	loadErr       error
 	toast         *toast
+
+	// probe state: one check runs at a time, animating the node
+	// screen and marking the fleet row until checkDoneMsg lands.
+	probing     bool
+	probingName string
+	spinner     spinner.Model
 
 	addNode addNodeState
 
@@ -78,6 +85,7 @@ func New(store *state.Store) Model {
 	m.descAnim = m.introDone
 	m.fleet = newFleetList(m.nodes)
 	m.actions = newActionsList()
+	m.spinner = newCheckSpinner()
 	applyHelpPalette(&m.help)
 	applyHelpPalette(&m.fullHelp)
 	m.layout()
@@ -142,6 +150,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 		return m, nil
+
+	case spinner.TickMsg:
+		if m.probing {
+			var cmd tea.Cmd
+			m.spinner, cmd = m.spinner.Update(msg)
+			return m, cmd
+		}
+		return m, nil
+
+	case checkDoneMsg:
+		return m.handleCheckDone(msg)
+
+	case sshFinishedMsg:
+		return m.handleSSHFinished(msg)
 
 	case tea.KeyPressMsg:
 		if !m.introDone {
@@ -268,7 +290,8 @@ func (m Model) updateFleetKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m.forward(msg)
 }
 
-// updateNodeKeys handles keys on the node overview screen.
+// updateNodeKeys handles keys on the node overview screen: the action
+// list, plus check and ssh as direct keys.
 func (m Model) updateNodeKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q":
@@ -276,6 +299,10 @@ func (m Model) updateNodeKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.pop()
 		return m, nil
+	case "c":
+		return m.runCheck()
+	case "s":
+		return m.runSSH()
 	case "enter":
 		if a, ok := m.actions.SelectedItem().(actionItem); ok {
 			return m.runAction(a)
@@ -332,12 +359,14 @@ func (m Model) updateRemoveConfirm(str string) (tea.Model, tea.Cmd) {
 // runAction executes a node-screen action.
 func (m Model) runAction(a actionItem) (tea.Model, tea.Cmd) {
 	switch a.id {
+	case actCheck:
+		return m.runCheck()
+	case actSSH:
+		return m.runSSH()
 	case actApps:
 		m.push(screen{kind: scNodeApps, node: m.selNode.Name})
 	case actInspect:
 		m.push(screen{kind: scNodeInspect, node: m.selNode.Name})
-	case actSSH:
-		m.push(screen{kind: scNodeSSH, node: m.selNode.Name})
 	case actRemove:
 		m.confirmRemove = true
 	}
@@ -456,8 +485,6 @@ func (m Model) workspaceView() string {
 			content = m.nodeAppsView(s.node)
 		case scNodeInspect:
 			content = m.inspectView()
-		case scNodeSSH:
-			content = m.sshView()
 		case scApps:
 			content = m.allAppsView()
 		case scDeploy:

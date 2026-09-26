@@ -216,7 +216,7 @@ func TestFleetShowsNodes(t *testing.T) {
 	seedNode(t, s, "web-1")
 	seedNode(t, s, "web-2")
 	got := view(press(t, New(s), "n"))
-	for _, want := range []string{"web-1", "web-2", "[observe]", "unverified"} {
+	for _, want := range []string{"web-1", "web-2", "[observe]", "unchecked"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("fleet missing %q:\n%s", want, got)
 		}
@@ -244,28 +244,30 @@ func TestNodeActionsNavigation(t *testing.T) {
 	s := readyStore(t)
 	seedNode(t, s, "web-1")
 
-	m := press(t, New(s), "n", "enter", "enter") // action 0: Applications
+	// Actions in display order: Check now, SSH, Applications, Inspect
+	// record, Remove. The SSH action execs a real ssh client, so the
+	// journey skips it: this test walks the navigable screens.
+	m := press(t, New(s), "n", "enter")
+	if got := view(m); !strings.Contains(got, "ACTIONS") {
+		t.Fatalf("enter did not open the node screen:\n%s", got)
+	}
+
+	m = press(t, m, "down", "down", "enter") // action 2: Applications
 	if got := view(m); !strings.Contains(got, "no mymo-managed applications") {
 		t.Fatalf("applications action missing:\n%s", got)
 	}
-	m = press(t, m, "esc") // back to node
+	m = press(t, m, "esc")
 	if got := view(m); !strings.Contains(got, "ACTIONS") {
 		t.Fatalf("esc did not return to the node screen:\n%s", got)
 	}
 
-	m = press(t, m, "down", "enter") // action 1: Inspect
+	m = press(t, m, "down", "enter") // action 3: Inspect (index preserved at 2)
 	if got := view(m); !strings.Contains(got, "Stored record") {
 		t.Fatalf("inspect action missing:\n%s", got)
 	}
 	m = press(t, m, "esc")
 
-	m = press(t, m, "down", "enter") // action 2: SSH (list index preserved at 1)
-	if got := view(m); !strings.Contains(got, "ssh -p 22 root@203.0.113.10") {
-		t.Fatalf("ssh action missing manual command:\n%s", got)
-	}
-	m = press(t, m, "esc")
-
-	m = press(t, m, "down", "enter") // action 3: Remove (index preserved at 2)
+	m = press(t, m, "down", "enter") // action 4: Remove (index preserved at 3)
 	if got := view(m); !strings.Contains(got, "not touched") {
 		t.Fatalf("remove confirmation missing:\n%s", got)
 	}
@@ -279,7 +281,9 @@ func TestRemoveNodeFlow(t *testing.T) {
 	s := readyStore(t)
 	seedNode(t, s, "web-1")
 	seedNode(t, s, "web-2")
-	m := press(t, New(s), "n", "enter", "down", "down", "down", "enter", "y")
+	// five actions: Check, SSH, Applications, Inspect, Remove — four
+	// downs land on Remove.
+	m := press(t, New(s), "n", "enter", "down", "down", "down", "down", "enter", "y")
 	if _, err := s.GetNode("web-1"); !errors.Is(err, state.ErrNodeNotFound) {
 		t.Fatalf("node still present after confirm: %v", err)
 	}

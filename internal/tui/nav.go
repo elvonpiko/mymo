@@ -9,7 +9,6 @@ const (
 	scNode                          // one node: facts and actions
 	scNodeApps                      // applications on a node
 	scNodeInspect                   // a node's full stored record
-	scNodeSSH                       // ssh session entry point
 	scApps                          // applications across the fleet
 	scDeploy                        // deploy workflow entry point
 	scSettings                      // settings and about
@@ -54,15 +53,13 @@ func (m *Model) crumbs() []string {
 		switch s.kind {
 		case scFleet:
 			parts = append(parts, "fleet")
-		case scNode, scNodeApps, scNodeInspect, scNodeSSH:
+		case scNode, scNodeApps, scNodeInspect:
 			parts = append(parts, s.node)
 			switch s.kind {
 			case scNodeApps:
 				parts = append(parts, "applications")
 			case scNodeInspect:
 				parts = append(parts, "inspect")
-			case scNodeSSH:
-				parts = append(parts, "ssh")
 			}
 		case scApps:
 			parts = append(parts, "applications")

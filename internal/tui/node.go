@@ -11,24 +11,28 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/elvonpiko/mymo/internal/domain"
+	"github.com/elvonpiko/mymo/internal/facts"
 )
 
 // actionID identifies a node-screen action.
 type actionID int
 
 const (
-	actApps actionID = iota
-	actInspect
+	actCheck actionID = iota
 	actSSH
+	actApps
+	actInspect
 	actRemove
 )
 
-// actionDefs lists the node actions in display order.
+// actionDefs lists the node actions in display order. Checking is the
+// primary verb of observe mode, so it leads.
 func actionDefs() []actionItem {
 	return []actionItem{
+		{actCheck, "Check now", "probe this node and store the snapshot"},
+		{actSSH, "SSH", "open an interactive session on the node"},
 		{actApps, "Applications", "list applications on this node"},
 		{actInspect, "Inspect record", "the full stored state for this node"},
-		{actSSH, "SSH", "open an interactive session"},
 		{actRemove, "Remove", "remove this node from mymo"},
 	}
 }
@@ -78,21 +82,160 @@ func newActionsList() list.Model {
 	return l
 }
 
-// nodeView renders the node overview: status, facts, and actions.
+// nodeView renders the node overview: health heading, the discovered
+// snapshot, and the node's actions.
 func (m Model) nodeView() string {
 	n := m.selNode
+
+	// The heading: an animated spinner while probing, the health dot
+	// otherwise.
+	head := nodeStatusLine(n, modeBadge(n.Mode))
+	if m.probing && m.probingName == n.Name {
+		head = m.spinner.View() + " " + titleStyle.Render(n.Name) + " " +
+			modeBadge(n.Mode) + "  " + faintStyle.Render("·") + " " +
+			subtextStyle.Render("checking over SSH")
+	}
+
 	var b strings.Builder
-	b.WriteString(faintStyle.Render("● ") + titleStyle.Render(n.Name) + " " + modeBadge(n.Mode))
+	b.WriteString(head)
 	b.WriteString("\n")
-	b.WriteString(dimStyle.Render(fmt.Sprintf("%s@%s · auth %s · added %s",
-		n.User, n.Address(), n.Auth, n.AddedAt.Format("2006-01-02"))))
+	auth := fmt.Sprintf("%s auth", n.Auth)
+	if n.Auth == domain.AuthKey {
+		auth = "key auth"
+	}
+	b.WriteString(dimStyle.Render(fmt.Sprintf("%s@%s · %s · added %s",
+		n.User, n.Address(), auth, n.AddedAt.Format("2006-01-02"))))
 	b.WriteString("\n\n")
-	b.WriteString(factsPanel(n, "host", "port", "user", "auth", "mode"))
+	b.WriteString(m.discoveredCard(n))
 	b.WriteString("\n\n")
 	b.WriteString(sectionLabel("ACTIONS"))
 	b.WriteString("\n")
 	b.WriteString(m.actions.View())
 	return fitHeight(b.String(), m.contentHeight)
+}
+
+// discoveredCard renders the last discovery snapshot as a compact
+// two-column card. An unchecked node is told how to get its first
+// snapshot; a failed check keeps the last good facts and names the
+// failure; a running probe says so.
+func (m Model) discoveredCard(n domain.Node) string {
+	if m.probing && m.probingName == n.Name {
+		inner := m.spinner.View() + " " + subtextStyle.Render("checking "+n.Name+" over SSH") + "\n" +
+			faintStyle.Render("ten read-only commands, nothing is modified")
+		return factsPanelStyle.Render(inner)
+	}
+	if n.Facts.CollectedAt.IsZero() && n.LastCheck.At.IsZero() {
+		inner := faintStyle.Render("no snapshot yet") + "\n" +
+			accentStyle.Render("[c]") + textStyle.Render(" check now — mymo connects, runs ten") + "\n" +
+			textStyle.Render("read-only commands, and stores what it finds")
+		return factsPanelStyle.Render(inner)
+	}
+
+	rows := m.discoveredRows(n)
+	var b strings.Builder
+	for i := 0; i < len(rows); i += 2 {
+		left := discoveredCell(rows[i])
+		right := ""
+		if i+1 < len(rows) {
+			right = discoveredCell(rows[i+1])
+		}
+		b.WriteString(left + right + "\n")
+	}
+	card := strings.TrimRight(b.String(), "\n")
+	if n.LastCheck.Error != "" {
+		card += "\n" + errStyle.Render("last check failed: ") + subtextStyle.Render(shorten(n.LastCheck.Error, 44))
+	}
+	return factsPanelStyle.Render(card)
+}
+
+// discoveredRows builds the snapshot's label/value pairs, one pair per
+// cell, in display order. Zero facts stay "unknown" — never a guess.
+func (m Model) discoveredRows(n domain.Node) [][2]string {
+	f := n.Facts
+	uptime := "unknown"
+	if f.Uptime > 0 {
+		uptime = facts.FormatUptime(f.Uptime)
+	}
+	cpus := "unknown"
+	if f.CPUs > 0 {
+		cpus = strconv.Itoa(f.CPUs)
+	}
+	return [][2]string{
+		{"os", orUnknown(f.OS)},
+		{"arch", orUnknown(f.Arch)},
+		{"kernel", orUnknown(f.Kernel)},
+		{"cpus", cpus},
+		{"uptime", uptime},
+		{"user", orUnknown(f.User)},
+		{"memory", memText(f)},
+		{"disk", diskText(f)},
+		{"docker", toolText(facts.DockerVersion(f.Docker))},
+		{"caddy", toolText(f.Caddy)},
+		{"systemd", yesNo(f.Systemd)},
+		{"checked", orUnknown(facts.FormatAge(n.LastCheck.At))},
+	}
+}
+
+// discoveredCell renders one label/value cell, fixed width so the
+// two-column grid aligns; long values truncate with an ellipsis.
+func discoveredCell(row [2]string) string {
+	return factsLabelStyle.Width(9).Render(row[0]) + " " +
+		textStyle.Width(27).Render(shorten(row[1], 27))
+}
+
+// memText renders "3.8 GiB total / 3.2 GiB avail".
+func memText(f facts.Node) string {
+	if f.MemTotal == 0 {
+		return "unknown"
+	}
+	avail := facts.FormatBytes(f.MemAvail)
+	if f.MemAvail == 0 {
+		avail = "?"
+	}
+	return facts.FormatBytes(f.MemTotal) + " total / " + avail + " avail"
+}
+
+// diskText renders "39 GiB total / 32 GiB free" for the root fs.
+func diskText(f facts.Node) string {
+	if f.DiskTotal == 0 {
+		return "unknown"
+	}
+	free := facts.FormatBytes(f.DiskFree)
+	if f.DiskFree == 0 {
+		free = "?"
+	}
+	return facts.FormatBytes(f.DiskTotal) + " total / " + free + " free"
+}
+
+func toolText(version string) string {
+	if version == "" {
+		return "not installed"
+	}
+	return version
+}
+
+func yesNo(b bool) string {
+	if b {
+		return "yes"
+	}
+	return "no"
+}
+
+func orUnknown(s string) string {
+	if s == "" {
+		return "unknown"
+	}
+	return s
+}
+
+// shorten trims s to at most n visible characters for one-line
+// display.
+func shorten(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return strings.TrimSpace(string(r[:n-1])) + "…"
 }
 
 // factsPanel renders a bordered key/value panel for selected node fields.
@@ -119,6 +262,14 @@ func factsPanel(n domain.Node, fields ...string) string {
 			rows = append(rows, [2]string{"mode", string(n.Mode)})
 		case "added":
 			rows = append(rows, [2]string{"added", n.AddedAt.Format("2006-01-02 15:04")})
+		case "last check":
+			if n.LastCheck.At.IsZero() {
+				rows = append(rows, [2]string{"last check", "never"})
+			} else if n.LastCheck.Error != "" {
+				rows = append(rows, [2]string{"last check", "failed " + facts.FormatAge(n.LastCheck.At)})
+			} else {
+				rows = append(rows, [2]string{"last check", "ok " + facts.FormatAge(n.LastCheck.At)})
+			}
 		}
 	}
 	var b strings.Builder
@@ -131,32 +282,32 @@ func factsPanel(n domain.Node, fields ...string) string {
 	return factsPanelStyle.Render(strings.TrimRight(b.String(), "\n"))
 }
 
-// inspectView renders the node's full stored record.
+// inspectView renders the node's full stored record beside its
+// discovered snapshot — everything mymo knows in one place.
 func (m Model) inspectView() string {
 	n := m.selNode
-	inner := titleStyle.Render("Stored record") + "\n\n" +
-		factsPanel(n, "name", "host", "port", "user", "auth", "key path", "mode", "added") +
-		"\n\n" + faintStyle.Render("the stored record is local state, not live facts;") + "\n" +
-		faintStyle.Render("live discovery arrives with the SSH transport")
+	record := titleStyle.Render("Stored record") + "\n\n" +
+		factsPanel(n, "name", "host", "port", "user", "auth", "key path", "mode", "added", "last check")
+	discovered := titleStyle.Render("Discovered") + "\n\n"
+	if n.Facts.CollectedAt.IsZero() && n.LastCheck.At.IsZero() {
+		discovered += factsPanelStyle.Render("not probed yet")
+	} else {
+		var b strings.Builder
+		for _, r := range m.discoveredRows(n) {
+			b.WriteString(factsLabelStyle.Width(12).Render(r[0]))
+			b.WriteString(" ")
+			b.WriteString(textStyle.Render(shorten(r[1], 30)))
+			b.WriteString("\n")
+		}
+		discovered += factsPanelStyle.Render(strings.TrimRight(b.String(), "\n"))
+		if n.LastCheck.Error != "" {
+			discovered += "\n" + errStyle.Render("last check failed: ") +
+				subtextStyle.Render(shorten(n.LastCheck.Error, 38))
+		}
+	}
+	inner := lipgloss.JoinHorizontal(lipgloss.Top, record, "  ", discovered)
 	return lipgloss.Place(m.contentWidth, m.contentHeight,
 		lipgloss.Center, lipgloss.Center, inner)
-}
-
-// sshView renders the SSH entry point with the exact manual command.
-func (m Model) sshView() string {
-	n := m.selNode
-	cmd := fmt.Sprintf("ssh -p %d %s@%s", n.Port, n.User, n.Host)
-	if n.Auth == domain.AuthKey && n.KeyPath != "" {
-		cmd += " -i " + n.KeyPath
-	}
-	inner := titleStyle.Render("SSH into "+n.Name) + "\n\n" +
-		"Interactive sessions open through mymo's SSH transport,\n" +
-		"which arrives with the next phase.\n\n" +
-		"For now, connect directly:\n\n" +
-		codeStyle.Render(cmd) + "\n\n" +
-		faintStyle.Render("mymo records the connection; your plain ssh stays available")
-	return lipgloss.Place(m.contentWidth, m.contentHeight,
-		lipgloss.Center, lipgloss.Center, panelStyle.Render(inner))
 }
 
 // removeConfirmView asks for explicit confirmation before removing a node.
