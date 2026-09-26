@@ -107,7 +107,7 @@ func (m Model) nodeView() string {
 		n.User, n.Address(), auth, n.AddedAt.Format("2006-01-02"))))
 	b.WriteString("\n\n")
 	b.WriteString(m.discoveredCard(n))
-	b.WriteString("\n\n")
+	b.WriteString("\n")
 	b.WriteString(sectionLabel("ACTIONS"))
 	b.WriteString("\n")
 	b.WriteString(m.actions.View())
@@ -115,37 +115,36 @@ func (m Model) nodeView() string {
 }
 
 // discoveredCard renders the last discovery snapshot as a compact
-// two-column card. An unchecked node is told how to get its first
-// snapshot; a failed check keeps the last good facts and names the
-// failure; a running probe says so.
+// two-column card, with the live strip riding its bottom. An
+// unchecked node is told how to get its first snapshot; a failed
+// check keeps the last good facts and names the failure.
 func (m Model) discoveredCard(n domain.Node) string {
-	if m.probing && m.probingName == n.Name {
-		inner := m.spinner.View() + " " + subtextStyle.Render("checking "+n.Name+" over SSH") + "\n" +
+	var inner string
+	switch {
+	case m.probing && m.probingName == n.Name:
+		inner = m.spinner.View() + " " + subtextStyle.Render("checking "+n.Name+" over SSH") + "\n" +
 			faintStyle.Render("ten read-only commands, nothing is modified")
-		return factsPanelStyle.Render(inner)
-	}
-	if n.Facts.CollectedAt.IsZero() && n.LastCheck.At.IsZero() {
-		inner := faintStyle.Render("no snapshot yet") + "\n" +
-			accentStyle.Render("[c]") + textStyle.Render(" check now — mymo connects, runs ten") + "\n" +
+	case n.Facts.CollectedAt.IsZero() && n.LastCheck.At.IsZero():
+		inner = faintStyle.Render("no snapshot yet") + "\n" +
+			textStyle.Render("press ") + accentStyle.Render("[c]") + textStyle.Render(" check now — mymo connects, runs ten") + "\n" +
 			textStyle.Render("read-only commands, and stores what it finds")
-		return factsPanelStyle.Render(inner)
-	}
-
-	rows := m.discoveredRows(n)
-	var b strings.Builder
-	for i := 0; i < len(rows); i += 2 {
-		left := discoveredCell(rows[i])
-		right := ""
-		if i+1 < len(rows) {
-			right = discoveredCell(rows[i+1])
+	default:
+		rows := m.discoveredRows(n)
+		var b strings.Builder
+		for i := 0; i < len(rows); i += 2 {
+			left := discoveredCell(rows[i])
+			right := ""
+			if i+1 < len(rows) {
+				right = discoveredCell(rows[i+1])
+			}
+			b.WriteString(left + right + "\n")
 		}
-		b.WriteString(left + right + "\n")
+		inner = strings.TrimRight(b.String(), "\n")
+		if n.LastCheck.Error != "" {
+			inner += "\n" + errStyle.Render("last check failed: ") + subtextStyle.Render(shorten(n.LastCheck.Error, 44))
+		}
 	}
-	card := strings.TrimRight(b.String(), "\n")
-	if n.LastCheck.Error != "" {
-		card += "\n" + errStyle.Render("last check failed: ") + subtextStyle.Render(shorten(n.LastCheck.Error, 44))
-	}
-	return factsPanelStyle.Render(card)
+	return factsPanelStyle.Render(inner + "\n" + m.liveStrip())
 }
 
 // discoveredRows builds the snapshot's label/value pairs, one pair per
@@ -183,28 +182,28 @@ func discoveredCell(row [2]string) string {
 		textStyle.Width(27).Render(shorten(row[1], 27))
 }
 
-// memText renders "3.8 GiB total / 3.2 GiB avail".
+// memText renders "3.2/3.8 GiB avail" — headroom first, then capacity.
 func memText(f facts.Node) string {
 	if f.MemTotal == 0 {
 		return "unknown"
 	}
-	avail := facts.FormatBytes(f.MemAvail)
+	total := facts.FormatBytes(f.MemTotal)
 	if f.MemAvail == 0 {
-		avail = "?"
+		return total
 	}
-	return facts.FormatBytes(f.MemTotal) + " total / " + avail + " avail"
+	return facts.FormatBytes(f.MemAvail) + "/" + total + " avail"
 }
 
-// diskText renders "39 GiB total / 32 GiB free" for the root fs.
+// diskText renders "32/39 GiB free" for the root filesystem.
 func diskText(f facts.Node) string {
 	if f.DiskTotal == 0 {
 		return "unknown"
 	}
-	free := facts.FormatBytes(f.DiskFree)
+	total := facts.FormatBytes(f.DiskTotal)
 	if f.DiskFree == 0 {
-		free = "?"
+		return total
 	}
-	return facts.FormatBytes(f.DiskTotal) + " total / " + free + " free"
+	return facts.FormatBytes(f.DiskFree) + "/" + total + " free"
 }
 
 func toolText(version string) string {

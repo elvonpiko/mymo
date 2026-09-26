@@ -64,7 +64,6 @@ func (m Model) settingsView() string {
 		factsLabelStyle.Width(10).Render("nodes") + textStyle.Render(nodes+" in fleet") + "\n" +
 		factsLabelStyle.Width(10).Render("security") + textStyle.Render("state files 0600 · directory 0700") + "\n" +
 		factsLabelStyle.Width(10).Render("") + textStyle.Render("no passwords or key material stored") + "\n\n" +
-		accentStyle.Render("[i]") + textStyle.Render(" replay the first-run intro") + "    " +
 		accentStyle.Render("[esc]") + textStyle.Render(" back")
 	return lipgloss.Place(m.contentWidth, m.contentHeight,
 		lipgloss.Center, lipgloss.Center, panelStyle.Render(inner))

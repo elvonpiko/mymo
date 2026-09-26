@@ -84,7 +84,7 @@ func TestNodeScreenShowsDiscoveredFacts(t *testing.T) {
 	got := view(press(t, New(s), "n", "enter"))
 	for _, want := range []string{
 		"Ubuntu 24.04.5 LTS", "x86_64", "6.8.0-31-generic",
-		"2", "1 day 18 hours", "3.8 GiB total", "39 GiB total",
+		"2", "1 day 18 hours", "3.2 GiB/3.8 GiB avail", "32 GiB/39 GiB free",
 		"27.3.1", "not installed", "checked just now",
 	} {
 		if !strings.Contains(got, want) {

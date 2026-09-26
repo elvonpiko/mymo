@@ -189,18 +189,6 @@ func TestIntroSkippedOnSecondRun(t *testing.T) {
 	}
 }
 
-func TestReplayIntroFromSettings(t *testing.T) {
-	s := readyStore(t)
-	seedNode(t, s, "web-1")
-	m := press(t, New(s), "s", "i")
-	if m.introDone {
-		t.Fatal("replay did not restart the intro")
-	}
-	if got := view(m); !strings.Contains(got, "mymo") {
-		t.Fatalf("intro not rendered:\n%s", got)
-	}
-}
-
 func TestFleetEmptyState(t *testing.T) {
 	m := press(t, New(readyStore(t)), "n")
 	got := view(m)

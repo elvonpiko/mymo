@@ -11,6 +11,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/elvonpiko/mymo/internal/domain"
+	"github.com/elvonpiko/mymo/internal/ssh"
 	"github.com/elvonpiko/mymo/internal/state"
 	"github.com/elvonpiko/mymo/internal/version"
 )
@@ -43,6 +44,18 @@ type Model struct {
 	probing     bool
 	probingName string
 	spinner     spinner.Model
+
+	// live stats state (node screen). seq identifies the sampling
+	// session so messages from a stopped one are ignored.
+	live         bool
+	liveSeq      int
+	liveClient   *ssh.Client
+	liveErr      string
+	liveCur      liveSample
+	livePrev     liveSample
+	liveCPU      int // -1 until two samples allow a delta
+	liveSparkCPU []int
+	liveSparkMem []int
 
 	addNode addNodeState
 
@@ -86,6 +99,7 @@ func New(store *state.Store) Model {
 	m.fleet = newFleetList(m.nodes)
 	m.actions = newActionsList()
 	m.spinner = newCheckSpinner()
+	m.liveCPU = -1
 	applyHelpPalette(&m.help)
 	applyHelpPalette(&m.fullHelp)
 	m.layout()
@@ -164,6 +178,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case sshFinishedMsg:
 		return m.handleSSHFinished(msg)
+
+	case liveReadyMsg:
+		return m.handleLiveReady(msg)
+
+	case liveSampleMsg:
+		return m.handleLiveSample(msg)
+
+	case liveErrMsg:
+		return m.handleLiveErr(msg)
 
 	case tea.KeyPressMsg:
 		if !m.introDone {
@@ -291,18 +314,21 @@ func (m Model) updateFleetKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 // updateNodeKeys handles keys on the node overview screen: the action
-// list, plus check and ssh as direct keys.
+// list, plus check, ssh, and live as direct keys.
 func (m Model) updateNodeKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q":
 		return m, tea.Quit
 	case "esc":
+		m.stopLive()
 		m.pop()
 		return m, nil
 	case "c":
 		return m.runCheck()
 	case "s":
 		return m.runSSH()
+	case "l":
+		return m.runLiveToggle()
 	case "enter":
 		if a, ok := m.actions.SelectedItem().(actionItem); ok {
 			return m.runAction(a)
@@ -313,19 +339,13 @@ func (m Model) updateNodeKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 // updateSimpleKeys handles keys on informational screens.
-func (m Model) updateSimpleKeys(kind screenKind, str string) (tea.Model, tea.Cmd) {
+func (m Model) updateSimpleKeys(_ screenKind, str string) (tea.Model, tea.Cmd) {
 	switch str {
 	case "q":
 		return m, tea.Quit
 	case "esc":
 		m.pop()
 		return m, nil
-	case "i":
-		if kind == scSettings {
-			m.introDone = false
-			m.introStep = 0
-			return m, m.nextIntroTick()
-		}
 	}
 	return m, nil
 }
@@ -373,8 +393,10 @@ func (m Model) runAction(a actionItem) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// openNode focuses a node: pushes its screen and rebuilds the action list.
+// openNode focuses a node: pushes its screen and rebuilds the action
+// list. Entering a different node ends any live session first.
 func (m *Model) openNode(n domain.Node) {
+	m.stopLive()
 	m.selNode = n
 	m.actions = newActionsList()
 	// the rebuilt list must be sized to the window, not its default
