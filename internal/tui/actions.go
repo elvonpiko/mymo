@@ -84,6 +84,8 @@ func (m Model) handleCheckDone(msg checkDoneMsg) (tea.Model, tea.Cmd) {
 	// records its observation, but must not disturb the running one.
 	if msg.seq == m.checkSeq {
 		m.loading = loadingState{}
+		// geometry follows chrome: back to header-page heights
+		m.layout()
 	}
 	m.fleetSetChecking(m.loading.node)
 

@@ -94,7 +94,7 @@ func (m Model) nodeView() string {
 	}
 	b.WriteString(dimStyle.Render(fmt.Sprintf("%s@%s · %s · added %s",
 		n.User, n.Address(), auth, n.AddedAt.Format("2006-01-02"))))
-	b.WriteString("\n")
+	b.WriteString("\n\n")
 	b.WriteString(m.systemCard(n))
 	// the LIVE card exists only once something is there to sample,
 	// and spans the same width as the SYSTEM card beside it

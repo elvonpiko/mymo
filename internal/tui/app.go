@@ -336,6 +336,8 @@ func (m Model) updateNodeKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case "esc":
 			m.loading = loadingState{}
 			m.fleetSetChecking("")
+			// geometry follows chrome: back to header-page heights
+			m.layout()
 			m.pop()
 			return m, nil
 		}
@@ -431,6 +433,9 @@ func (m *Model) openNode(n domain.Node) tea.Cmd {
 	}
 	m.checkSeq++
 	m.fleetSetChecking(n.Name)
+	// the ceremony is chromeless: geometry follows it into the larger
+	// canvas so the splash fills the window without a dead gap below
+	m.layout()
 	return tea.Batch(m.spinner.Tick, m.beginCheck(n, m.checkSeq))
 }
 

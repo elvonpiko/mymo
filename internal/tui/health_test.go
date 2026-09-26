@@ -124,6 +124,13 @@ func TestEnteringObservesWithLoadingPage(t *testing.T) {
 		t.Errorf("loading page showed the observe page early:\n%s", got)
 	}
 
+	// no dead gap: the footer is the last content row, flush against
+	// the frame's bottom border
+	lines := strings.Split(got, "\n")
+	if !strings.Contains(lines[len(lines)-2], "cancel") {
+		t.Errorf("loading page leaves a gap below the footer:\n%s", got)
+	}
+
 	// esc cancels the visit: back on the fleet, probe flag cleared
 	m = press(t, m, "esc")
 	if m.loading.active || m.cur().kind != scFleet {
