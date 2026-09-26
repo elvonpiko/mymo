@@ -53,6 +53,28 @@ func FormatUptime(d time.Duration) string {
 	}
 }
 
+// FormatUptimeShort renders the same uptime in glance form: "9d 21h",
+// "18h 32m", "32m". Records keep the long form; cards take this one.
+func FormatUptimeShort(d time.Duration) string {
+	d = d.Truncate(time.Minute)
+	if d < time.Minute {
+		return "<1m"
+	}
+	days := d / (24 * time.Hour)
+	d -= days * 24 * time.Hour
+	hours := d / time.Hour
+	d -= hours * time.Hour
+	minutes := d / time.Minute
+	switch {
+	case days > 0:
+		return fmt.Sprintf("%dd %dh", days, hours)
+	case hours > 0:
+		return fmt.Sprintf("%dh %dm", hours, minutes)
+	default:
+		return fmt.Sprintf("%dm", minutes)
+	}
+}
+
 // FormatAge renders how long ago t happened: "just now", "5m ago",
 // "3h ago", "2d ago", "6w ago".
 func FormatAge(t time.Time) string {

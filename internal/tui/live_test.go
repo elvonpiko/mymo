@@ -16,8 +16,8 @@ cpu0 59526 0 17527 5404521 1601 0 641 0 0 0
 
 func TestParseLive(t *testing.T) {
 	s := parseLive(sampleLiveOut)
-	if s.load != "0.08" {
-		t.Errorf("load = %q, want 0.08", s.load)
+	if s.load != "0.08" || s.load5 != "0.10" || s.load15 != "0.09" {
+		t.Errorf("loads = %q %q %q, want 0.08 0.10 0.09", s.load, s.load5, s.load15)
 	}
 	if s.memTotal != 4010148*1024 || s.memAvail != 3300220*1024 {
 		t.Errorf("mem = %d/%d", s.memAvail, s.memTotal)
@@ -51,9 +51,17 @@ func TestSpark(t *testing.T) {
 	if got := spark([]int{0, 50, 100}); got != "▁▄█" {
 		t.Errorf("spark = %q, want ▁▄█", got)
 	}
-	// only the last 8 samples render
-	if got := spark([]int{100, 100, 100, 100, 100, 100, 100, 100, 0, 0}); got != "██████▁▁" {
+	// a short history renders whole
+	if got := spark([]int{100, 100, 100, 100, 100, 100, 100, 100, 0, 0}); got != "████████▁▁" {
 		t.Errorf("spark tail = %q", got)
+	}
+	// only the last liveSparkLen samples render
+	all := make([]int, 20)
+	for i := range all {
+		all[i] = 100
+	}
+	if got := spark(all); got != "████████████" {
+		t.Errorf("spark long = %q", got)
 	}
 }
 
@@ -98,9 +106,9 @@ func TestLiveSamplesFlow(t *testing.T) {
 		t.Fatalf("mem spark = %v, want [50 60]", m.liveSparkMem)
 	}
 	got := view(m)
-	for _, want := range []string{"● live", "10%", "▄▅", "40 B/100 B avail", "0.12"} {
+	for _, want := range []string{"LIVE", "10%", "▄▅", "40 B/100 B avail", "0.12", "LOAD"} {
 		if !strings.Contains(got, want) {
-			t.Errorf("live line missing %q:\n%s", want, got)
+			t.Errorf("live card missing %q:\n%s", want, got)
 		}
 	}
 
@@ -127,12 +135,12 @@ func TestLiveErrorStopsSampling(t *testing.T) {
 		t.Fatal("stop reason not recorded")
 	}
 	got := view(m)
-	if !strings.Contains(got, "live stopped") || !strings.Contains(got, "unreachable: refused") {
-		t.Errorf("live line missing the honest stop reason:\n%s", got)
+	if !strings.Contains(got, "stopped") || !strings.Contains(got, "unreachable: refused") {
+		t.Errorf("live card missing the honest stop reason:\n%s", got)
 	}
-	// the stopped line keeps the last known memory, labeled a snapshot
+	// the stopped card keeps the last known memory, labeled a snapshot
 	if !strings.Contains(got, "(snapshot)") {
-		t.Errorf("stopped line missing the snapshot marker:\n%s", got)
+		t.Errorf("stopped card missing the snapshot marker:\n%s", got)
 	}
 }
 
@@ -167,8 +175,8 @@ func TestEnteringAnotherNodeStopsLive(t *testing.T) {
 	if m.live || m.liveClient != nil {
 		t.Fatal("opening another node did not stop the previous live session")
 	}
-	if m.cur().node != "web-2" || !m.probing || m.probingName != "web-2" {
-		t.Fatalf("did not start observing web-2: screen=%q probing=%v", m.cur().node, m.probing)
+	if m.cur().node != "web-2" || !m.loading.active || m.loading.node != "web-2" {
+		t.Fatalf("did not start observing web-2: screen=%q active=%v", m.cur().node, m.loading.active)
 	}
 }
 
@@ -180,8 +188,8 @@ func TestSupersededProbeRecordsWithoutDisturbingTheNew(t *testing.T) {
 	oldSeq := m.checkSeq
 	// leave before web-1's probe answers, start observing web-2
 	m = press(t, m, "esc", "down", "enter")
-	if m.checkSeq == oldSeq || !m.probing || m.probingName != "web-2" {
-		t.Fatalf("web-2 observation not running: seq=%d probing=%v", m.checkSeq, m.probing)
+	if m.checkSeq == oldSeq || !m.loading.active || m.loading.node != "web-2" {
+		t.Fatalf("web-2 observation not running: seq=%d active=%v", m.checkSeq, m.loading.active)
 	}
 	// web-1's late result lands: recorded and toasted, but web-2's
 	// loading page keeps running untouched
@@ -189,8 +197,8 @@ func TestSupersededProbeRecordsWithoutDisturbingTheNew(t *testing.T) {
 		node: "web-1", snap: richSnapshot("web-1"),
 		client: fakeClient(), seq: oldSeq,
 	})
-	if !m.probing || m.probingName != "web-2" {
-		t.Fatalf("late result disturbed web-2's probe: probing=%v name=%q", m.probing, m.probingName)
+	if !m.loading.active || m.loading.node != "web-2" {
+		t.Fatalf("late result disturbed web-2's probe: active=%v node=%q", m.loading.active, m.loading.node)
 	}
 	if m.toast == nil || !strings.Contains(m.toast.text, "checked web-1") {
 		t.Fatalf("no toast for the missed result: %+v", m.toast)

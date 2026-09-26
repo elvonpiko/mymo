@@ -83,10 +83,9 @@ func (m Model) handleCheckDone(msg checkDoneMsg) (tea.Model, tea.Cmd) {
 	// A superseded probe (the user left and entered another node) still
 	// records its observation, but must not disturb the running one.
 	if msg.seq == m.checkSeq {
-		m.probing = false
-		m.probingName = ""
+		m.loading = loadingState{}
 	}
-	m.fleetSetChecking(m.probingName)
+	m.fleetSetChecking(m.loading.node)
 
 	closeClient := func() {
 		if msg.client != nil {
@@ -114,7 +113,7 @@ func (m Model) handleCheckDone(msg checkDoneMsg) (tea.Model, tea.Cmd) {
 	}
 	m.reloadFleet()
 
-	onPage := m.cur().kind == scNode && m.cur().node == msg.node && !m.probing
+	onPage := m.cur().kind == scNode && m.cur().node == msg.node && !m.loading.active
 	if !onPage {
 		closeClient()
 		if msg.err != nil {

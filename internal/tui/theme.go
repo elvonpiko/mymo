@@ -74,6 +74,11 @@ var (
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color(colSurface)).
 			Padding(0, 1)
+
+	// titled-card chrome: the border stays as quiet as the card, while
+	// the name riding it carries the one accent a card is allowed.
+	cardBorderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(colSurface))
+	cardTitleStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color(colMauve))
 )
 
 // brandIcon is mymo's mark: a small skyline of three full-block stems —

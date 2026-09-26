@@ -106,8 +106,8 @@ func TestEnteringObservesWithLoadingPage(t *testing.T) {
 	seedNode(t, s, "web-1")
 	m := press(t, New(s), "n", "enter")
 
-	if !m.probing || m.probingName != "web-1" {
-		t.Fatalf("enter did not start a probe: probing=%v name=%q", m.probing, m.probingName)
+	if !m.loading.active || m.loading.node != "web-1" {
+		t.Fatalf("enter did not start a probe: active=%v node=%q", m.loading.active, m.loading.node)
 	}
 	got := view(m)
 	for _, want := range []string{"mymo", "observing web-1 over SSH", "ten read-only commands", "cancel"} {
@@ -115,14 +115,19 @@ func TestEnteringObservesWithLoadingPage(t *testing.T) {
 			t.Errorf("loading page missing %q:\n%s", want, got)
 		}
 	}
+	// the ceremony is chromeless like home: no header breadcrumb while
+	// the splash carries the identity
+	if strings.Contains(got, "fleet / web-1") {
+		t.Errorf("loading page shows the header:\n%s", got)
+	}
 	if strings.Contains(got, "ACTIONS") {
 		t.Errorf("loading page showed the observe page early:\n%s", got)
 	}
 
 	// esc cancels the visit: back on the fleet, probe flag cleared
 	m = press(t, m, "esc")
-	if m.probing || m.cur().kind != scFleet {
-		t.Fatalf("esc did not cancel: probing=%v screen=%v", m.probing, m.cur().kind)
+	if m.loading.active || m.cur().kind != scFleet {
+		t.Fatalf("esc did not cancel: active=%v screen=%v", m.loading.active, m.cur().kind)
 	}
 }
 
@@ -134,9 +139,9 @@ func TestObservePageShowsFactsAndLive(t *testing.T) {
 
 	got := view(m)
 	for _, want := range []string{
-		"Ubuntu 24.04.5 LTS", "x86_64", "6.8.0-31-generic", "1 day 18 hours",
-		"32 GiB/39 GiB free", "27.3.1", "not installed", "checked just now",
-		"● live", "3.2 GiB/3.8 GiB avail", "warming", "load",
+		"SYSTEM", "Ubuntu 24.04.5 LTS", "x86_64", "6.8.0-31-generic", "1d 18h",
+		"32 GiB/39 GiB free", "27.3.1", "✓", "checked just now",
+		"LIVE", "3.2 GiB/3.8 GiB avail", "warming", "LOAD",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("observe page missing %q:\n%s", want, got)
@@ -189,7 +194,7 @@ func TestFailedCheckKeepsFactsAndStopsLive(t *testing.T) {
 	m := press(t, New(s), "n", "enter")
 	m = step(t, m, checkDoneMsg{node: "web-1", err: errString("unreachable: connection refused"), seq: m.checkSeq})
 
-	if m.probing {
+	if m.loading.active {
 		t.Fatal("probe state not cleared")
 	}
 	// staying on the page: the card is the feedback, no toast
@@ -211,10 +216,10 @@ func TestFailedCheckKeepsFactsAndStopsLive(t *testing.T) {
 	if !strings.Contains(got, "last check failed") {
 		t.Errorf("failed-check page missing the failure:\n%s", got)
 	}
-	// the live line degrades honestly, marking the last known memory
+	// the live card degrades honestly, marking the last known memory
 	// as a snapshot instead of pretending to be live
-	if !strings.Contains(got, "live stopped") || !strings.Contains(got, "(snapshot)") {
-		t.Errorf("stopped live line not shown:\n%s", got)
+	if !strings.Contains(got, "stopped") || !strings.Contains(got, "(snapshot)") {
+		t.Errorf("stopped live card not shown:\n%s", got)
 	}
 }
 

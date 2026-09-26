@@ -40,15 +40,13 @@ type Model struct {
 	loadErr       error
 	toast         *toast
 
-	// probe state: entering a node observes it — the probe runs with
-	// the loading page up, its connection then adopted for live
-	// stats. seq identifies the entry that started it.
-	probing     bool
-	probingName string
-	probeStart  time.Time
-	checkSeq    int
-	spinner     spinner.Model
-
+	// loading describes the running loading ceremony — mymo's
+	// chromeless splash with a spinner. Entering a node observes it:
+	// the probe runs under this ceremony, its connection then adopted
+	// for live stats. checkSeq identifies the entry that started it.
+	loading  loadingState
+	checkSeq int
+	spinner  spinner.Model
 	// live stats state (node screen). seq identifies the sampling
 	// session so messages from a stopped one are ignored.
 	live         bool
@@ -69,6 +67,18 @@ type Model struct {
 	introDone bool
 	introStep int
 	introErr  string
+}
+
+// loadingState describes a running loading ceremony: mymo's splash —
+// mark, word, spinner — with what is running and for how long. The
+// same component hosts any wait mymo owes the user a face for;
+// entering a node to observe it is the first one.
+type loadingState struct {
+	active bool
+	line   string // "observing abed-prod-01 over SSH"
+	detail string // the quiet line under the spinner
+	node   string // fleet row to mark while it runs
+	start  time.Time
 }
 
 // New builds the workspace model from the given store. Loading failures are
@@ -170,7 +180,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case spinner.TickMsg:
-		if m.probing {
+		if m.loading.active {
 			var cmd tea.Cmd
 			m.spinner, cmd = m.spinner.Update(msg)
 			return m, cmd
@@ -319,13 +329,12 @@ func (m Model) updateFleetKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // running the loading page owns the keys: esc cancels the visit, q
 // quits; everything else waits.
 func (m Model) updateNodeKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	if m.probing {
+	if m.loading.active {
 		switch msg.String() {
 		case "q":
 			return m, tea.Quit
 		case "esc":
-			m.probing = false
-			m.probingName = ""
+			m.loading = loadingState{}
 			m.fleetSetChecking("")
 			m.pop()
 			return m, nil
@@ -413,9 +422,13 @@ func (m *Model) openNode(n domain.Node) tea.Cmd {
 	// the rebuilt list must be sized to the window, not its default
 	m.actions.SetSize(m.contentWidth, len(actionDefs())+1)
 	m.push(screen{kind: scNode, node: n.Name})
-	m.probing = true
-	m.probingName = n.Name
-	m.probeStart = time.Now()
+	m.loading = loadingState{
+		active: true,
+		line:   "observing " + n.Name + " over SSH",
+		detail: "ten read-only commands · nothing is modified",
+		node:   n.Name,
+		start:  time.Now(),
+	}
 	m.checkSeq++
 	m.fleetSetChecking(n.Name)
 	return tea.Batch(m.spinner.Tick, m.beginCheck(n, m.checkSeq))
@@ -516,7 +529,7 @@ func (m Model) workspaceView() string {
 			content = m.fleetView()
 		case scNode:
 			switch {
-			case m.probing:
+			case m.loading.active:
 				content = m.loadingView()
 			case m.confirmRemove:
 				content = m.removeConfirmView()
@@ -542,9 +555,11 @@ func (m Model) workspaceView() string {
 
 // showHeader reports whether the sticky header belongs on the current
 // screen. Home is the identity itself and carries no chrome; neither
-// does the intro, which is the same splash family.
+// does the intro — nor a loading ceremony, which is the same splash
+// family: mymo's mark and word carry the identity while the work
+// runs, and the breadcrumb waits below.
 func (m Model) showHeader() bool {
-	return m.introDone && m.cur().kind != scHome
+	return m.introDone && m.cur().kind != scHome && !m.loading.active
 }
 
 // frame wraps content in the signature mymo border. Inner pages hang
@@ -652,7 +667,7 @@ func (m Model) keymap() help.KeyMap {
 	case scFleet:
 		return newFleetKeymap()
 	case scNode:
-		if m.probing {
+		if m.loading.active {
 			return newLoadingKeymap()
 		}
 		if m.confirmRemove {

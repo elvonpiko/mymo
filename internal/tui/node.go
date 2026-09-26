@@ -81,8 +81,8 @@ func newActionsList() list.Model {
 	return l
 }
 
-// nodeView renders the observe page: health heading, the discovered
-// card with live stats, and the node's actions.
+// nodeView renders the observe page: health heading, the SYSTEM and
+// LIVE cards, and the node's actions.
 func (m Model) nodeView() string {
 	n := m.selNode
 	var b strings.Builder
@@ -94,8 +94,14 @@ func (m Model) nodeView() string {
 	}
 	b.WriteString(dimStyle.Render(fmt.Sprintf("%s@%s · %s · added %s",
 		n.User, n.Address(), auth, n.AddedAt.Format("2006-01-02"))))
-	b.WriteString("\n\n")
-	b.WriteString(m.discoveredCard(n))
+	b.WriteString("\n")
+	b.WriteString(m.systemCard(n))
+	// the LIVE card exists only once something is there to sample,
+	// and spans the same width as the SYSTEM card beside it
+	if !n.Facts.CollectedAt.IsZero() {
+		b.WriteString("\n")
+		b.WriteString(titledCard("LIVE", padLines(m.liveCardInner(), cardGridW)))
+	}
 	b.WriteString("\n")
 	b.WriteString(sectionLabel("ACTIONS"))
 	b.WriteString("\n")
@@ -103,25 +109,24 @@ func (m Model) nodeView() string {
 	return fitHeight(b.String(), m.contentHeight)
 }
 
-// loadingView is the observation ceremony: mymo's mark and word, a
-// spinner, what is running, and how long it has been running —
-// updated live by the spinner's ticks.
+// loadingView is the loading ceremony, shared by any wait mymo owes
+// the user a face for: mymo's mark and word, a spinner saying what is
+// running, and for how long — updated live by the spinner's ticks.
 func (m Model) loadingView() string {
-	elapsed := time.Since(m.probeStart).Truncate(time.Second)
+	elapsed := time.Since(m.loading.start).Truncate(time.Second)
 	inner := brandIcon() + " " + brandStyle.Render("mymo") + "\n\n" +
-		m.spinner.View() + " " + subtextStyle.Render("observing "+m.selNode.Name+" over SSH") + "\n" +
-		faintStyle.Render("ten read-only commands · "+elapsed.String()) + "\n" +
-		faintStyle.Render("nothing on the node is modified")
+		m.spinner.View() + " " + subtextStyle.Render(m.loading.line) + "\n" +
+		faintStyle.Render(m.loading.detail) + "\n" +
+		faintStyle.Render(elapsed.String())
 	return lipgloss.Place(m.contentWidth, m.contentHeight,
 		lipgloss.Center, lipgloss.Center, inner)
 }
 
-// discoveredCard renders the last discovery snapshot as a compact
-// two-column card with the live line riding its bottom. Memory and
-// cpu live in the live line — the card never shows them twice. An
+// systemCard renders the captured snapshot as the SYSTEM panel: five
+// two-column rows of the node's identity in glance form. An
 // unchecked node is told how observation works; a failed check keeps
 // the last good facts and names the failure.
-func (m Model) discoveredCard(n domain.Node) string {
+func (m Model) systemCard(n domain.Node) string {
 	var inner string
 	switch {
 	case n.Facts.CollectedAt.IsZero() && n.LastCheck.At.IsZero():
@@ -133,13 +138,7 @@ func (m Model) discoveredCard(n domain.Node) string {
 		inner = errStyle.Render("first check failed: ") + subtextStyle.Render(shorten(n.LastCheck.Error, 44)) + "\n" +
 			faintStyle.Render("esc, then re-enter to retry")
 	default:
-		rows := make([][2]string, 0, len(m.discoveredRows(n)))
-		for _, r := range m.discoveredRows(n) {
-			if r[0] == "memory" {
-				continue // the live line owns memory
-			}
-			rows = append(rows, r)
-		}
+		rows := systemRows(n)
 		var b strings.Builder
 		for i := 0; i < len(rows); i += 2 {
 			left := discoveredCell(rows[i])
@@ -154,7 +153,61 @@ func (m Model) discoveredCard(n domain.Node) string {
 			inner += "\n" + errStyle.Render("last check failed: ") + subtextStyle.Render(shorten(n.LastCheck.Error, 44))
 		}
 	}
-	return factsPanelStyle.Render(inner + "\n" + m.liveLine())
+	return titledCard("SYSTEM", inner)
+}
+
+// systemRows builds the SYSTEM card's label/value pairs in display
+// order — the snapshot's identity, in glance form.
+func systemRows(n domain.Node) [][2]string {
+	f := n.Facts
+	uptime := "unknown"
+	if f.Uptime > 0 {
+		uptime = facts.FormatUptimeShort(f.Uptime)
+	}
+	cpus := "unknown"
+	if f.CPUs > 0 {
+		cpus = strconv.Itoa(f.CPUs)
+	}
+	systemd := faintStyle.Render("—")
+	if f.Systemd {
+		systemd = okStyle.Render("✓")
+	}
+	return [][2]string{
+		{"OS", orUnknown(f.OS)},
+		{"Kernel", orUnknown(f.Kernel)},
+		{"Arch", orUnknown(f.Arch)},
+		{"CPUs", cpus},
+		{"Uptime", uptime},
+		{"User", orUnknown(f.User)},
+		{"Disk", diskText(f)},
+		{"Systemd", systemd},
+		{"Docker", toolShort(facts.DockerVersion(f.Docker))},
+		{"Caddy", toolShort(f.Caddy)},
+	}
+}
+
+// toolShort renders a tool's version, or a dash when it is absent —
+// the record keeps the words, the card keeps the glance.
+func toolShort(version string) string {
+	if version == "" {
+		return faintStyle.Render("—")
+	}
+	return version
+}
+
+// titledCard renders a panel whose border carries its name: SYSTEM,
+// LIVE. The title sits in the top border like a chapter heading.
+func titledCard(title, inner string) string {
+	card := factsPanelStyle.Render(inner)
+	lines := strings.Split(card, "\n")
+	w := lipgloss.Width(lines[0]) - 4 // inner width, padding included
+	dashes := w - 3 - lipgloss.Width(title) - 1
+	if dashes < 1 {
+		return card
+	}
+	lines[0] = cardBorderStyle.Render("╭─ ") + cardTitleStyle.Render(title) + " " +
+		cardBorderStyle.Render(strings.Repeat("─", dashes)+"╮")
+	return strings.Join(lines, "\n")
 }
 
 // discoveredRows builds the snapshot's label/value pairs, one pair per
@@ -183,6 +236,24 @@ func (m Model) discoveredRows(n domain.Node) [][2]string {
 		{"systemd", yesNo(f.Systemd)},
 		{"checked", orUnknown(facts.FormatAge(n.LastCheck.At))},
 	}
+}
+
+// cardGridW is the facts grid's inner width: two 37-wide cells. The
+// LIVE card pads to it so both cards share one silhouette.
+const cardGridW = 74
+
+// padLines spaces every line of s out to width w, ANSI-aware, so
+// differently sized contents render as one uniform card.
+func padLines(s string, w int) string {
+	var out []string
+	for _, line := range strings.Split(s, "\n") {
+		gap := w - lipgloss.Width(line)
+		if gap < 0 {
+			gap = 0
+		}
+		out = append(out, line+strings.Repeat(" ", gap))
+	}
+	return strings.Join(out, "\n")
 }
 
 // discoveredCell renders one label/value cell, fixed width so the

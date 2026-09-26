@@ -44,6 +44,25 @@ func TestFormatUptime(t *testing.T) {
 	}
 }
 
+func TestFormatUptimeShort(t *testing.T) {
+	cases := []struct {
+		in   time.Duration
+		want string
+	}{
+		{0, "<1m"},
+		{30 * time.Second, "<1m"},
+		{5 * time.Minute, "5m"},
+		{90 * time.Minute, "1h 30m"},
+		{42 * time.Hour, "1d 18h"},
+		{9*24*time.Hour + 17*time.Hour, "9d 17h"},
+	}
+	for _, tc := range cases {
+		if got := FormatUptimeShort(tc.in); got != tc.want {
+			t.Errorf("FormatUptimeShort(%v) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
 func TestFormatAge(t *testing.T) {
 	if got := FormatAge(time.Time{}); got != "" {
 		t.Errorf("zero time = %q, want empty", got)

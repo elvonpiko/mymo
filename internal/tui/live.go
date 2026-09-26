@@ -19,6 +19,8 @@ const liveEvery = 2 * time.Second
 // liveSample is one snapshot of a node's moving numbers.
 type liveSample struct {
 	load     string // 1-minute load average
+	load5    string // 5-minute
+	load15   string // 15-minute
 	memAvail uint64
 	memTotal uint64
 	busy     uint64 // /proc/stat jiffies spent on work
@@ -96,7 +98,7 @@ func (m Model) handleLiveSample(msg liveSampleMsg) (tea.Model, tea.Cmd) {
 	})
 }
 
-// handleLiveErr stops sampling honestly: the line says why it stopped,
+// handleLiveErr stops sampling honestly: the card says why it stopped,
 // and never pretends stale numbers are fresh. Silent retries would be
 // guessing — leaving and re-entering observes again.
 func (m Model) handleLiveErr(msg liveErrMsg) (tea.Model, tea.Cmd) {
@@ -112,38 +114,49 @@ func (m Model) handleLiveErr(msg liveErrMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// liveLine renders the card's live row: the green pulse dot and the
-// node's moving numbers. A stopped line keeps showing the last known
-// memory, labeled as a snapshot — honest about what is live and what
-// is not.
-func (m Model) liveLine() string {
+// liveCardInner renders the LIVE card's contents: cpu and memory with
+// sparklines on the first row, the three load averages below. A
+// stopped card keeps showing the last known memory, labeled as a
+// snapshot — honest about what is live and what is not.
+func (m Model) liveCardInner() string {
 	if m.live && m.liveClient != nil {
-		cpu := "warming"
+		cpu := textStyle.Render("warming")
 		if m.liveCPU >= 0 {
-			cpu = codeStyle.Render(spark(m.liveSparkCPU)) + " " + textStyle.Render(strconv.Itoa(m.liveCPU)+"%")
+			cpu = codeStyle.Render(spark(m.liveSparkCPU)) + " " +
+				textStyle.Render(strconv.Itoa(m.liveCPU)+"%")
 		}
-		return okStyle.Render("● live") + "  " +
-			liveMetric("cpu", cpu) + "  " +
-			liveMetric("mem", codeStyle.Render(spark(m.liveSparkMem))+" "+textStyle.Render(m.memLiveText())) + "  " +
-			liveMetric("load", textStyle.Render(orDash(m.liveCur.load)))
+		mem := codeStyle.Render(spark(m.liveSparkMem)) + " " +
+			textStyle.Render(m.memLiveText())
+		loads := textStyle.Render(orDash(m.liveCur.load))
+		if m.liveCur.load5 != "" {
+			loads += "  " + subtextStyle.Render(m.liveCur.load5+"  "+m.liveCur.load15)
+		}
+		return liveCell("CPU", cpu) + "  " + liveCell("MEM", mem) + "\n" +
+			liveCell("LOAD", loads)
 	}
-	if m.liveErr != "" {
-		return faintStyle.Render("● live stopped · "+m.liveErr) + "  " +
-			faintStyle.Render("mem "+m.memLiveText()+" (snapshot)")
+	head := ""
+	switch {
+	case m.liveErr != "":
+		head = faintStyle.Render("● stopped · "+m.liveErr) + "\n"
+	default:
+		head = faintStyle.Render("● not sampling") + "\n"
 	}
-	return faintStyle.Render("mem " + m.memLiveText() + " (snapshot)")
+	return head + liveCell("MEM", faintStyle.Render(m.memLiveText()+" (snapshot)"))
 }
 
-// liveMetric renders one "label value" group.
-func liveMetric(label, value string) string {
-	return faintStyle.Render(label+" ") + value
+// liveCell renders one "LABEL value" group, the label pinned to a
+// fixed width so the rows align.
+func liveCell(label, value string) string {
+	return factsLabelStyle.Width(5).Render(label) + " " + value
 }
 
-// memLiveText renders the memory readout: "3.2/3.8 GiB avail".
+// memLiveText renders the memory readout: "3.2/3.8 GiB avail". With
+// no live sample in flight, the snapshot's memory stands in — the
+// caller labels it as such.
 func (m Model) memLiveText() string {
 	s := m.liveCur
 	if s.memTotal == 0 {
-		return "unknown"
+		return memText(m.selNode.Facts)
 	}
 	total := facts.FormatBytes(s.memTotal)
 	if s.memAvail == 0 {
@@ -165,9 +178,10 @@ func parseLive(out string) liveSample {
 		switch {
 		case s.load == "" && strings.Contains(line, "/"):
 			// loadavg: "0.08 0.10 0.09 1/123 45678"
-			if _, err := strconv.ParseFloat(fields[0], 64); err == nil {
-				s.load = fields[0]
+			if _, err := strconv.ParseFloat(fields[0], 64); err != nil || len(fields) < 3 {
+				continue
 			}
+			s.load, s.load5, s.load15 = fields[0], fields[1], fields[2]
 		case fields[0] == "MemTotal:":
 			s.memTotal = memKBytes(fields)
 		case fields[0] == "MemAvailable:":
@@ -208,14 +222,18 @@ func memKBytes(fields []string) uint64 {
 // sparkBlocks are the 8 vertical levels a sparkline can show.
 const sparkBlocks = "▁▂▃▄▅▆▇█"
 
+// liveSparkLen is how many samples a sparkline window shows; the
+// history behind it stays longer.
+const liveSparkLen = 12
+
 // spark renders the last few samples as a tiny bar sequence.
 func spark(samples []int) string {
 	if len(samples) == 0 {
 		return ""
 	}
 	start := 0
-	if len(samples) > 8 {
-		start = len(samples) - 8
+	if len(samples) > liveSparkLen {
+		start = len(samples) - liveSparkLen
 	}
 	blocks := []rune(sparkBlocks)
 	var b strings.Builder
