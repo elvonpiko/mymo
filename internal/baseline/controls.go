@@ -14,6 +14,8 @@
 
 package baseline
 
+import "fmt"
+
 // SSHDropin is the sshd configuration mymo owns on an app host. mymo
 // never rewrites /etc/ssh/sshd_config — it writes a drop-in, which
 // Ubuntu 22.04+/Debian 12 load first through their Include line, and
@@ -27,9 +29,8 @@ type SSHDirective struct {
 	Source string
 }
 
-// SSHDirectives is the hardening drop-in's content, following
-// dev-sec's ssh-hardening role for everything except the one
-// deviation it notes itself.
+// SSHDirectives is the hardening drop-in's global content, following
+// dev-sec's ssh-hardening role with no exceptions.
 //
 // The sequence matters: these are written only AFTER key access is
 // proven through a second connection, and sshd -T must confirm the
@@ -41,18 +42,77 @@ var SSHDirectives = []SSHDirective{
 	{"PubkeyAuthentication", "yes", "explicit pin: key access is mymo's only path"},
 	{"X11Forwarding", "no", "dev-sec ssh-hardening"},
 	{"AllowAgentForwarding", "no", "dev-sec ssh-hardening"},
-	{"AllowTcpForwarding", "yes", "mymo deviation: app ports are never published, so ssh -L tunnels are the supported access path to a container"},
+	{"AllowTcpForwarding", "no", "dev-sec ssh-hardening; tunneling is restored per-account by the carve-out below"},
 	{"UseDNS", "no", "dev-sec ssh-hardening"},
 	{"LoginGraceTime", "30", "dev-sec ssh-hardening (30s)"},
 	{"MaxAuthTries", "3", "hardening guidance (CIS: 4 or fewer)"},
 }
 
+// SSHMatchAll closes any Match block so a drop-in's scope can never
+// leak into the parent sshd configuration.
+const SSHMatchAll = "Match all"
+
+// SSHForwardingCarveOut restores TCP forwarding for the accounts
+// that need it, the way sshd itself does per-user policy: a Match
+// block. The global posture stays dev-sec's no-forwarding; the
+// carve-out names
+//
+//   - the mymo account, always: mymo never publishes app ports, an
+//     ssh -L tunnel is the supported access path to a container, and
+//     the operator holds mymo's key — the tunnel path must exist on
+//     every prepared node
+//   - the operator's own account, when it is a regular login: their
+//     interactive workflow is never degraded by mymo
+//
+// Root is never carved out (root login is disabled anyway) and the
+// block is always closed with Match all.
+func SSHForwardingCarveOut(operator string) ([]string, error) {
+	users := MymoUser
+	if operator != "" && operator != "root" && operator != MymoUser {
+		if !validSSHUser(operator) {
+			return nil, fmt.Errorf("operator account %q is not a valid unix name", operator)
+		}
+		users = operator + "," + MymoUser
+	}
+	return []string{
+		"Match User " + users,
+		"    AllowTcpForwarding yes",
+		SSHMatchAll,
+	}, nil
+}
+
+// validSSHUser accepts the conservative login-name shape sshd
+// configurations are written against: lowercase letters, digits,
+// underscore and hyphen, starting with a letter or underscore, at
+// most 32 characters. It exists so an untrusted name can never be
+// interpolated into an sshd file.
+func validSSHUser(name string) bool {
+	if name == "" || len(name) > 32 {
+		return false
+	}
+	for i, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r == '_' || r == '-':
+		case r >= '0' && r <= '9':
+			if i == 0 {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // Sysctls are the kernel and network parameters the baseline pins.
 // Nearly all are already Ubuntu/Debian defaults — pinning them means
 // a node cannot drift below the floor on a setting the community has
-// tested. The rp_filter family is deliberately not pinned: the
-// distributions and the hardening guides disagree on loose versus
-// strict mode, and a VPS endpoint has no routing job.
+// tested. rp_filter is pinned to loose mode (2): that is what the
+// distributions and systemd ship on modern kernels, while strict mode
+// (1) breaks legitimate asymmetric routing and is discouraged for
+// general hosts by the kernel's own documentation. One value, one
+// story, across the fleet.
 //
 // Subset of dev-sec's os-hardening sysctl set.
 var Sysctls = map[string]string{
@@ -75,6 +135,8 @@ var Sysctls = map[string]string{
 	"net.ipv6.conf.default.accept_redirects":    "0",
 	"net.ipv4.tcp_syncookies":                   "1",
 	"net.ipv4.icmp_echo_ignore_broadcasts":      "1",
+	"net.ipv4.conf.all.rp_filter":               "2",
+	"net.ipv4.conf.default.rp_filter":           "2",
 }
 
 // FirewallRule is one ufw policy line, in application order.

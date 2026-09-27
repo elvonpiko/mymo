@@ -32,6 +32,7 @@ func TestSSHDirectivesArePinned(t *testing.T) {
 		"KbdInteractiveAuthentication": "no",
 		"X11Forwarding":                "no",
 		"AllowAgentForwarding":         "no",
+		"AllowTcpForwarding":           "no",
 		"LoginGraceTime":               "30",
 	} {
 		var got string
@@ -47,13 +48,54 @@ func TestSSHDirectivesArePinned(t *testing.T) {
 			t.Errorf("%s = %q, want %q", key, got, want)
 		}
 	}
-	// the one documented deviation must stay documented
+	// forwarding stays off globally; the carve-out restores it per-account
 	for _, d := range SSHDirectives {
-		if d.Key == "AllowTcpForwarding" {
-			if !strings.Contains(d.Source, "deviation") {
-				t.Errorf("AllowTcpForwarding deviation must say so: %q", d.Source)
-			}
+		if d.Key == "AllowTcpForwarding" && d.Value != "no" {
+			t.Errorf("AllowTcpForwarding = %q, want the dev-sec posture no", d.Value)
 		}
+	}
+}
+
+func TestSSHForwardingCarveOut(t *testing.T) {
+	// a regular operator keeps their tunnel; mymo always can tunnel
+	lines, err := SSHForwardingCarveOut("amir")
+	if err != nil {
+		t.Fatalf("carve-out: %v", err)
+	}
+	want := []string{"Match User amir,mymo", "    AllowTcpForwarding yes", SSHMatchAll}
+	if len(lines) != len(want) {
+		t.Fatalf("carve-out lines = %q", lines)
+	}
+	for i := range want {
+		if lines[i] != want[i] {
+			t.Errorf("carve-out[%d] = %q, want %q", i, lines[i], want[i])
+		}
+	}
+
+	// root never reappears; mymo alone keeps the tunnel path
+	lines, err = SSHForwardingCarveOut("root")
+	if err != nil {
+		t.Fatalf("carve-out(root): %v", err)
+	}
+	if len(lines) != 3 || lines[0] != "Match User mymo" {
+		t.Errorf("root carve-out = %q, want mymo only", lines)
+	}
+
+	// empty operator: mymo alone
+	lines, _ = SSHForwardingCarveOut("")
+	if lines[0] != "Match User mymo" {
+		t.Errorf("empty operator carve-out = %q", lines)
+	}
+
+	// an untrusted name must be refused, never interpolated
+	if _, err := SSHForwardingCarveOut("amir; PasswordAuthentication yes"); err == nil {
+		t.Fatal("invalid operator name was accepted into an sshd file")
+	}
+	if _, err := SSHForwardingCarveOut("1amir"); err == nil {
+		t.Fatal("name starting with a digit was accepted")
+	}
+	if _, err := SSHForwardingCarveOut("amir"); err != nil {
+		t.Errorf("valid operator refused: %v", err)
 	}
 }
 
@@ -74,10 +116,11 @@ func TestSysctlsArePinned(t *testing.T) {
 			t.Errorf("sysctl %q pinned to empty", key)
 		}
 	}
-	// rp_filter stays unpinned on purpose
-	for key := range Sysctls {
-		if strings.Contains(key, "rp_filter") {
-			t.Errorf("rp_filter must stay unpinned (found %q)", key)
+	// rp_filter is pinned to loose mode: the distributions' and
+	// systemd's modern default, one value across the fleet
+	for _, key := range []string{"net.ipv4.conf.all.rp_filter", "net.ipv4.conf.default.rp_filter"} {
+		if Sysctls[key] != "2" {
+			t.Errorf("%s = %q, want 2 (loose)", key, Sysctls[key])
 		}
 	}
 }
