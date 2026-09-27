@@ -81,6 +81,18 @@ func SSHForwardingCarveOut(operator string) ([]string, error) {
 	}, nil
 }
 
+// KernelToPackageArch maps a kernel architecture (uname -m) onto the
+// dpkg name the package repositories use; "" when unsupported.
+func KernelToPackageArch(unameM string) string {
+	switch unameM {
+	case "x86_64", "amd64":
+		return "amd64"
+	case "aarch64", "arm64":
+		return "arm64"
+	}
+	return ""
+}
+
 // validSSHUser accepts the conservative login-name shape sshd
 // configurations are written against: lowercase letters, digits,
 // underscore and hyphen, starting with a letter or underscore, at

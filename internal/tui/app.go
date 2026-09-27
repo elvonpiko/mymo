@@ -12,6 +12,8 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/elvonpiko/mymo/internal/domain"
+	"github.com/elvonpiko/mymo/internal/facts"
+	"github.com/elvonpiko/mymo/internal/plan"
 	"github.com/elvonpiko/mymo/internal/preflight"
 	"github.com/elvonpiko/mymo/internal/ssh"
 	"github.com/elvonpiko/mymo/internal/state"
@@ -64,6 +66,11 @@ type Model struct {
 	// flow refreshes them
 	pfChecks  []preflight.Check
 	pfVerdict preflight.Outcome
+	pfSnap    facts.Node
+	pfAudit   preflight.Audit
+
+	// the generated plan awaiting confirmation
+	planSteps []plan.Step
 
 	addNode addNodeState
 
@@ -208,6 +215,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case pfDoneMsg:
 		return m.handlePreflightDone(msg)
 
+	case planMsg:
+		return m.handlePlanDone(msg)
+
 	case tea.KeyPressMsg:
 		if !m.introDone {
 			return m.updateIntro(msg)
@@ -266,6 +276,21 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m.updateNodeKeys(msg)
 	case scNodePreflight:
+		if m.loading.active {
+			switch msg.String() {
+			case "q":
+				return m, tea.Quit
+			case "esc":
+				m.cancelLoading()
+				return m, nil
+			}
+			return m, nil
+		}
+		if str == "enter" {
+			return m.runPlan()
+		}
+		return m.updateSimpleKeys(s.kind, str)
+	case scNodePlan:
 		if m.loading.active {
 			switch msg.String() {
 			case "q":
@@ -579,6 +604,12 @@ func (m Model) workspaceView() string {
 			} else {
 				content = m.preflightView()
 			}
+		case scNodePlan:
+			if m.loading.active {
+				content = m.loadingView()
+			} else {
+				content = m.planView()
+			}
 		case scApps:
 			content = m.allAppsView()
 		case scDeploy:
@@ -718,6 +749,11 @@ func (m Model) keymap() help.KeyMap {
 			return newLoadingKeymap()
 		}
 		return newPreflightKeymap()
+	case scNodePlan:
+		if m.loading.active {
+			return newLoadingKeymap()
+		}
+		return newPlanKeymap()
 	case scAddNode:
 		if m.addNode.stage == anForm {
 			return newFormKeymap()

@@ -254,6 +254,24 @@ func TestEvaluateVerdicts(t *testing.T) {
 			s:    Audit{UID: 0, Firewall: "absent", Listeners: map[int]string{}, MymoUserUsed: true, MymoDirUsed: true},
 			want: Decide, title: "mymo state",
 		},
+		{
+			name: "foreign docker daemon config decides",
+			f:    goodNode(),
+			s:    Audit{UID: 0, Firewall: "absent", Listeners: map[int]string{}, DockerPkg: "docker-ce", DockerDaemonCfg: `{"log-driver":"syslog"}`},
+			want: Decide, title: "docker",
+		},
+		{
+			name: "existing caddyfile decides",
+			f:    func() facts.Node { n := goodNode(); n.Caddy = "v2.8.4"; return n }(),
+			s:    Audit{UID: 0, Firewall: "absent", Listeners: map[int]string{}, CaddyConfig: "example.com {\n\treverse_proxy localhost:8080\n}"},
+			want: Decide, title: "caddy",
+		},
+		{
+			name: "clean caddy adopt still adopts",
+			f:    func() facts.Node { n := goodNode(); n.Caddy = "v2.8.4"; return n }(),
+			s:    Audit{UID: 0, Firewall: "absent", Listeners: map[int]string{}},
+			want: Adopt, title: "caddy",
+		},
 	}
 	for _, tc := range cases {
 		checks := Evaluate(tc.f, tc.s)

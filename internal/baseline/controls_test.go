@@ -161,6 +161,22 @@ func TestFirewallOnlyAdds(t *testing.T) {
 	}
 }
 
+func TestKernelToPackageArch(t *testing.T) {
+	for kernel, pkg := range map[string]string{
+		"x86_64": "amd64", "amd64": "amd64",
+		"aarch64": "arm64", "arm64": "arm64",
+	} {
+		if got := KernelToPackageArch(kernel); got != pkg {
+			t.Errorf("KernelToPackageArch(%q) = %q, want %q", kernel, got, pkg)
+		}
+	}
+	for _, unsupported := range []string{"386", "armv7l", "", "riscv64"} {
+		if got := KernelToPackageArch(unsupported); got != "" {
+			t.Errorf("KernelToPackageArch(%q) = %q, want empty", unsupported, got)
+		}
+	}
+}
+
 func TestControlsInventory(t *testing.T) {
 	seen := map[string]bool{}
 	for _, c := range Controls {

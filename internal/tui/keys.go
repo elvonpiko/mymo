@@ -104,9 +104,10 @@ func (k loadingKeymap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{{k.back}, {k.help, k.quit}}
 }
 
-// Preflight keymap: the audit's verdicts are read-only output —
-// leaving is the only move besides help and quit.
+// Preflight keymap: a clear verdict continues to the plan, anything
+// else leaves.
 type preflightKeymap struct {
+	plan key.Binding
 	back key.Binding
 	help key.Binding
 	quit key.Binding
@@ -114,6 +115,7 @@ type preflightKeymap struct {
 
 func newPreflightKeymap() preflightKeymap {
 	return preflightKeymap{
+		plan: key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "plan")),
 		back: key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
 		help: key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 		quit: key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
@@ -121,10 +123,33 @@ func newPreflightKeymap() preflightKeymap {
 }
 
 func (k preflightKeymap) ShortHelp() []key.Binding {
-	return []key.Binding{k.back, k.help, k.quit}
+	return []key.Binding{k.plan, k.back, k.help, k.quit}
 }
 
 func (k preflightKeymap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{{k.plan, k.back}, {k.help, k.quit}}
+}
+
+// Plan keymap: the plan is read-only output until apply ships.
+type planKeymap struct {
+	back key.Binding
+	help key.Binding
+	quit key.Binding
+}
+
+func newPlanKeymap() planKeymap {
+	return planKeymap{
+		back: key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
+		help: key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
+		quit: key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
+	}
+}
+
+func (k planKeymap) ShortHelp() []key.Binding {
+	return []key.Binding{k.back, k.help, k.quit}
+}
+
+func (k planKeymap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{{k.back}, {k.help, k.quit}}
 }
 

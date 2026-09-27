@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/elvonpiko/mymo/internal/baseline"
 	"github.com/elvonpiko/mymo/internal/domain"
 	"github.com/elvonpiko/mymo/internal/facts"
+	"github.com/elvonpiko/mymo/internal/plan"
 	"github.com/elvonpiko/mymo/internal/preflight"
 	"github.com/elvonpiko/mymo/internal/ssh"
 )
@@ -219,6 +221,8 @@ func (m Model) handlePreflightDone(msg pfDoneMsg) (tea.Model, tea.Cmd) {
 	verdict := preflight.Verdict(checks)
 	m.pfChecks = checks
 	m.pfVerdict = verdict
+	m.pfSnap = msg.snap
+	m.pfAudit = msg.audit
 
 	if m.store != nil {
 		if n, err := m.store.GetNode(msg.node); err == nil {
@@ -246,6 +250,98 @@ func (m Model) handlePreflightDone(msg pfDoneMsg) (tea.Model, tea.Cmd) {
 	if m.cur().kind != scNodePreflight {
 		// the user left before the audit landed: toast the verdict
 		return m, m.notify("preflight "+msg.node+": "+verdict.String(), toastOK)
+	}
+	return m, nil
+}
+
+// planMsg reports the generated plan for the node the flow started
+// for, or why generation refused.
+type planMsg struct {
+	node  string
+	steps []plan.Step
+	err   error
+}
+
+// runPlan continues a cleared preflight into the plan step: the
+// pinned baseline and the audit's findings become the concrete
+// change list, under the same ceremony as the audit. The plan flow
+// only runs from a cleared verdict; a blocked one toasts instead.
+func (m Model) runPlan() (tea.Model, tea.Cmd) {
+	if m.store == nil {
+		return m, m.notify("state store unavailable", toastErr)
+	}
+	if m.pfVerdict != preflight.Pass && m.pfVerdict != preflight.Adopt {
+		return m, m.notify("resolve the decisions before planning", toastWarn)
+	}
+	n := m.selNode
+	m.push(screen{kind: scNodePlan, node: n.Name})
+	m.loading = loadingState{
+		active: true,
+		line:   "drafting " + n.Name + "'s baseline plan",
+		detail: "read-only · nothing is modified",
+		start:  time.Now(),
+	}
+	m.layout()
+	client := m.liveClient
+	knownHosts := filepath.Join(m.store.Dir(), "known_hosts.json")
+	name := n.Name
+	snap := m.pfSnap
+	audit := m.pfAudit
+	return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), checkTimeout)
+		defer cancel()
+		if client == nil {
+			c := ssh.New(n, knownHosts)
+			if err := c.Dial(ctx); err != nil {
+				return planMsg{node: name, err: err}
+			}
+			defer c.Close()
+			steps, err := plan.Generate(ctx, c, n, snap, audit)
+			return planMsg{node: name, steps: steps, err: err}
+		}
+		steps, err := plan.Generate(ctx, client, n, snap, audit)
+		return planMsg{node: name, steps: steps, err: err}
+	})
+}
+
+// handlePlanDone records the plan step and shows the change list.
+// A refused plan leaves the lifecycle untouched and says why.
+func (m Model) handlePlanDone(msg planMsg) (tea.Model, tea.Cmd) {
+	m.loading = loadingState{}
+	m.layout()
+	if msg.err != nil {
+		if m.cur().kind == scNodePlan {
+			m.pop()
+		}
+		var blocked *plan.BlockedError
+		if errors.As(msg.err, &blocked) {
+			return m, m.notify(fmt.Sprintf("plan blocked · %d decision(s) above", len(blocked.Decisions)), toastWarn)
+		}
+		return m, m.notify("plan failed: "+shorten(msg.err.Error(), 44), toastErr)
+	}
+	m.planSteps = msg.steps
+
+	if m.store != nil {
+		if n, err := m.store.GetNode(msg.node); err == nil {
+			if n.Bootstrap.State == domain.BootstrapNone || n.Bootstrap.State == domain.BootstrapPreflight || n.Bootstrap.State == domain.BootstrapPlan {
+				n.Bootstrap = domain.Bootstrap{
+					State:    domain.BootstrapPlan,
+					Baseline: baseline.Version,
+					Verdict:  "planned",
+					At:       time.Now(),
+				}
+			}
+			if err := m.store.UpdateNode(n); err != nil {
+				return m, m.notify(err.Error(), toastErr)
+			}
+			m.reloadFleet()
+			if m.selNode.Name == msg.node {
+				m.selNode = n
+			}
+		}
+	}
+	if m.cur().kind != scNodePlan {
+		return m, m.notify(fmt.Sprintf("plan %s drafted: %d steps", msg.node, len(msg.steps)), toastOK)
 	}
 	return m, nil
 }

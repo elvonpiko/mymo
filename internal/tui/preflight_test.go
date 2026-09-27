@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/elvonpiko/mymo/internal/domain"
+	"github.com/elvonpiko/mymo/internal/plan"
 	"github.com/elvonpiko/mymo/internal/preflight"
 )
 
@@ -197,5 +198,113 @@ func TestWrapPlain(t *testing.T) {
 		if strings.Join(got, "|") != strings.Join(tc.want, "|") {
 			t.Errorf("wrapPlain(%q, %d) = %q, want %q", tc.in, tc.w, got, tc.want)
 		}
+	}
+}
+
+func TestPlanFromClearedPreflight(t *testing.T) {
+	s := readyStore(t)
+	seedNode(t, s, "web-1")
+	m := press(t, New(s), "n", "enter")
+	snap := richSnapshot("web-1")
+	snap.Docker = ""
+	m = observe(t, m, "web-1", snap)
+	m = press(t, m, "p")
+	m = step(t, m, pfDoneMsg{node: "web-1", snap: snap, audit: cannedAudit()})
+
+	// enter continues a cleared audit into the plan flow
+	m = press(t, m, "enter")
+	if m.cur().kind != scNodePlan {
+		t.Fatalf("enter did not start the plan flow: %v", m.cur().kind)
+	}
+	if !m.loading.active || !strings.Contains(m.loading.line, "drafting web-1") {
+		t.Fatalf("plan flow did not open the ceremony: %+v", m.loading)
+	}
+	out := view(m)
+	if !strings.Contains(out, "drafting web-1") || !strings.Contains(out, "cancel") {
+		t.Fatal("plan loading page missing")
+	}
+
+	// the plan lands: the change list renders, the plan step persists
+	steps := []plan.Step{
+		{Control: "mymo-user", Title: "mymo admin user", Detail: "create mymo user; install its key and sudoers drop-in"},
+		{Control: "ssh-hardening", Title: "sshd hardening", Detail: "harden sshd: no root, no passwords, in a drop-in", Gate: "a second connection with the new mymo key is proven before sshd reloads"},
+		{Control: "state-dir", Title: "mymo state", Detail: "state dir + baseline marker for drift detection"},
+	}
+	m = step(t, m, planMsg{node: "web-1", steps: steps})
+	if m.loading.active {
+		t.Fatal("plan landed but the ceremony never cleared")
+	}
+	out = view(m)
+	for _, want := range []string{
+		"Plan", "web-1", "baseline 0.1", "3 steps",
+		"mymo admin user", "sshd hardening", "mymo state",
+		"gate", "second connection", "awaiting your confirmation",
+		"changes nothing yet",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("plan view missing %q\n%s", want, out)
+		}
+	}
+
+	// the node records the plan step
+	n, err := s.GetNode("web-1")
+	if err != nil {
+		t.Fatalf("GetNode: %v", err)
+	}
+	if n.Bootstrap.State != domain.BootstrapPlan {
+		t.Errorf("bootstrap state = %q, want plan", n.Bootstrap.State)
+	}
+
+	// esc returns to the audit's verdicts
+	m = press(t, m, "esc")
+	if m.cur().kind != scNodePreflight {
+		t.Fatalf("esc did not return to the preflight screen: %v", m.cur().kind)
+	}
+}
+
+func TestPlanBlockedByDecisionsToasts(t *testing.T) {
+	s := readyStore(t)
+	seedNode(t, s, "web-1")
+	m := press(t, New(s), "n", "enter")
+	snap := richSnapshot("web-1")
+	snap.Docker = ""
+	m = observe(t, m, "web-1", snap)
+	m = press(t, m, "p")
+	audit := cannedAudit()
+	audit.Listeners = map[int]string{80: "nginx"}
+	m = step(t, m, pfDoneMsg{node: "web-1", snap: snap, audit: audit})
+
+	// enter on a blocked verdict does not enter the plan flow
+	m = press(t, m, "enter")
+	if m.cur().kind != scNodePreflight {
+		t.Fatalf("enter started planning past decisions: %v", m.cur().kind)
+	}
+	if m.toast == nil || !strings.Contains(m.toast.text, "resolve the decisions") {
+		t.Fatalf("blocked enter must toast: %+v", m.toast)
+	}
+}
+
+func TestPlanRefusalKeepsLifecycleAndToasts(t *testing.T) {
+	s := readyStore(t)
+	seedNode(t, s, "web-1")
+	m := press(t, New(s), "n", "enter")
+	snap := richSnapshot("web-1")
+	snap.Docker = ""
+	m = observe(t, m, "web-1", snap)
+	m = press(t, m, "p")
+	m = step(t, m, pfDoneMsg{node: "web-1", snap: snap, audit: cannedAudit()})
+	m = press(t, m, "enter")
+
+	// generation fails mid-flow: the screen pops, nothing advances
+	m = step(t, m, planMsg{node: "web-1", err: errString("connection lost")})
+	if m.cur().kind != scNodePreflight {
+		t.Fatalf("failed plan did not return to the audit: %v", m.cur().kind)
+	}
+	n, err := s.GetNode("web-1")
+	if err != nil {
+		t.Fatalf("GetNode: %v", err)
+	}
+	if n.Bootstrap.State != domain.BootstrapPreflight {
+		t.Errorf("a failed plan advanced the lifecycle to %q", n.Bootstrap.State)
 	}
 }

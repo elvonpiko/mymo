@@ -10,6 +10,7 @@ const (
 	scNodeApps                        // applications on a node
 	scNodeInspect                     // a node's full stored record
 	scNodePreflight                   // a node's app-host preflight verdicts
+	scNodePlan                        // a node's generated baseline plan
 	scApps                            // applications across the fleet
 	scDeploy                          // deploy workflow entry point
 	scSettings                        // settings and about
@@ -54,14 +55,16 @@ func (m *Model) crumbs() []string {
 		switch s.kind {
 		case scFleet:
 			parts = append(parts, "fleet")
-		case scNode, scNodeApps, scNodeInspect:
+		case scNode:
 			parts = append(parts, s.node)
-			switch s.kind {
-			case scNodeApps:
-				parts = append(parts, "applications")
-			case scNodeInspect:
-				parts = append(parts, "inspect")
-			}
+		case scNodeApps:
+			parts = append(parts, "applications")
+		case scNodeInspect:
+			parts = append(parts, "inspect")
+		case scNodePreflight:
+			parts = append(parts, "preflight")
+		case scNodePlan:
+			parts = append(parts, "plan")
 		case scApps:
 			parts = append(parts, "applications")
 		case scDeploy:

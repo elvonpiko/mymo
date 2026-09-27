@@ -68,6 +68,16 @@ type Check struct {
 // Audit is the deep read-only scan result. Zero values mean unknown,
 // never "absent" — preflight names what it could not see.
 type Audit struct {
+	// DockerDaemonCfg is the existing /etc/docker/daemon.json when
+	// docker is present: a foreign policy mymo will not overwrite
+	// without review.
+	DockerDaemonCfg string
+
+	// CaddyConfig is the existing /etc/caddy/Caddyfile when caddy is
+	// present: mymo manages caddy's configuration when apps arrive,
+	// so an existing one is a decision, never an overwrite.
+	CaddyConfig string
+
 	UID  int
 	Sudo bool // passwordless sudo confirmed
 
@@ -185,6 +195,21 @@ func Scan(ctx context.Context, r Runner) (Audit, error) {
 		}
 	} else if s.DockerPkg != "" {
 		s.Containers = -1
+	}
+
+	// Existing configuration mymo would touch: a foreign docker
+	// daemon policy or Caddyfile is an adoption decision.
+	if out, _, err := r.Run(ctx, "sh", "-c",
+		"test -f /etc/docker/daemon.json && cat /etc/docker/daemon.json"); err != nil {
+		return Audit{}, err
+	} else {
+		s.DockerDaemonCfg = strings.TrimSpace(out)
+	}
+	if out, _, err := r.Run(ctx, "sh", "-c",
+		"test -f /etc/caddy/Caddyfile && cat /etc/caddy/Caddyfile"); err != nil {
+		return Audit{}, err
+	} else {
+		s.CaddyConfig = strings.TrimSpace(out)
 	}
 
 	// Existing mymo state from a previous or interrupted bootstrap.
@@ -401,12 +426,18 @@ func Evaluate(f facts.Node, s Audit) []Check {
 
 	switch s.DockerPkg {
 	case "":
-		if f.Docker != "" {
+		if s.DockerDaemonCfg != "" {
+			checks = append(checks, Check{"docker", "docker", Decide, "docker is present with its own daemon configuration — mymo applies its own policy; yours is not overwritten without review"})
+		} else if f.Docker != "" {
 			checks = append(checks, Check{"docker", "docker", Adopt, "docker " + facts.DockerVersion(f.Docker) + " present but not from dpkg — mymo can adopt and manage it"})
 		} else {
 			checks = append(checks, Check{"docker", "docker", Pass, "not installed — the baseline installs docker-ce from the official repository"})
 		}
 	case "docker-ce":
+		if s.DockerDaemonCfg != "" {
+			checks = append(checks, Check{"docker", "docker", Decide, "docker-ce present with its own daemon configuration — mymo applies its own policy; yours is not overwritten without review"})
+			break
+		}
 		detail := "official docker-ce " + facts.DockerVersion(f.Docker) + " — mymo can adopt and manage it"
 		if s.Containers > 0 {
 			detail += ", " + strconv.Itoa(s.Containers) + " container(s) running"
@@ -417,6 +448,8 @@ func Evaluate(f facts.Node, s Audit) []Check {
 	}
 
 	switch {
+	case f.Caddy != "" && s.CaddyConfig != "":
+		checks = append(checks, Check{"caddy", "caddy", Decide, "caddy present with an existing Caddyfile — mymo manages caddy's configuration; adopting yours needs your review"})
 	case f.Caddy != "":
 		checks = append(checks, Check{"caddy", "caddy", Adopt, "caddy " + firstToken(f.Caddy) + " present — mymo can adopt and manage it"})
 	default:
