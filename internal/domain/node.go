@@ -63,6 +63,11 @@ type Node struct {
 	// failed check keeps the last good facts while recording why the
 	// attempt failed, so health never silently reverts to green.
 	LastCheck CheckState `json:"last_check,omitzero"`
+
+	// Bootstrap is the node's recorded position in the App Host
+	// preparation lifecycle, persisted so interrupted preparations are
+	// visible rather than guessed about.
+	Bootstrap Bootstrap `json:"bootstrap,omitzero"`
 }
 
 // nodeNamePattern allows 1-40 lowercase names built from letters, digits,
