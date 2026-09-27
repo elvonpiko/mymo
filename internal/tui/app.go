@@ -35,6 +35,12 @@ type Model struct {
 
 	width, height int
 	contentWidth  int
+	// stageW is the centered stage column every page renders into:
+	// the frame is the window, the stage is the page. It matches the
+	// card grid's outer width, so at the 80-column floor it is the
+	// full canvas — nothing shifts — and on wide terminals the whole
+	// app column centers instead of hugging the left edge.
+	stageW        int
 	contentHeight int
 
 	helpOpen      bool
@@ -530,6 +536,7 @@ func (m *Model) reloadFleet() {
 // remains is the screen content area.
 func (m *Model) layout() {
 	m.contentWidth = max(1, m.width-2)
+	m.stageW = min(m.contentWidth, 78)
 	// Chromeless pages (home, intro) keep two border rows and one
 	// footer row; header pages add the header and its divider.
 	rows := 3
@@ -541,10 +548,10 @@ func (m *Model) layout() {
 	if fleetH < 1 {
 		fleetH = 1
 	}
-	m.fleet.SetSize(m.contentWidth, fleetH)
-	m.actions.SetSize(m.contentWidth, len(actionDefs())+1)
-	m.help.SetWidth(m.contentWidth)
-	m.fullHelp.SetWidth(max(10, m.contentWidth-8))
+	m.fleet.SetSize(m.stageW, fleetH)
+	m.actions.SetSize(m.stageW, len(actionDefs())+1)
+	m.help.SetWidth(m.stageW)
+	m.fullHelp.SetWidth(max(10, m.stageW-8))
 	if m.addNode.form != nil {
 		w := m.contentWidth - 12 // card border and padding
 		if w > 72 {
@@ -564,7 +571,7 @@ func (m *Model) layout() {
 func (m Model) View() tea.View {
 	var content string
 	if !m.introDone {
-		content = m.frame(m.introView())
+		content = m.frame(m.introView(), "")
 	} else {
 		content = m.workspaceView()
 	}
@@ -620,7 +627,7 @@ func (m Model) workspaceView() string {
 			content = m.addView()
 		}
 	}
-	return m.frame(content + "\n" + m.footerRow())
+	return m.frame(content, m.footerRow())
 }
 
 // showHeader reports whether the sticky header belongs on the current
@@ -632,16 +639,22 @@ func (m Model) showHeader() bool {
 	return m.introDone && m.cur().kind != scHome && !m.loading.active
 }
 
-// frame wraps content in the signature mymo border. Inner pages hang
-// their identity from the sticky header: icon, brand, breadcrumb. Home
-// and the intro skip it — their content is the identity — leaving just
-// the canvas.
-func (m Model) frame(content string) string {
+// frame wraps the page in the signature mymo border, centering it on
+// the stage. The footer is fitted as its own last row: it is always
+// full-width, and measuring it together with the page would defeat
+// the page's centering. Inner pages hang their identity from the
+// sticky header: icon, brand, breadcrumb. Home and the intro skip
+// it — their content is the identity — leaving just the canvas.
+func (m Model) frame(page, footer string) string {
 	innerW := max(1, m.width-2)
 	innerH := max(1, m.height-2)
 	contentH := innerH
 	if m.showHeader() {
 		contentH = max(1, innerH-2) // header and divider rows
+	}
+	pageH := contentH
+	if footer != "" {
+		pageH = max(1, contentH-1)
 	}
 	var b strings.Builder
 	b.WriteString(m.topBorder(innerW))
@@ -652,7 +665,13 @@ func (m Model) frame(content string) string {
 		b.WriteString(dividerStyle.Render(strings.Repeat("─", innerW)))
 		b.WriteString("\n")
 	}
-	for _, line := range fitLines(content, innerW, contentH) {
+	for _, line := range fitLines(centerBlock(page, innerW), innerW, pageH) {
+		b.WriteString(frameStyle.Render("│"))
+		b.WriteString(line)
+		b.WriteString(frameStyle.Render("│"))
+		b.WriteString("\n")
+	}
+	for _, line := range fitLines(footer, innerW, 1) {
 		b.WriteString(frameStyle.Render("│"))
 		b.WriteString(line)
 		b.WriteString(frameStyle.Render("│"))
@@ -662,38 +681,21 @@ func (m Model) frame(content string) string {
 	return b.String()
 }
 
-// topBorder renders the plain top frame line; on chromeless pages an
-// active toast rides the border's right end.
+// topBorder renders the plain top frame line.
 func (m Model) topBorder(w int) string {
-	plain := "╭" + strings.Repeat("─", w) + "╮"
-	if m.showHeader() || m.toast == nil {
-		return frameStyle.Render(plain)
-	}
-	t := m.toast.view()
-	dashes := w - lipgloss.Width(t) - 4
-	if dashes < 1 {
-		return frameStyle.Render(plain)
-	}
-	return frameStyle.Render("╭" + strings.Repeat("─", dashes) + " " + t + " ╮")
+	return frameStyle.Render("╭" + strings.Repeat("─", w) + "╮")
 }
 
 // headerRow renders the sticky header: mymo's icon and brand with the
-// breadcrumb of the current screen, and any active toast at the right.
+// breadcrumb of the current screen, centered like the stage below it.
 // The icon sits one cell in from the frame so its blocks never touch
 // the border.
 func (m Model) headerRow(w int) string {
-	left := " " + brandIcon() + " " + brandStyle.Render("mymo")
+	line := " " + brandIcon() + " " + brandStyle.Render("mymo")
 	for _, c := range m.crumbs() {
-		left += faintStyle.Render(" / ") + subtextStyle.Render(c)
+		line += faintStyle.Render(" / ") + subtextStyle.Render(c)
 	}
-	if m.toast == nil {
-		return left
-	}
-	t := m.toast.view()
-	if gap := w - lipgloss.Width(left) - lipgloss.Width(t); gap > 0 {
-		return left + strings.Repeat(" ", gap) + t
-	}
-	return left
+	return lipgloss.PlaceHorizontal(w, lipgloss.Center, line)
 }
 
 // bottomBorder renders the bottom frame line: the fleet status at the
@@ -715,9 +717,18 @@ func (m Model) bottomBorder(w int) string {
 		frameStyle.Render("╯")
 }
 
-// footerRow renders the in-frame footer: the current screen's key help.
+// footerRow renders the in-frame footer: the current screen's key
+// help, centered like the stage. An active toast takes the row
+// instead — one consistent home for every notice, never a line bolted
+// onto the header, and it never steals a row from the content.
 func (m Model) footerRow() string {
-	return m.help.View(m.keymap())
+	var row string
+	if m.toast != nil {
+		row = m.toast.view()
+	} else {
+		row = m.help.View(m.keymap())
+	}
+	return lipgloss.PlaceHorizontal(m.contentWidth, lipgloss.Center, row)
 }
 
 // statusTextPlain summarizes the fleet: node and application counts.
@@ -748,7 +759,12 @@ func (m Model) keymap() help.KeyMap {
 		if m.loading.active {
 			return newLoadingKeymap()
 		}
-		return newPreflightKeymap()
+		km := newPreflightKeymap()
+		// enter is only honest advice when the verdict allows it; a
+		// blocked audit drops the key from the footer, not from the
+		// screen
+		km.plan.SetEnabled(m.pfVerdict == preflight.Pass || m.pfVerdict == preflight.Adopt)
+		return km
 	case scNodePlan:
 		if m.loading.active {
 			return newLoadingKeymap()
@@ -782,6 +798,28 @@ func fitHeight(s string, h int) string {
 	}
 	for len(lines) < h {
 		lines = append(lines, "")
+	}
+	return strings.Join(lines, "\n")
+}
+
+// centerBlock centers a rendered page as one unit: every line gets
+// the same left gutter so the page keeps its own internal alignment
+// while the block floats in the frame. Line-by-line centering would
+// scatter short headings away from the cards below them.
+func centerBlock(s string, width int) string {
+	lines := strings.Split(s, "\n")
+	blockW := 0
+	for _, l := range lines {
+		if w := lipgloss.Width(l); w > blockW {
+			blockW = w
+		}
+	}
+	if blockW >= width {
+		return s
+	}
+	pad := strings.Repeat(" ", (width-blockW)/2)
+	for i := range lines {
+		lines[i] = pad + lines[i]
 	}
 	return strings.Join(lines, "\n")
 }

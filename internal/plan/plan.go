@@ -133,7 +133,7 @@ func captureDistro(ctx context.Context, r preflight.Runner) (id, codename string
 
 // sshGateSecondConnection is the one gate the whole lifecycle turns
 // on: sshd's new posture loads only after the new key works.
-const sshGateSecondConnection = "a second connection with the new mymo key is proven before sshd reloads"
+const sshGateSecondConnection = "the new mymo key is proven on a second connection before reload"
 
 func mymoUserStep() Step {
 	return Step{
@@ -286,7 +286,7 @@ func dockerStep(f facts.Node, a preflight.Audit, id, codename, arch string) Step
 	return Step{
 		Control: "docker",
 		Title:   "docker engine",
-		Detail:  "install docker-ce + plugins from the official apt repo",
+		Detail:  "install docker-ce + plugins from the official repo",
 		Files: []File{
 			{Path: "/etc/apt/sources.list.d/docker.list",
 				Content: fmt.Sprintf("deb [arch=%s signed-by=/etc/apt/keyrings/docker.asc] %s %s stable\n", arch, repo, codename),

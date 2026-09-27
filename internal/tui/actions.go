@@ -270,8 +270,11 @@ func (m Model) runPlan() (tea.Model, tea.Cmd) {
 	if m.store == nil {
 		return m, m.notify("state store unavailable", toastErr)
 	}
+	if m.pfVerdict == preflight.Abort {
+		return m, m.notify("this node cannot be prepared — see the aborts above", toastErr)
+	}
 	if m.pfVerdict != preflight.Pass && m.pfVerdict != preflight.Adopt {
-		return m, m.notify("resolve the decisions before planning", toastWarn)
+		return m, m.notify("resolve the decisions above, then plan", toastWarn)
 	}
 	n := m.selNode
 	m.push(screen{kind: scNodePlan, node: n.Name})

@@ -19,7 +19,7 @@ func (m Model) planView() string {
 
 	for i, s := range m.planSteps {
 		b.WriteString(subtextStyle.Render(fmt.Sprintf("%2d.", i+1)) + " " +
-			factsLabelStyle.Width(18).Render(s.Title) + " " +
+			factsLabelStyle.Width(16).Render(s.Title) + " " +
 			textStyle.Render(s.Detail) + "\n")
 	}
 

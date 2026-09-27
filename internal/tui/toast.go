@@ -17,7 +17,9 @@ const (
 	toastErr
 )
 
-// toast is a transient, non-blocking notification shown in the header.
+// toast is a transient, non-blocking notification shown in the
+// footer: it takes the key-help row for its few seconds of life, so
+// every notice in mymo has exactly one consistent home.
 type toast struct {
 	id   int
 	text string

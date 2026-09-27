@@ -57,7 +57,7 @@ func (m Model) pfRow(c preflight.Check) string {
 	// continuation lines line up under it
 	indent := 17
 	label := factsLabelStyle.Width(14).Render(c.Title)
-	detailW := max(m.contentWidth-indent, 30)
+	detailW := max(m.stageW-indent, 30)
 	var b strings.Builder
 	b.WriteString(g.Render(glyph) + " " + label + " ")
 	for i, line := range wrapPlain(c.Detail, detailW) {

@@ -82,7 +82,7 @@ func TestGenerateCleanUbuntuPlan(t *testing.T) {
 		if s.Title == "" || s.Detail == "" {
 			t.Errorf("step %q is incomplete: %+v", s.Control, s)
 		}
-		if lipglossWidth(s.Detail) > 55 {
+		if lipglossWidth(s.Detail) > 53 {
 			t.Errorf("step %q detail too long for one review line: %q", s.Control, s.Detail)
 		}
 	}

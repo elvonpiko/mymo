@@ -1,9 +1,12 @@
 package tui
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 	"time"
+
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/elvonpiko/mymo/internal/domain"
 	"github.com/elvonpiko/mymo/internal/plan"
@@ -306,5 +309,108 @@ func TestPlanRefusalKeepsLifecycleAndToasts(t *testing.T) {
 	}
 	if n.Bootstrap.State != domain.BootstrapPreflight {
 		t.Errorf("a failed plan advanced the lifecycle to %q", n.Bootstrap.State)
+	}
+}
+
+// ansiStrip removes color sequences so assertions can reason about
+// plain text.
+func ansiStrip(s string) string {
+	re := regexp.MustCompile("\x1b" + "\\[[0-9;]*m")
+	return re.ReplaceAllString(s, "")
+}
+
+// leadSpaces reports the gutter width of a framed content row: the
+// spaces between the frame border and the row's first visible cell.
+func leadSpaces(line string) int {
+	plain := ansiStrip(line)
+	// framed rows start at the border; the header row floats free
+	plain = strings.TrimPrefix(plain, "\u2502")
+	return len(plain) - len(strings.TrimLeft(plain, " "))
+}
+
+func TestWideTerminalCentersTheStage(t *testing.T) {
+	s := readyStore(t)
+	seedNode(t, s, "web-1")
+	m := New(s)
+	m = step(t, m, tea.WindowSizeMsg{Width: 120, Height: 30})
+	m = press(t, m, "n")
+	m = press(t, m, "enter")
+	m = observe(t, m, "web-1", richSnapshot("web-1"))
+
+	lines := strings.Split(view(m), "\n")
+	// the identity line floats center
+	if got := leadSpaces(lines[1]); got < 10 {
+		t.Errorf("header not centered at 120 cols: gutter=%d", got)
+	}
+	// the page's own rows share one gutter: heading above, system card
+	// below — a centered block, not line-by-line scattering
+	heading, card, actions := leadSpaces(lines[3]), leadSpaces(lines[6]), leadSpaces(lines[17])
+	if heading == 0 || heading != card || heading != actions {
+		t.Errorf("stage not one centered block: heading=%d card=%d actions=%d", heading, card, actions)
+	}
+	// the footer centers with it
+	if got := leadSpaces(lines[28]); got < 10 {
+		t.Errorf("footer not centered at 120 cols: gutter=%d", got)
+	}
+}
+
+func TestToastRidesTheFooterRow(t *testing.T) {
+	s := readyStore(t)
+	seedNode(t, s, "web-1")
+	m := press(t, New(s), "n", "enter")
+	snap := richSnapshot("web-1")
+	snap.Docker = ""
+	m = observe(t, m, "web-1", snap)
+	m = press(t, m, "p")
+	audit := cannedAudit()
+	audit.Listeners = map[int]string{80: "nginx"}
+	m = step(t, m, pfDoneMsg{node: "web-1", snap: snap, audit: audit})
+	m = press(t, m, "enter")
+
+	lines := strings.Split(view(m), "\n")
+	// the notice takes the footer row, centered — never the header
+	footer := lines[len(lines)-2]
+	if !strings.Contains(footer, "resolve the decisions above, then plan") {
+		t.Errorf("toast not in the footer row: %q", footer)
+	}
+	if leadSpaces(footer) < 8 {
+		t.Errorf("toast not centered: %q", footer)
+	}
+	if strings.Contains(lines[1], "resolve the decisions") {
+		t.Errorf("toast leaked into the header: %q", lines[1])
+	}
+	// a blocked verdict drops the plan key from the footer advice
+	if strings.Contains(footer, "enter plan") {
+		t.Errorf("footer offers planning past a decision: %q", footer)
+	}
+}
+
+func TestAbortVerdictToastsTheTruth(t *testing.T) {
+	s := readyStore(t)
+	seedNode(t, s, "web-1")
+	m := press(t, New(s), "n", "enter")
+	snap := richSnapshot("web-1")
+	snap.Docker = ""
+	m = observe(t, m, "web-1", snap)
+	m = press(t, m, "p")
+	audit := cannedAudit()
+	audit.UID = 1000
+	audit.Sudo = false
+	audit.Firewall = "unknown"
+	m = step(t, m, pfDoneMsg{node: "web-1", snap: snap, audit: audit})
+
+	m = press(t, m, "enter")
+	if m.cur().kind != scNodePreflight {
+		t.Fatalf("enter started planning past an abort: %v", m.cur().kind)
+	}
+	if m.toast == nil || !strings.Contains(m.toast.text, "cannot be prepared") {
+		t.Fatalf("abort must say so, not talk of decisions: %+v", m.toast)
+	}
+	if m.toast.kind != toastErr {
+		t.Errorf("an abort notice is an error, got kind %d", m.toast.kind)
+	}
+	lines := strings.Split(view(m), "\n")
+	if strings.Contains(lines[len(lines)-2], "enter plan") {
+		t.Errorf("footer offers planning past an abort: %q", lines[len(lines)-2])
 	}
 }

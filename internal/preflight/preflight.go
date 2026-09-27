@@ -444,7 +444,7 @@ func Evaluate(f facts.Node, s Audit) []Check {
 		}
 		checks = append(checks, Check{"docker", "docker", Adopt, detail})
 	case "docker.io":
-		checks = append(checks, Check{"docker", "docker", Decide, "distribution docker.io installed — only you can replace it"})
+		checks = append(checks, Check{"docker", "docker", Decide, "distribution docker.io — only you can replace it"})
 	}
 
 	switch {

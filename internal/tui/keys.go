@@ -68,8 +68,10 @@ func newFleetKeymap() fleetKeymap {
 	}
 }
 
+// ShortHelp keeps only the page's distinctive keys; arrows are
+// universal list knowledge and the rest waits behind ?.
 func (k fleetKeymap) ShortHelp() []key.Binding {
-	return []key.Binding{k.navigate, k.open, k.add, k.filter, k.help, k.quit}
+	return []key.Binding{k.open, k.add, k.filter, k.help, k.quit}
 }
 
 func (k fleetKeymap) FullHelp() [][]key.Binding {
@@ -177,8 +179,10 @@ func newNodeKeymap() nodeKeymap {
 	}
 }
 
+// ShortHelp keeps only the page's distinctive keys; everything else
+// waits behind ?.
 func (k nodeKeymap) ShortHelp() []key.Binding {
-	return []key.Binding{k.navigate, k.open, k.ssh, k.preflight, k.back, k.help, k.quit}
+	return []key.Binding{k.open, k.ssh, k.preflight, k.back, k.help, k.quit}
 }
 
 func (k nodeKeymap) FullHelp() [][]key.Binding {
