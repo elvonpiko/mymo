@@ -340,6 +340,20 @@ func factsPanel(n domain.Node, fields ...string) string {
 			}
 		case "mode":
 			rows = append(rows, [2]string{"mode", string(n.Mode)})
+		case "bootstrap":
+			switch n.Bootstrap.State {
+			case "":
+				// unstarted: the row stays out rather than saying "none"
+			case domain.BootstrapReady:
+				rows = append(rows, [2]string{"bootstrap", "ready · baseline " + n.Bootstrap.Baseline})
+			default:
+				v := n.Bootstrap.Verdict
+				if v == "" {
+					v = "—"
+				}
+				rows = append(rows, [2]string{"bootstrap",
+					string(n.Bootstrap.State) + " · verdict " + v + " · " + facts.FormatAge(n.Bootstrap.At)})
+			}
 		case "added":
 			rows = append(rows, [2]string{"added", n.AddedAt.Format("2006-01-02 15:04")})
 		case "last check":
@@ -367,7 +381,7 @@ func factsPanel(n domain.Node, fields ...string) string {
 func (m Model) inspectView() string {
 	n := m.selNode
 	record := titleStyle.Render("Stored record") + "\n\n" +
-		factsPanel(n, "name", "host", "port", "user", "auth", "key path", "mode", "added", "last check")
+		factsPanel(n, "name", "host", "port", "user", "auth", "key path", "mode", "bootstrap", "added", "last check")
 	discovered := titleStyle.Render("Discovered") + "\n\n"
 	if n.Facts.CollectedAt.IsZero() && n.LastCheck.At.IsZero() {
 		discovered += factsPanelStyle.Render("not probed yet")

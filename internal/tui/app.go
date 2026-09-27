@@ -12,6 +12,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/elvonpiko/mymo/internal/domain"
+	"github.com/elvonpiko/mymo/internal/preflight"
 	"github.com/elvonpiko/mymo/internal/ssh"
 	"github.com/elvonpiko/mymo/internal/state"
 	"github.com/elvonpiko/mymo/internal/version"
@@ -58,6 +59,11 @@ type Model struct {
 	liveCPU      int // -1 until two samples allow a delta
 	liveSparkCPU []int
 	liveSparkMem []int
+
+	// preflight results for the open audit screen; re-entering the
+	// flow refreshes them
+	pfChecks  []preflight.Check
+	pfVerdict preflight.Outcome
 
 	addNode addNodeState
 
@@ -199,6 +205,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case liveErrMsg:
 		return m.handleLiveErr(msg)
 
+	case pfDoneMsg:
+		return m.handlePreflightDone(msg)
+
 	case tea.KeyPressMsg:
 		if !m.introDone {
 			return m.updateIntro(msg)
@@ -207,6 +216,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	// Non-key messages (mouse, internal) go to the active screen's widget.
 	return m.forward(msg)
+}
+
+// cancelLoading ends the running ceremony and drops back one screen.
+// The work it was fronting keeps running — its result is still
+// recorded when it lands.
+func (m *Model) cancelLoading() {
+	m.loading = loadingState{}
+	m.fleetSetChecking("")
+	m.pop()
 }
 
 // formActive reports whether the embedded add-node form is receiving input.
@@ -247,6 +265,18 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m.updateRemoveConfirm(str)
 		}
 		return m.updateNodeKeys(msg)
+	case scNodePreflight:
+		if m.loading.active {
+			switch msg.String() {
+			case "q":
+				return m, tea.Quit
+			case "esc":
+				m.cancelLoading()
+				return m, nil
+			}
+			return m, nil
+		}
+		return m.updateSimpleKeys(s.kind, str)
 	case scAddNode:
 		return m.updateAddReview(str)
 	default:
@@ -334,11 +364,7 @@ func (m Model) updateNodeKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case "q":
 			return m, tea.Quit
 		case "esc":
-			m.loading = loadingState{}
-			m.fleetSetChecking("")
-			// geometry follows chrome: back to header-page heights
-			m.layout()
-			m.pop()
+			m.cancelLoading()
 			return m, nil
 		}
 		return m, nil
@@ -352,6 +378,8 @@ func (m Model) updateNodeKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "s":
 		return m.runSSH()
+	case "p":
+		return m.runPreflight()
 	case "enter":
 		if a, ok := m.actions.SelectedItem().(actionItem); ok {
 			return m.runAction(a)
@@ -545,6 +573,12 @@ func (m Model) workspaceView() string {
 			content = m.nodeAppsView(s.node)
 		case scNodeInspect:
 			content = m.inspectView()
+		case scNodePreflight:
+			if m.loading.active {
+				content = m.loadingView()
+			} else {
+				content = m.preflightView()
+			}
 		case scApps:
 			content = m.allAppsView()
 		case scDeploy:
@@ -679,6 +713,11 @@ func (m Model) keymap() help.KeyMap {
 			return newConfirmKeymap()
 		}
 		return newNodeKeymap()
+	case scNodePreflight:
+		if m.loading.active {
+			return newLoadingKeymap()
+		}
+		return newPreflightKeymap()
 	case scAddNode:
 		if m.addNode.stage == anForm {
 			return newFormKeymap()

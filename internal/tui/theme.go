@@ -75,6 +75,10 @@ var (
 			BorderForeground(lipgloss.Color(colSurface)).
 			Padding(0, 1)
 
+	// adoptStyle marks components mymo can take over: teal sits next
+	// to the palette's green-ok and yellow-warn without shouting.
+	adoptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(colTeal))
+
 	// titled-card chrome: the border stays as quiet as the card, while
 	// the name riding it carries the one accent a card is allowed.
 	cardBorderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(colSurface))

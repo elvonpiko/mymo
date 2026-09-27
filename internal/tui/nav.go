@@ -4,15 +4,16 @@ package tui
 type screenKind int
 
 const (
-	scHome        screenKind = iota // the home hub: what mymo is, where to go
-	scFleet                         // the node list
-	scNode                          // one node: facts and actions
-	scNodeApps                      // applications on a node
-	scNodeInspect                   // a node's full stored record
-	scApps                          // applications across the fleet
-	scDeploy                        // deploy workflow entry point
-	scSettings                      // settings and about
-	scAddNode                       // add-node workflow (overlay)
+	scHome          screenKind = iota // the home hub: what mymo is, where to go
+	scFleet                           // the node list
+	scNode                            // one node: facts and actions
+	scNodeApps                        // applications on a node
+	scNodeInspect                     // a node's full stored record
+	scNodePreflight                   // a node's app-host preflight verdicts
+	scApps                            // applications across the fleet
+	scDeploy                          // deploy workflow entry point
+	scSettings                        // settings and about
+	scAddNode                         // add-node workflow (overlay)
 )
 
 // screen is one entry of the navigation stack.
