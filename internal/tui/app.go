@@ -572,11 +572,11 @@ func (m *Model) layout() {
 		rows = 5
 	}
 	m.contentHeight = max(1, m.height-rows)
-	fleetH := m.contentHeight - 4
+	fleetH := m.contentHeight - 5
 	if fleetH < 1 {
 		fleetH = 1
 	}
-	m.fleet.SetSize(m.stageW, fleetH)
+	m.fleet.SetSize(m.cardW(), fleetH)
 	m.actions.SetSize(m.stageW, len(actionDefs())+1)
 	m.help.SetWidth(m.stageW)
 	m.fullHelp.SetWidth(max(10, m.stageW-8))

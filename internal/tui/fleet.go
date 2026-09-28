@@ -50,12 +50,14 @@ func (fleetDelegate) Render(w io.Writer, m list.Model, index int, item list.Item
 	} else {
 		status, statusStyle = healthLabel(it.node)
 	}
+	// the columns budget to the card's inner width exactly — a row
+	// wider than its card would push the frame's border out of true
 	line := cursor +
 		statusStyle.Render("● ") +
-		nameStyle.Width(20).Render(it.node.Name) +
-		dimStyle.Width(30).Render(addr) +
+		nameStyle.Width(17).Render(shorten(it.node.Name, 17)) +
+		dimStyle.Width(25).Render(shorten(addr, 25)) +
 		modeBadge(it.node.Mode) +
-		"  " + statusStyle.Render(status)
+		"  " + statusStyle.Render(shorten(status, 16))
 	fmt.Fprint(w, line)
 }
 
@@ -98,9 +100,9 @@ func (m Model) fleetView() string {
 		return m.emptyFleetView()
 	}
 	var b strings.Builder
-	b.WriteString(sectionLabel("NODES"))
-	b.WriteString("\n")
-	b.WriteString(m.fleet.View())
+	// the list rides in a card like the observe page's, so every
+	// work page speaks the same design language
+	b.WriteString(titledCard("NODES", padLines(m.fleet.View(), m.cardW())))
 	b.WriteString("\n\n")
 	b.WriteString(sectionLabel("APPLICATIONS"))
 	b.WriteString("\n")

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -570,5 +571,54 @@ func TestHomeIsChromeless(t *testing.T) {
 func TestRunRequiresTerminal(t *testing.T) {
 	if err := Run(testStore(t)); !errors.Is(err, ErrNoTerminal) {
 		t.Fatalf("Run() = %v, want ErrNoTerminal", err)
+	}
+}
+
+func TestFleetListRidesInACard(t *testing.T) {
+	s := readyStore(t)
+	seedNode(t, s, "web-1")
+	seedNode(t, s, "db-1")
+	m := press(t, New(s), "n")
+
+	lines := strings.Split(ansiStrip(view(m)), "\n")
+	// the list carries the card title like the observe page's cards
+	if !strings.Contains(lines[3], "NODES") {
+		t.Fatalf("fleet list not carded:\n%s", strings.Join(lines, "\n"))
+	}
+	// card corners align: the title border spans the card
+	colOf := func(line, marker string) int {
+		i := strings.Index(line, marker)
+		if i < 0 {
+			return -1
+		}
+		return utf8.RuneCountInString(line[:i])
+	}
+	// find the card's own top and bottom rows — not the frame's
+	top, bottom := -1, -1
+	for i, l := range lines {
+		if strings.Contains(l, "NODES") && strings.Contains(l, "╭") {
+			top = i
+			break
+		}
+	}
+	if top < 0 {
+		t.Fatalf("fleet card title missing:\n%s", strings.Join(lines, "\n"))
+	}
+	for i := top + 1; i < len(lines); i++ {
+		if strings.Contains(lines[i], "╯") {
+			bottom = i
+			break
+		}
+	}
+	if bottom < 0 {
+		t.Fatalf("fleet card bottom border missing:\n%s", strings.Join(lines, "\n"))
+	}
+	if gotTop, gotBot := colOf(lines[top], "╮"), colOf(lines[bottom], "╯"); gotTop != gotBot {
+		t.Errorf("fleet card corners misaligned: top=%d bottom=%d", gotTop, gotBot)
+	}
+	// the applications summary survives the floor budget below the card
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "APPLICATIONS") || !strings.Contains(joined, "none managed yet") {
+		t.Errorf("applications section lost below the card:\n%s", joined)
 	}
 }
