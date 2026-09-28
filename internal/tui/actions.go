@@ -137,6 +137,7 @@ func (m Model) handleCheckDone(msg checkDoneMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.live = true
+	m.livePaused = false
 	m.liveSeq++
 	m.liveClient = msg.client
 	m.liveErr = ""
@@ -174,6 +175,12 @@ func (m Model) runPreflight() (tea.Model, tea.Cmd) {
 	}
 	m.layout()
 	client := m.liveClient
+	// the audit borrows the live connection: sampling pauses so a
+	// slow tick can never time out and close it mid-audit
+	if client != nil {
+		m.pauseLive()
+	}
+	m.auditBusy = true
 	knownHosts := filepath.Join(m.store.Dir(), "known_hosts.json")
 	name := n.Name
 	return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
@@ -209,6 +216,7 @@ func probeAndAudit(ctx context.Context, r preflight.Runner, name string) tea.Msg
 // verdicts. A cancelled visit still records: the audit is read-only,
 // so its result is always true and always worth keeping.
 func (m Model) handlePreflightDone(msg pfDoneMsg) (tea.Model, tea.Cmd) {
+	m.auditBusy = false
 	m.loading = loadingState{}
 	m.layout()
 	if msg.err != nil {
@@ -286,6 +294,11 @@ func (m Model) runPlan() (tea.Model, tea.Cmd) {
 	}
 	m.layout()
 	client := m.liveClient
+	// generation borrows the live connection like the audit does
+	if client != nil {
+		m.pauseLive()
+	}
+	m.auditBusy = true
 	knownHosts := filepath.Join(m.store.Dir(), "known_hosts.json")
 	name := n.Name
 	snap := m.pfSnap
@@ -310,6 +323,7 @@ func (m Model) runPlan() (tea.Model, tea.Cmd) {
 // handlePlanDone records the plan step and shows the change list.
 // A refused plan leaves the lifecycle untouched and says why.
 func (m Model) handlePlanDone(msg planMsg) (tea.Model, tea.Cmd) {
+	m.auditBusy = false
 	m.loading = loadingState{}
 	m.layout()
 	if msg.err != nil {

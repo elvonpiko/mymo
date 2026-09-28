@@ -60,6 +60,7 @@ type Model struct {
 	// live stats state (node screen). seq identifies the sampling
 	// session so messages from a stopped one are ignored.
 	live         bool
+	livePaused   bool // sampling paused while an audit borrows the connection
 	liveSeq      int
 	liveClient   *ssh.Client
 	liveErr      string
@@ -78,6 +79,11 @@ type Model struct {
 
 	// the generated plan awaiting confirmation
 	planSteps []plan.Step
+
+	// auditBusy is set while the preflight audit or plan generation
+	// runs, even if the user walked away from its loading screen —
+	// live sampling resumes only once the connection is free again.
+	auditBusy bool
 
 	addNode addNodeState
 
@@ -220,16 +226,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleLiveErr(msg)
 
 	case pfDoneMsg:
-		return m.handlePreflightDone(msg)
+		next, cmd := m.handlePreflightDone(msg)
+		return withResume(next, cmd)
 
 	case planMsg:
-		return m.handlePlanDone(msg)
+		next, cmd := m.handlePlanDone(msg)
+		return withResume(next, cmd)
 
 	case tea.KeyPressMsg:
 		if !m.introDone {
 			return m.updateIntro(msg)
 		}
-		return m.updateKeys(msg)
+		next, cmd := m.updateKeys(msg)
+		return withResume(next, cmd)
 	}
 	// Non-key messages (mouse, internal) go to the active screen's widget.
 	return m.forward(msg)
@@ -242,6 +251,24 @@ func (m *Model) cancelLoading() {
 	m.loading = loadingState{}
 	m.fleetSetChecking("")
 	m.pop()
+}
+
+// withResume restarts live sampling when the observe page just became
+// the resting screen and the connection is free — the user came back
+// from an audit that borrowed the live session's connection.
+func withResume(next tea.Model, cmd tea.Cmd) (tea.Model, tea.Cmd) {
+	mm, ok := next.(Model)
+	if !ok {
+		return next, cmd
+	}
+	if rc := mm.maybeResumeLive(); rc != nil {
+		if cmd == nil {
+			cmd = rc
+		} else {
+			cmd = tea.Batch(cmd, rc)
+		}
+	}
+	return mm, cmd
 }
 
 // formActive reports whether the embedded add-node form is receiving input.

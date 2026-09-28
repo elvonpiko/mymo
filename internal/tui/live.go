@@ -40,10 +40,42 @@ type liveErrMsg struct {
 	err error
 }
 
+// pauseLive stops scheduling live samples but keeps the connection
+// open: the preflight audit and plan generation borrow it, and a
+// racing tick that times out would close the connection under their
+// feet. Results of in-flight samples are ignored until sampling
+// resumes.
+func (m *Model) pauseLive() {
+	m.live = false
+	m.livePaused = true
+}
+
+// resumeLive restarts sampling over the kept connection, resuming
+// the same session's sequence.
+func (m *Model) resumeLive() tea.Cmd {
+	m.livePaused = false
+	if m.liveClient == nil {
+		return nil
+	}
+	m.live = true
+	return m.sampleLive(m.liveSeq)
+}
+
+// maybeResumeLive restarts sampling only when the observe page is the
+// resting screen, no ceremony is running, and no audit still holds
+// the connection in the background.
+func (m *Model) maybeResumeLive() tea.Cmd {
+	if !m.livePaused || m.loading.active || m.auditBusy || m.cur().kind != scNode || m.liveClient == nil {
+		return nil
+	}
+	return m.resumeLive()
+}
+
 // stopLive ends sampling and drops the connection; the next entry
 // opens a fresh one.
 func (m *Model) stopLive() {
 	m.live = false
+	m.livePaused = false
 	if m.liveClient != nil {
 		m.liveClient.Close()
 		m.liveClient = nil

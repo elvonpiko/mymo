@@ -214,3 +214,101 @@ func TestSupersededProbeRecordsWithoutDisturbingTheNew(t *testing.T) {
 		t.Fatalf("superseded probe result not recorded: %+v", n.Facts)
 	}
 }
+
+func TestAuditBorrowsTheLiveConnectionSafely(t *testing.T) {
+	s := readyStore(t)
+	seedNode(t, s, "web-1")
+	m := press(t, New(s), "n", "enter")
+	m = observe(t, m, "web-1", richSnapshot("web-1"))
+	if !m.live || m.liveClient == nil {
+		t.Fatal("live session not running before the audit")
+	}
+
+	// the audit borrows the connection: sampling pauses, the
+	// connection stays open for the audit to use
+	m = press(t, m, "p")
+	if m.live || !m.livePaused || m.liveClient == nil {
+		t.Fatalf("audit did not pause sampling cleanly: live=%v paused=%v client=%v",
+			m.live, m.livePaused, m.liveClient != nil)
+	}
+	if !m.auditBusy {
+		t.Fatal("audit did not mark the connection busy")
+	}
+
+	// the hazard this guards: a slow tick times out mid-audit. It
+	// must be ignored — never close the connection under the audit.
+	m = step(t, m, liveErrMsg{seq: m.liveSeq, err: errString("ssh: i/o timeout")})
+	if m.liveClient == nil {
+		t.Fatal("a timed-out tick closed the connection the audit is using")
+	}
+	if m.live {
+		t.Fatal("sampling resumed while the audit still holds the connection")
+	}
+
+	// the audit lands with the user still on its page: still paused
+	m = step(t, m, pfDoneMsg{node: "web-1", snap: richSnapshot("web-1"), audit: cannedAudit()})
+	if m.auditBusy {
+		t.Fatal("audit busy flag never cleared")
+	}
+	if m.live || m.livePaused != true {
+		t.Fatalf("sampling must stay paused off the observe page: live=%v paused=%v", m.live, m.livePaused)
+	}
+
+	// coming home resumes over the kept connection
+	m = press(t, m, "esc")
+	if !m.live || m.livePaused {
+		t.Fatalf("returning to the observe page must resume sampling: live=%v paused=%v", m.live, m.livePaused)
+	}
+}
+
+func TestEscDuringAuditWaitsForTheAuditToLand(t *testing.T) {
+	s := readyStore(t)
+	seedNode(t, s, "web-1")
+	m := press(t, New(s), "n", "enter")
+	m = observe(t, m, "web-1", richSnapshot("web-1"))
+	m = press(t, m, "p")
+
+	// the user walks home while the audit still runs in the
+	// background: no resume until the connection is free again
+	m = press(t, m, "esc")
+	if m.cur().kind != scNode {
+		t.Fatalf("esc did not return to the observe page: %v", m.cur().kind)
+	}
+	if m.live {
+		t.Fatal("sampling resumed while the audit still runs in the background")
+	}
+
+	// the late audit lands: the connection is free, sampling resumes
+	m = step(t, m, pfDoneMsg{node: "web-1", snap: richSnapshot("web-1"), audit: cannedAudit()})
+	if !m.live {
+		t.Fatal("the late audit did not hand the connection back to sampling")
+	}
+}
+
+func TestPlanFlowPausesSamplingToo(t *testing.T) {
+	s := readyStore(t)
+	seedNode(t, s, "web-1")
+	m := press(t, New(s), "n", "enter")
+	snap := richSnapshot("web-1")
+	snap.Docker = ""
+	m = observe(t, m, "web-1", snap)
+	m = press(t, m, "p")
+	m = step(t, m, pfDoneMsg{node: "web-1", snap: snap, audit: cannedAudit()})
+
+	m = press(t, m, "enter")
+	if m.live || !m.livePaused {
+		t.Fatalf("plan generation did not pause sampling: live=%v paused=%v", m.live, m.livePaused)
+	}
+	m = step(t, m, planMsg{node: "web-1"})
+	if m.live {
+		t.Fatal("sampling resumed on the plan page — the LIVE card is not even visible")
+	}
+	m = press(t, m, "esc") // back to the audit's verdicts
+	if m.live {
+		t.Fatal("sampling resumed on the preflight page")
+	}
+	m = press(t, m, "esc") // home to the observe page
+	if !m.live {
+		t.Fatal("sampling did not resume on the observe page")
+	}
+}
