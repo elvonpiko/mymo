@@ -67,12 +67,3 @@ func healthLabel(n domain.Node) (string, lipgloss.Style) {
 		return "checked " + facts.FormatAge(n.LastCheck.At), okStyle
 	}
 }
-
-// nodeStatusLine renders the dot, name, mode badge, and health label
-// that head the node screen.
-func nodeStatusLine(n domain.Node, badge string) string {
-	label, labelStyle := healthLabel(n)
-	return healthDot(classifyNode(n)) + " " + titleStyle.Render(n.Name) +
-		" " + badge + "  " + faintStyle.Render("·") + " " +
-		labelStyle.Render(label)
-}

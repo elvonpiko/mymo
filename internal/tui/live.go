@@ -115,8 +115,9 @@ func (m Model) handleLiveErr(msg liveErrMsg) (tea.Model, tea.Cmd) {
 }
 
 // liveCardInner renders the LIVE card's contents: cpu and memory with
-// sparklines on the first row, the three load averages below. A
-// stopped card keeps showing the last known memory, labeled as a
+// sparklines on the first row, the load averages and the node's
+// uptime below — uptime is motion, so it lives here, not in SYSTEM.
+// A stopped card keeps showing the last known memory and uptime as a
 // snapshot — honest about what is live and what is not.
 func (m Model) liveCardInner() string {
 	if m.live && m.liveClient != nil {
@@ -132,7 +133,7 @@ func (m Model) liveCardInner() string {
 			loads += "  " + subtextStyle.Render(m.liveCur.load5+"  "+m.liveCur.load15)
 		}
 		return liveCell("CPU", cpu) + "  " + liveCell("MEM", mem) + "\n" +
-			liveCell("LOAD", loads)
+			liveCell("LOAD", loads) + "  " + liveCell("UP", m.uptimeText())
 	}
 	head := ""
 	switch {
@@ -141,7 +142,8 @@ func (m Model) liveCardInner() string {
 	default:
 		head = faintStyle.Render("● not sampling") + "\n"
 	}
-	return head + liveCell("MEM", faintStyle.Render(m.memLiveText()+" (snapshot)"))
+	return head + liveCell("MEM", faintStyle.Render(m.memLiveText()+" (snapshot)")) +
+		"  " + liveCell("UP", faintStyle.Render(m.uptimeText()))
 }
 
 // liveCell renders one "LABEL value" group, the label pinned to a
@@ -273,4 +275,13 @@ func orDash(s string) string {
 		return "—"
 	}
 	return s
+}
+
+// uptimeText renders the node's uptime for the LIVE card — "—" when
+// the snapshot never learned it, never a guess.
+func (m Model) uptimeText() string {
+	if m.selNode.Facts.Uptime <= 0 {
+		return "—"
+	}
+	return facts.FormatUptimeShort(m.selNode.Facts.Uptime)
 }

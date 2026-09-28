@@ -4,6 +4,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
+
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/elvonpiko/mymo/internal/domain"
 	"github.com/elvonpiko/mymo/internal/facts"
@@ -296,3 +299,71 @@ func TestInspectShowsRecordAndFacts(t *testing.T) {
 type errString string
 
 func (e errString) Error() string { return string(e) }
+
+func TestObservePageSectionsBreathe(t *testing.T) {
+	s := readyStore(t)
+	seedNode(t, s, "web-1")
+	m := New(s)
+	m = step(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = press(t, m, "n", "enter")
+	m = observe(t, m, "web-1", richSnapshot("web-1"))
+
+	lines := strings.Split(ansiStrip(view(m)), "\n")
+	// one heading line: the node's identity and connection together
+	if !strings.Contains(lines[3], "root@203.0.113.10:22") || !strings.Contains(lines[3], "agent auth") {
+		t.Errorf("heading lost the connection identity: %q", lines[3])
+	}
+	// air between the heading, the cards, and the actions
+	for _, i := range []int{4, 11, 16} {
+		if strings.Trim(lines[i], "\u2502 ") != "" {
+			t.Errorf("row %d should be air between sections: %q", i, lines[i])
+		}
+	}
+	// SYSTEM and LIVE keep their titles; all four actions survive the
+	// exact 19-row floor budget
+	if !strings.Contains(lines[5], "SYSTEM") || !strings.Contains(lines[12], "LIVE") {
+		t.Fatalf("section layout shifted:\n%s", strings.Join(lines, "\n"))
+	}
+	if !strings.Contains(lines[21], "Remove") {
+		t.Errorf("last action clipped at the floor: %q", lines[21])
+	}
+	// uptime is motion: it lives in the LIVE card, never in SYSTEM
+	for _, r := range lines[5:11] {
+		if strings.Contains(r, "Uptime") || strings.Contains(r, "User") {
+			t.Errorf("SYSTEM card carries snapshot trivia: %q", r)
+		}
+	}
+	if !strings.Contains(lines[14], "UP") || !strings.Contains(lines[14], "1d 18h") {
+		t.Errorf("LIVE card lost the uptime: %q", lines[14])
+	}
+}
+
+func TestCardsSpanTheStage(t *testing.T) {
+	s := readyStore(t)
+	seedNode(t, s, "web-1")
+	m := New(s)
+	m = step(t, m, tea.WindowSizeMsg{Width: 150, Height: 30})
+	m = press(t, m, "n", "enter")
+	m = observe(t, m, "web-1", richSnapshot("web-1"))
+
+	lines := strings.Split(ansiStrip(view(m)), "\n")
+	// the card's top and bottom corners sit at the same column — the
+	// title border spans the card like every other row
+	colOf := func(line, marker string) int {
+		i := strings.Index(line, marker)
+		if i < 0 {
+			return -1
+		}
+		return utf8.RuneCountInString(line[:i])
+	}
+	top := colOf(lines[5], "\u256e")     // ╮
+	bottom := colOf(lines[10], "\u256f") // ╯
+	if top < 0 || top != bottom {
+		t.Errorf("card corners misaligned: top=%d bottom=%d\n%s", top, bottom, lines[5]+"\n"+lines[10])
+	}
+	// and the card spans the wide stage instead of hugging the old
+	// fixed width
+	if bottom < 100 {
+		t.Errorf("card too narrow at 150 cols: corner at %d", bottom)
+	}
+}

@@ -36,10 +36,11 @@ type Model struct {
 	width, height int
 	contentWidth  int
 	// stageW is the centered stage column every page renders into:
-	// the frame is the window, the stage is the page. It matches the
-	// card grid's outer width, so at the 80-column floor it is the
-	// full canvas — nothing shifts — and on wide terminals the whole
-	// app column centers instead of hugging the left edge.
+	// the frame is the window, the stage is the page. At the
+	// 80-column floor it is the full canvas — nothing shifts; past
+	// that it grows with the terminal up to a comfortable reading
+	// width, so wide windows get roomy pages instead of a narrow
+	// column floating in space.
 	stageW        int
 	contentHeight int
 
@@ -536,7 +537,7 @@ func (m *Model) reloadFleet() {
 // remains is the screen content area.
 func (m *Model) layout() {
 	m.contentWidth = max(1, m.width-2)
-	m.stageW = min(m.contentWidth, 78)
+	m.stageW = min(m.contentWidth, 110)
 	// Chromeless pages (home, intro) keep two border rows and one
 	// footer row; header pages add the header and its divider.
 	rows := 3

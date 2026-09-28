@@ -86,23 +86,18 @@ func newActionsList() list.Model {
 func (m Model) nodeView() string {
 	n := m.selNode
 	var b strings.Builder
-	b.WriteString(nodeStatusLine(n, modeBadge(n.Mode)))
-	b.WriteString("\n")
-	auth := fmt.Sprintf("%s auth", n.Auth)
-	if n.Auth == domain.AuthKey {
-		auth = "key auth"
-	}
-	b.WriteString(dimStyle.Render(fmt.Sprintf("%s@%s · %s · added %s",
-		n.User, n.Address(), auth, n.AddedAt.Format("2006-01-02"))))
+	b.WriteString(m.nodeHeadingLine(n))
+	// air between the heading, the cards, and the actions: sections
+	// read as sections, not one squeezed block
 	b.WriteString("\n\n")
 	b.WriteString(m.systemCard(n))
 	// the LIVE card exists only once something is there to sample,
 	// and spans the same width as the SYSTEM card beside it
 	if !n.Facts.CollectedAt.IsZero() {
-		b.WriteString("\n")
-		b.WriteString(titledCard("LIVE", padLines(m.liveCardInner(), cardGridW)))
+		b.WriteString("\n\n")
+		b.WriteString(titledCard("LIVE", padLines(m.liveCardInner(), m.cardW())))
 	}
-	b.WriteString("\n")
+	b.WriteString("\n\n")
 	b.WriteString(sectionLabel("ACTIONS"))
 	b.WriteString("\n")
 	b.WriteString(m.actions.View())
@@ -133,18 +128,21 @@ func (m Model) systemCard(n domain.Node) string {
 		inner = faintStyle.Render("no snapshot yet") + "\n" +
 			textStyle.Render("entering a node observes it — leave and") + "\n" +
 			textStyle.Render("re-enter to try again")
+		inner = padLines(inner, m.cardW())
 	case n.Facts.CollectedAt.IsZero():
 		// checked before, never successfully
 		inner = errStyle.Render("first check failed: ") + subtextStyle.Render(shorten(n.LastCheck.Error, 44)) + "\n" +
 			faintStyle.Render("esc, then re-enter to retry")
+		inner = padLines(inner, m.cardW())
 	default:
 		rows := systemRows(n)
+		vw := m.cardW()/2 - 10
 		var b strings.Builder
 		for i := 0; i < len(rows); i += 2 {
-			left := discoveredCell(rows[i])
+			left := discoveredCell(rows[i], vw)
 			right := ""
 			if i+1 < len(rows) {
-				right = discoveredCell(rows[i+1])
+				right = discoveredCell(rows[i+1], vw)
 			}
 			b.WriteString(left + right + "\n")
 		}
@@ -156,14 +154,36 @@ func (m Model) systemCard(n domain.Node) string {
 	return titledCard("SYSTEM", inner)
 }
 
+// nodeHeadingLine renders the observe page's single identity line:
+// dot, name, mode, then what the user is connected as and how, then
+// the health verdict. Pieces drop off in priority order if the line
+// would run past the stage — the record page keeps everything.
+func (m Model) nodeHeadingLine(n domain.Node) string {
+	label, labelStyle := healthLabel(n)
+	auth := fmt.Sprintf("%s auth", n.Auth)
+	if n.Auth == domain.AuthKey {
+		auth = "key auth"
+	}
+	line := healthDot(classifyNode(n)) + " " + titleStyle.Render(n.Name) +
+		" " + modeBadge(n.Mode)
+	health := faintStyle.Render(" · ") + labelStyle.Render(label)
+	for _, piece := range []string{
+		faintStyle.Render(" · ") + subtextStyle.Render(n.User+"@"+n.Address()),
+		faintStyle.Render(" · ") + subtextStyle.Render(auth),
+	} {
+		if lipgloss.Width(line)+lipgloss.Width(piece)+lipgloss.Width(health) <= m.stageW-2 {
+			line += piece
+		}
+	}
+	return line + health
+}
+
 // systemRows builds the SYSTEM card's label/value pairs in display
-// order — the snapshot's identity, in glance form.
+// order — the snapshot's identity, in glance form. Uptime is the
+// LIVE card's business and the login user is already the address
+// prefix; neither earns a row here.
 func systemRows(n domain.Node) [][2]string {
 	f := n.Facts
-	uptime := "unknown"
-	if f.Uptime > 0 {
-		uptime = facts.FormatUptimeShort(f.Uptime)
-	}
 	cpus := "unknown"
 	if f.CPUs > 0 {
 		cpus = strconv.Itoa(f.CPUs)
@@ -177,8 +197,6 @@ func systemRows(n domain.Node) [][2]string {
 		{"Kernel", orUnknown(f.Kernel)},
 		{"Arch", orUnknown(f.Arch)},
 		{"CPUs", cpus},
-		{"Uptime", uptime},
-		{"User", orUnknown(f.User)},
 		{"Disk", diskText(f)},
 		{"Systemd", systemd},
 		{"Docker", toolShort(facts.DockerVersion(f.Docker))},
@@ -200,8 +218,8 @@ func toolShort(version string) string {
 func titledCard(title, inner string) string {
 	card := factsPanelStyle.Render(inner)
 	lines := strings.Split(card, "\n")
-	w := lipgloss.Width(lines[0]) - 4 // inner width, padding included
-	dashes := w - 3 - lipgloss.Width(title) - 1
+	w := lipgloss.Width(lines[0]) // the card's full width, borders included
+	dashes := w - 3 - lipgloss.Width(title) - 2
 	if dashes < 1 {
 		return card
 	}
@@ -238,9 +256,13 @@ func (m Model) discoveredRows(n domain.Node) [][2]string {
 	}
 }
 
-// cardGridW is the facts grid's inner width: two 37-wide cells. The
-// LIVE card pads to it so both cards share one silhouette.
-const cardGridW = 74
+// cardW is the cards' inner width: the stage minus the card borders,
+// so the SYSTEM and LIVE cards always share one silhouette and span
+// the stage at any terminal width. At the 80-column floor this is
+// the same 74 the grid has always been.
+func (m Model) cardW() int {
+	return max(60, m.stageW-4)
+}
 
 // padLines spaces every line of s out to width w, ANSI-aware, so
 // differently sized contents render as one uniform card.
@@ -256,11 +278,12 @@ func padLines(s string, w int) string {
 	return strings.Join(out, "\n")
 }
 
-// discoveredCell renders one label/value cell, fixed width so the
-// two-column grid aligns; long values truncate with an ellipsis.
-func discoveredCell(row [2]string) string {
+// discoveredCell renders one label/value cell; the value column is
+// sized by the caller so the two-column grid aligns at any stage
+// width, and long values truncate with an ellipsis.
+func discoveredCell(row [2]string, vw int) string {
 	return factsLabelStyle.Width(9).Render(row[0]) + " " +
-		textStyle.Width(27).Render(shorten(row[1], 27))
+		textStyle.Width(vw).Render(shorten(row[1], vw))
 }
 
 // memText renders "3.2/3.8 GiB avail" — headroom first, then capacity.

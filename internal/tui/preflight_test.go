@@ -344,7 +344,7 @@ func TestWideTerminalCentersTheStage(t *testing.T) {
 	}
 	// the page's own rows share one gutter: heading above, system card
 	// below — a centered block, not line-by-line scattering
-	heading, card, actions := leadSpaces(lines[3]), leadSpaces(lines[6]), leadSpaces(lines[17])
+	heading, card, actions := leadSpaces(lines[3]), leadSpaces(lines[5]), leadSpaces(lines[17])
 	if heading == 0 || heading != card || heading != actions {
 		t.Errorf("stage not one centered block: heading=%d card=%d actions=%d", heading, card, actions)
 	}
