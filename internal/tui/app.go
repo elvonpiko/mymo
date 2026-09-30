@@ -11,6 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/elvonpiko/mymo/internal/apply"
 	"github.com/elvonpiko/mymo/internal/domain"
 	"github.com/elvonpiko/mymo/internal/facts"
 	"github.com/elvonpiko/mymo/internal/plan"
@@ -79,6 +80,17 @@ type Model struct {
 
 	// the generated plan awaiting confirmation
 	planSteps []plan.Step
+
+	// the apply flow: the typed confirmation, the engine's report,
+	// the verify rows, and the injectable pieces tests replace —
+	// the runner and the second-connection prover.
+	applyTyped    string
+	applyResult   apply.Result
+	applyChecks   []preflight.Check
+	applyOpts     apply.Options
+	applyRunner   preflight.Runner                  // nil: the live connection or a fresh dial
+	applyProgress chan string                       // the engine's live progress pump
+	newProver     func(keyPath string) apply.Prover // nil: the real second connection
 
 	// auditBusy is set while the preflight audit or plan generation
 	// runs, even if the user walked away from its loading screen —
@@ -233,6 +245,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		next, cmd := m.handlePlanDone(msg)
 		return withResume(next, cmd)
 
+	case applyProgressMsg:
+		if m.loading.active && m.cur().kind == scNodeApplyReport && msg.line != "" {
+			m.loading.detail = msg.line
+		}
+		return m, m.applyProgressReader()
+
+	case applyDoneMsg:
+		next, cmd := m.handleApplyDone(msg)
+		return withResume(next, cmd)
+
+	case verifyDoneMsg:
+		next, cmd := m.handleVerifyDone(msg)
+		return withResume(next, cmd)
+
 	case tea.KeyPressMsg:
 		if !m.introDone {
 			return m.updateIntro(msg)
@@ -335,7 +361,38 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		if str == "a" {
+			return m.startApplyConfirm()
+		}
 		return m.updateSimpleKeys(s.kind, str)
+	case scNodeApplyConfirm:
+		return m.updateApplyConfirm(str)
+	case scNodeApplyReport:
+		if m.loading.active {
+			switch msg.String() {
+			case "q":
+				return m, tea.Quit
+			case "esc":
+				// the work keeps running in the background; its
+				// result still records when it lands
+				m.cancelLoading()
+				return m, nil
+			}
+			return m, nil
+		}
+		switch str {
+		case "q":
+			return m, tea.Quit
+		case "esc":
+			m.pop()
+			// the preflight review that led here is answered by the
+			// report itself; home is the observe page
+			if m.cur().kind == scNodePreflight {
+				m.pop()
+			}
+			return m, nil
+		}
+		return m, nil
 	case scAddNode:
 		return m.updateAddReview(str)
 	default:
@@ -645,6 +702,14 @@ func (m Model) workspaceView() string {
 			} else {
 				content = m.planView()
 			}
+		case scNodeApplyConfirm:
+			content = m.applyConfirmView()
+		case scNodeApplyReport:
+			if m.loading.active {
+				content = m.loadingView()
+			} else {
+				content = m.applyReportView()
+			}
 		case scApps:
 			content = m.allAppsView()
 		case scDeploy:
@@ -798,6 +863,13 @@ func (m Model) keymap() help.KeyMap {
 			return newLoadingKeymap()
 		}
 		return newPlanKeymap()
+	case scNodeApplyConfirm:
+		return newApplyConfirmKeymap()
+	case scNodeApplyReport:
+		if m.loading.active {
+			return newLoadingKeymap()
+		}
+		return newApplyReportKeymap()
 	case scAddNode:
 		if m.addNode.stage == anForm {
 			return newFormKeymap()

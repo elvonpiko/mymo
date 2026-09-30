@@ -64,6 +64,18 @@ func NextBootstrap(from BootstrapState) (BootstrapState, error) {
 	return BootstrapPreflight, nil // unstarted nodes begin with the audit
 }
 
+// BootstrapRank is a state's position in the lifecycle order; the
+// unstarted state ranks below everything. Callers advance a node
+// only forward by comparing ranks.
+func BootstrapRank(s BootstrapState) int {
+	for i, v := range bootstrapOrder {
+		if s == v {
+			return i + 1
+		}
+	}
+	return 0
+}
+
 // Bootstrap is a node's recorded position in the preparation
 // lifecycle, persisted with the node so an interrupted bootstrap is
 // visible rather than guessed about.

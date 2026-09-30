@@ -132,26 +132,75 @@ func (k preflightKeymap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{{k.plan, k.back}, {k.help, k.quit}}
 }
 
-// Plan keymap: the plan is read-only output until apply ships.
+// Plan keymap: the plan changes nothing until its author applies it.
 type planKeymap struct {
+	apply key.Binding
+	back  key.Binding
+	help  key.Binding
+	quit  key.Binding
+}
+
+func newPlanKeymap() planKeymap {
+	return planKeymap{
+		apply: key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "apply")),
+		back:  key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
+		help:  key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
+		quit:  key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
+	}
+}
+
+func (k planKeymap) ShortHelp() []key.Binding {
+	return []key.Binding{k.apply, k.back, k.help, k.quit}
+}
+
+func (k planKeymap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{{k.apply, k.back}, {k.help, k.quit}}
+}
+
+// Apply-confirm keymap: the node's name typed in full is the
+// confirmation; esc is the only way out besides matching it.
+type applyConfirmKeymap struct {
+	confirm key.Binding
+	back    key.Binding
+	help    key.Binding
+}
+
+func newApplyConfirmKeymap() applyConfirmKeymap {
+	return applyConfirmKeymap{
+		confirm: key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "confirm")),
+		back:    key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
+		help:    key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
+	}
+}
+
+func (k applyConfirmKeymap) ShortHelp() []key.Binding {
+	return []key.Binding{k.confirm, k.back, k.help}
+}
+
+func (k applyConfirmKeymap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{{k.confirm, k.back}, {k.help}}
+}
+
+// Apply-report keymap: the report stays until walked away from.
+type applyReportKeymap struct {
 	back key.Binding
 	help key.Binding
 	quit key.Binding
 }
 
-func newPlanKeymap() planKeymap {
-	return planKeymap{
+func newApplyReportKeymap() applyReportKeymap {
+	return applyReportKeymap{
 		back: key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
 		help: key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 		quit: key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
 	}
 }
 
-func (k planKeymap) ShortHelp() []key.Binding {
+func (k applyReportKeymap) ShortHelp() []key.Binding {
 	return []key.Binding{k.back, k.help, k.quit}
 }
 
-func (k planKeymap) FullHelp() [][]key.Binding {
+func (k applyReportKeymap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{{k.back}, {k.help, k.quit}}
 }
 

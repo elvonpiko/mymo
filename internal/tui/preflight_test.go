@@ -241,7 +241,7 @@ func TestPlanFromClearedPreflight(t *testing.T) {
 	for _, want := range []string{
 		"Plan", "web-1", "baseline 0.1", "3 steps",
 		"mymo admin user", "sshd hardening", "mymo state",
-		"gate", "second connection", "awaiting your confirmation",
+		"gate", "second connection", "press a to apply",
 		"changes nothing yet",
 	} {
 		if !strings.Contains(out, want) {

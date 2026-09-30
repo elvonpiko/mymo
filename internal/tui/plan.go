@@ -34,7 +34,7 @@ func (m Model) planView() string {
 			subtextStyle.Render(strings.Join(gates, "; ")))
 	}
 
-	b.WriteString("\n\n" + faintStyle.Render("awaiting your confirmation \u2014 apply ships with the next phase") + "\n")
+	b.WriteString("\n\n" + faintStyle.Render("press a to apply \u2014 typing the name is the confirmation") + "\n")
 	b.WriteString(faintStyle.Render("this plan changes nothing yet"))
 	return fitHeight(b.String(), m.contentHeight)
 }
