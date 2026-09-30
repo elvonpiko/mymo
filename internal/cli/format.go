@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/elvonpiko/mymo/internal/baseline"
 	"github.com/elvonpiko/mymo/internal/facts"
 )
 
@@ -60,6 +61,13 @@ func printFacts(w io.Writer, f facts.Node) {
 		row("systemd", "yes")
 	} else {
 		row("systemd", "no")
+	}
+	if rec, ok := facts.ParseBaselineMarker(f.BaselineMarker); ok {
+		if rec.Baseline != baseline.Version {
+			row("baseline", rec.Baseline+" recorded — mymo pins "+baseline.Version)
+		} else {
+			row("baseline", rec.Baseline+" applied "+rec.AppliedAt)
+		}
 	}
 	row("user", unknown(f.User))
 	row("checked", f.CollectedAt.Format(time.RFC3339))

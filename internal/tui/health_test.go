@@ -8,6 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/elvonpiko/mymo/internal/baseline"
 	"github.com/elvonpiko/mymo/internal/domain"
 	"github.com/elvonpiko/mymo/internal/facts"
 	"github.com/elvonpiko/mymo/internal/ssh"
@@ -365,5 +366,27 @@ func TestCardsSpanTheStage(t *testing.T) {
 	// fixed width
 	if bottom < 100 {
 		t.Errorf("card too narrow at 150 cols: corner at %d", bottom)
+	}
+}
+
+func TestNodeHeadingCarriesTheRecordedBaseline(t *testing.T) {
+	s := readyStore(t)
+	seedNode(t, s, "web-1")
+	m := press(t, New(s), "n", "enter")
+
+	// a previous apply's marker rides in the snapshot; the heading
+	// is the drift surface
+	snap := richSnapshot("web-1")
+	snap.BaselineMarker = `{"baseline": "0.1", "appliedAt": "2026-02-15T10:00:00Z"}`
+	m = observe(t, m, "web-1", snap)
+	if out := ansiStrip(view(m)); !strings.Contains(out, "baseline 0.1") {
+		t.Errorf("heading missing the recorded baseline:\n%s", out)
+	}
+
+	// a different recorded version is drift and says so loudly
+	snap.BaselineMarker = `{"baseline": "0.0", "appliedAt": "2025-01-01T00:00:00Z"}`
+	m = observe(t, m, "web-1", snap)
+	if out := ansiStrip(view(m)); !strings.Contains(out, "mymo pins "+baseline.Version) {
+		t.Errorf("heading missing the drift warning:\n%s", out)
 	}
 }

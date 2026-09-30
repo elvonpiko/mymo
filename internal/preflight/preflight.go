@@ -101,6 +101,14 @@ type Audit struct {
 	Containers   int    // -1 when the daemon state could not be read
 	MymoUserUsed bool
 	MymoDirUsed  bool
+
+	// MymoSudoers is the content of mymo's sudoers drop-in, "" when
+	// absent — the fingerprint that separates mymo's own user from a
+	// foreign one that happens to share the name.
+	MymoSudoers string
+	// MymoMarker is the raw baseline marker a previous apply
+	// recorded, "" when absent — the drift surface.
+	MymoMarker string
 }
 
 // scanned at most: preflight keeps its commands to the handful the
@@ -225,6 +233,19 @@ func Scan(ctx context.Context, r Runner) (Audit, error) {
 				s.MymoDirUsed = true
 			}
 		}
+	}
+
+	// The sudoers drop-in is mymo's fingerprint: an existing mymo
+	// user is only adoptable when the rule on the node is the rule
+	// this baseline writes.
+	if out, _, err := r.Run(ctx, "cat", baseline.MymoSudoersDropin); err == nil {
+		s.MymoSudoers = strings.TrimSpace(out)
+	}
+	// The baseline marker a completed apply records: what ran, and
+	// when — the drift surface.
+	if out, _, err := r.Run(ctx, "sh", "-c",
+		"test -f "+baseline.StateDir+"/baseline.json && cat "+baseline.StateDir+"/baseline.json"); err == nil {
+		s.MymoMarker = strings.TrimSpace(out)
 	}
 
 	return s, nil
@@ -501,15 +522,35 @@ func Evaluate(f facts.Node, s Audit) []Check {
 	}
 
 	// --- existing mymo state --------------------------------------
-	if s.MymoUserUsed || s.MymoDirUsed {
-		what := make([]string, 0, 2)
-		if s.MymoUserUsed {
-			what = append(what, "user "+baseline.MymoUser+" exists")
+	// The sudoers drop-in is the fingerprint: mymo's own state is
+	// adoptable — steps keep what exists — while anything that only
+	// shares the name stays a decision.
+	if s.MymoUserUsed || s.MymoDirUsed || s.MymoMarker != "" {
+		rec, marked := facts.ParseBaselineMarker(s.MymoMarker)
+		fingerprint := s.MymoSudoers == baseline.MymoSudoersRule
+		switch {
+		case marked && fingerprint && rec.Baseline == baseline.Version:
+			checks = append(checks, Check{"mymo", "mymo state", Adopt,
+				"mymo's own record, baseline " + rec.Baseline + " applied — steps keep what exists"})
+		case marked && fingerprint:
+			checks = append(checks, Check{"mymo", "mymo state", Decide,
+				"baseline " + rec.Baseline + " is recorded; " + baseline.Version + " would supersede it — upgrades are explicit, never silent"})
+		case marked:
+			checks = append(checks, Check{"mymo", "mymo state", Decide,
+				"a baseline marker exists but mymo's sudoers rule is missing — resolve on the node"})
+		case fingerprint:
+			checks = append(checks, Check{"mymo", "mymo state", Adopt,
+				"an interrupted mymo bootstrap — apply resumes where it stopped, keeping what exists"})
+		default:
+			what := make([]string, 0, 2)
+			if s.MymoUserUsed {
+				what = append(what, "user "+baseline.MymoUser+" exists without mymo's sudoers rule")
+			}
+			if s.MymoDirUsed {
+				what = append(what, "state dir "+baseline.StateDir+" exists without a marker")
+			}
+			checks = append(checks, Check{"mymo", "mymo state", Decide, strings.Join(what, "; ") + " — resolve on the node"})
 		}
-		if s.MymoDirUsed {
-			what = append(what, "state dir "+baseline.StateDir+" exists")
-		}
-		checks = append(checks, Check{"mymo", "mymo state", Decide, strings.Join(what, "; ") + " — a previous bootstrap may be incomplete"})
 	}
 
 	// --- sshd (informational; hardening is gated at apply) ---------

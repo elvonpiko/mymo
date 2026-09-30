@@ -2,6 +2,7 @@ package preflight
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -322,5 +323,83 @@ func TestBaselineConstantsHeldByPreflight(t *testing.T) {
 	}
 	if baseline.MymoUser != "mymo" || baseline.StateDir != "/var/lib/mymo" {
 		t.Error("baseline constants drifted")
+	}
+}
+
+func TestScanReadsTheFingerprintAndMarker(t *testing.T) {
+	r := baseRunner()
+	r.responses["sh -c id mymo 2>/dev/null; test -d /var/lib/mymo && echo mymo-dir"] =
+		"uid=980(mymo) gid=980(mymo) groups=980(mymo)\nmymo-dir\n"
+	r.responses["cat "+baseline.MymoSudoersDropin] = baseline.MymoSudoersRule + "\n"
+	r.responses["sh -c test -f /var/lib/mymo/baseline.json && cat /var/lib/mymo/baseline.json"] =
+		"{\"baseline\": \"0.1\", \"appliedAt\": \"2026-02-15T10:00:00Z\"}\n"
+	s, err := Scan(context.Background(), r)
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if s.MymoSudoers != baseline.MymoSudoersRule {
+		t.Errorf("sudoers fingerprint = %q", s.MymoSudoers)
+	}
+	if rec, ok := facts.ParseBaselineMarker(s.MymoMarker); !ok || rec.Baseline != "0.1" {
+		t.Errorf("marker = %q (parsed ok=%v)", s.MymoMarker, ok)
+	}
+}
+
+func TestEvaluateMymoStateFingerprint(t *testing.T) {
+	marker := func(version string) string {
+		return fmt.Sprintf("{\"baseline\": %q, \"appliedAt\": \"2026-02-15T10:00:00Z\"}", version)
+	}
+	cases := []struct {
+		name   string
+		s      Audit
+		want   Outcome
+		detail string
+	}{
+		{
+			name: "mymo's own recorded state adopts",
+			s: Audit{UID: 0, Firewall: "absent", Listeners: map[int]string{},
+				MymoUserUsed: true, MymoDirUsed: true,
+				MymoSudoers: baseline.MymoSudoersRule, MymoMarker: marker(baseline.Version)},
+			want: Adopt, detail: "steps keep what exists",
+		},
+		{
+			name: "an interrupted bootstrap adopts and resumes",
+			s: Audit{UID: 0, Firewall: "absent", Listeners: map[int]string{},
+				MymoUserUsed: true, MymoDirUsed: true,
+				MymoSudoers: baseline.MymoSudoersRule},
+			want: Adopt, detail: "apply resumes where it stopped",
+		},
+		{
+			name: "a different recorded baseline decides",
+			s: Audit{UID: 0, Firewall: "absent", Listeners: map[int]string{},
+				MymoUserUsed: true, MymoDirUsed: true,
+				MymoSudoers: baseline.MymoSudoersRule, MymoMarker: marker("0.0")},
+			want: Decide, detail: "upgrades are explicit",
+		},
+		{
+			name: "a marker without mymo's rule decides",
+			s: Audit{UID: 0, Firewall: "absent", Listeners: map[int]string{},
+				MymoDirUsed: true, MymoMarker: marker(baseline.Version)},
+			want: Decide, detail: "resolve on the node",
+		},
+	}
+	for _, tc := range cases {
+		checks := Evaluate(goodNode(), tc.s)
+		var found *Check
+		for i := range checks {
+			if checks[i].Title == "mymo state" {
+				found = &checks[i]
+			}
+		}
+		if found == nil {
+			t.Errorf("%s: no mymo state check", tc.name)
+			continue
+		}
+		if found.Outcome != tc.want {
+			t.Errorf("%s: outcome = %s, want %s (%s)", tc.name, found.Outcome, tc.want, found.Detail)
+		}
+		if !strings.Contains(found.Detail, tc.detail) {
+			t.Errorf("%s: detail = %q, want it to say %q", tc.name, found.Detail, tc.detail)
+		}
 	}
 }

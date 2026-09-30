@@ -3,14 +3,19 @@
 // Discovery only ever observes; it never mutates the node. The package
 // depends on nothing internal — callers pass a Runner (the SSH
 // transport satisfies it), which also keeps the probe testable with
-// canned responses.
+// canned responses. Its only internal dependency is the pinned
+// baseline's constants — the paths and names discovery reads are the
+// baseline's own.
 package facts
 
 import (
 	"context"
+	"encoding/json"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/elvonpiko/mymo/internal/baseline"
 )
 
 // probeTimeout bounds a whole probe when the caller sets no deadline;
@@ -30,21 +35,46 @@ type Runner interface {
 // mean unknown — a missing binary or unreadable file leaves its fact
 // unset rather than failing the probe.
 type Node struct {
-	Hostname    string        `json:"hostname,omitempty"`
-	OS          string        `json:"os,omitempty"`     // /etc/os-release PRETTY_NAME
-	Kernel      string        `json:"kernel,omitempty"` // uname release
-	Arch        string        `json:"arch,omitempty"`
-	CPUs        int           `json:"cpus,omitempty"`
-	Uptime      time.Duration `json:"uptime,omitempty"`
-	MemTotal    uint64        `json:"mem_total,omitempty"`     // bytes
-	MemAvail    uint64        `json:"mem_available,omitempty"` // bytes
-	DiskTotal   uint64        `json:"disk_total,omitempty"`    // bytes, root filesystem
-	DiskFree    uint64        `json:"disk_free,omitempty"`     // bytes, root filesystem
-	Docker      string        `json:"docker,omitempty"`        // version line, "" = absent
-	Caddy       string        `json:"caddy,omitempty"`         // version, "" = absent
-	Systemd     bool          `json:"systemd,omitempty"`
-	User        string        `json:"user,omitempty"`
-	CollectedAt time.Time     `json:"collected_at,omitempty"`
+	Hostname  string        `json:"hostname,omitempty"`
+	OS        string        `json:"os,omitempty"`     // /etc/os-release PRETTY_NAME
+	Kernel    string        `json:"kernel,omitempty"` // uname release
+	Arch      string        `json:"arch,omitempty"`
+	CPUs      int           `json:"cpus,omitempty"`
+	Uptime    time.Duration `json:"uptime,omitempty"`
+	MemTotal  uint64        `json:"mem_total,omitempty"`     // bytes
+	MemAvail  uint64        `json:"mem_available,omitempty"` // bytes
+	DiskTotal uint64        `json:"disk_total,omitempty"`    // bytes, root filesystem
+	DiskFree  uint64        `json:"disk_free,omitempty"`     // bytes, root filesystem
+	Docker    string        `json:"docker,omitempty"`        // version line, "" = absent
+	Caddy     string        `json:"caddy,omitempty"`         // version, "" = absent
+	Systemd   bool          `json:"systemd,omitempty"`
+	User      string        `json:"user,omitempty"`
+	// BaselineMarker is the raw /var/lib/mymo/baseline.json a
+	// previous apply recorded, "" when absent. Drift is the
+	// difference between it and the pinned baseline.
+	BaselineMarker string    `json:"baseline_marker,omitempty"`
+	CollectedAt    time.Time `json:"collected_at,omitempty"`
+}
+
+// BaselineRecord is the parsed marker a previous apply left on the
+// node: the baseline version that ran and when.
+type BaselineRecord struct {
+	Baseline  string `json:"baseline"`
+	AppliedAt string `json:"appliedAt"`
+}
+
+// ParseBaselineMarker reads a marker's raw content; ok is false when
+// the content is not the record mymo writes.
+func ParseBaselineMarker(raw string) (BaselineRecord, bool) {
+	var rec BaselineRecord
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return rec, false
+	}
+	if err := json.Unmarshal([]byte(raw), &rec); err != nil {
+		return rec, false
+	}
+	return rec, rec.Baseline != "" && rec.AppliedAt != ""
 }
 
 // Probe runs the discovery command set over r and returns the parsed
@@ -112,6 +142,15 @@ func Probe(ctx context.Context, r Runner) (Node, error) {
 		return Node{}, err
 	} else if ok {
 		f.User = firstLine(out)
+	}
+
+	// the baseline marker a previous apply recorded, when there is
+	// one: the drift surface, read-only
+	if out, ok, err := one(ctx, r, "sh", "-c",
+		"test -f "+baseline.StateDir+"/baseline.json && cat "+baseline.StateDir+"/baseline.json"); err != nil {
+		return Node{}, err
+	} else if ok {
+		f.BaselineMarker = strings.TrimSpace(out)
 	}
 
 	f.CollectedAt = time.Now()

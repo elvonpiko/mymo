@@ -384,3 +384,32 @@ func TestGenerateRefusesUnknownCodename(t *testing.T) {
 // free of UI dependencies; display width of plain ASCII copy is its
 // rune count for our purposes.
 func lipglossWidth(s string) int { return len([]rune(s)) }
+
+func TestGenerateResumesAnInterruptedBootstrap(t *testing.T) {
+	// the audit of a node whose bootstrap stopped mid-run: the mymo
+	// user and state dir exist, the sudoers rule is mymo's, but the
+	// marker was never reached
+	r := ubuntuRunner()
+	a := cleanAudit()
+	a.MymoUserUsed = true
+	a.MymoDirUsed = true
+	a.MymoSudoers = baseline.MymoSudoersRule
+	steps, err := Generate(context.Background(), r, cleanNode(), cleanSnapshot(), a)
+	if err != nil {
+		t.Fatalf("Generate refused an interrupted bootstrap: %v", err)
+	}
+	// the plan regenerates in full — apply keeps whatever already
+	// matches, so resume is the same honest path as the first run
+	if len(steps) == 0 {
+		t.Fatal("no steps generated")
+	}
+	found := false
+	for _, s := range steps {
+		if s.Control == "mymo-user" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("the mymo-user step is missing from the resume plan")
+	}
+}

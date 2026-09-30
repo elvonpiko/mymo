@@ -11,6 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/elvonpiko/mymo/internal/baseline"
 	"github.com/elvonpiko/mymo/internal/domain"
 	"github.com/elvonpiko/mymo/internal/facts"
 )
@@ -167,10 +168,27 @@ func (m Model) nodeHeadingLine(n domain.Node) string {
 	line := healthDot(classifyNode(n)) + " " + titleStyle.Render(n.Name) +
 		" " + modeBadge(n.Mode)
 	health := faintStyle.Render(" · ") + labelStyle.Render(label)
-	for _, piece := range []string{
-		faintStyle.Render(" · ") + subtextStyle.Render(n.User+"@"+n.Address()),
-		faintStyle.Render(" · ") + subtextStyle.Render(auth),
-	} {
+
+	// the recorded baseline, when a previous apply left its marker:
+	// the drift surface, shown in warning colors when it is not the
+	// baseline mymo pins
+	// the recorded baseline leads the optional pieces: drift is new
+	// information, while the address and auth below it are facts the
+	// operator already knows
+	pieces := []string{}
+	if rec, ok := facts.ParseBaselineMarker(n.Facts.BaselineMarker); ok {
+		b := "baseline " + rec.Baseline
+		if rec.Baseline != baseline.Version {
+			pieces = append(pieces, warnStyle.Render(" · ")+subtextStyle.Render(b+" (mymo pins "+baseline.Version+")"))
+		} else {
+			pieces = append(pieces, faintStyle.Render(" · ")+subtextStyle.Render(b))
+		}
+	}
+	pieces = append(pieces,
+		faintStyle.Render(" · ")+subtextStyle.Render(n.User+"@"+n.Address()),
+		faintStyle.Render(" · ")+subtextStyle.Render(auth),
+	)
+	for _, piece := range pieces {
 		if lipgloss.Width(line)+lipgloss.Width(piece)+lipgloss.Width(health) <= m.stageW-2 {
 			line += piece
 		}

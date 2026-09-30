@@ -10,6 +10,7 @@ import (
 	"github.com/elvonpiko/mymo/internal/apply"
 	"github.com/elvonpiko/mymo/internal/baseline"
 	"github.com/elvonpiko/mymo/internal/domain"
+	"github.com/elvonpiko/mymo/internal/facts"
 	"github.com/elvonpiko/mymo/internal/preflight"
 	"github.com/elvonpiko/mymo/internal/state"
 )
@@ -148,3 +149,58 @@ func TestPrintVerifyChecksMarksFailures(t *testing.T) {
 }
 
 var _ = context.Background
+
+func TestInspectShowsTheRecordedBaseline(t *testing.T) {
+	s := newSession(t)
+	s.run(t, "node", "add",
+		"-name", "web-1", "-host", "203.0.113.10", "-user", "root", "-auth", "agent")
+	store, err := state.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := store.GetNode("web-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	n.Facts = facts.Node{
+		Hostname: "web-1", OS: "Ubuntu 24.04 LTS", User: "root",
+		CollectedAt:    time.Now(),
+		BaselineMarker: `{"baseline": "0.1", "appliedAt": "2026-02-15T10:00:00Z"}`,
+	}
+	if err := store.UpdateNode(n); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ := s.run(t, "node", "inspect", "web-1")
+	if code != exitOK {
+		t.Fatalf("inspect failed")
+	}
+	if !strings.Contains(out, "0.1 applied 2026-02-15T10:00:00Z") {
+		t.Errorf("inspect missing the baseline row:\n%s", out)
+	}
+}
+
+func TestInspectNamesDriftWhenTheVersionsDiffer(t *testing.T) {
+	s := newSession(t)
+	s.run(t, "node", "add",
+		"-name", "web-1", "-host", "203.0.113.10", "-user", "root", "-auth", "agent")
+	store, err := state.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := store.GetNode("web-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	n.Facts = facts.Node{
+		Hostname: "web-1", OS: "Ubuntu 24.04 LTS", User: "root",
+		CollectedAt:    time.Now(),
+		BaselineMarker: `{"baseline": "0.0", "appliedAt": "2025-01-01T00:00:00Z"}`,
+	}
+	if err := store.UpdateNode(n); err != nil {
+		t.Fatal(err)
+	}
+	_, out, _ := s.run(t, "node", "inspect", "web-1")
+	if !strings.Contains(out, "0.0 recorded — mymo pins "+baseline.Version) {
+		t.Errorf("inspect missing the drift row:\n%s", out)
+	}
+}

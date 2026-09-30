@@ -185,3 +185,30 @@ func TestProbeAbortsOnTransportError(t *testing.T) {
 		t.Fatalf("asked = %v, want just the first command", r.asked)
 	}
 }
+
+func TestProbeReadsTheBaselineMarker(t *testing.T) {
+	r := &fakeRunner{responses: map[string]fakeResult{
+		"uname -snrm": {"Linux web-1 6.1.0 x86_64\n", 0, nil},
+		"sh -c test -f /var/lib/mymo/baseline.json && cat /var/lib/mymo/baseline.json": {
+			"{\"baseline\": \"0.1\", \"appliedAt\": \"2026-02-15T10:00:00Z\"}\n", 0, nil},
+	}}
+	f, err := Probe(context.Background(), r)
+	if err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+	if f.BaselineMarker == "" {
+		t.Fatal("the probe did not read the marker")
+	}
+	rec, ok := ParseBaselineMarker(f.BaselineMarker)
+	if !ok || rec.Baseline != "0.1" || rec.AppliedAt != "2026-02-15T10:00:00Z" {
+		t.Errorf("parsed = %+v ok=%v", rec, ok)
+	}
+
+	// a hand-mangled marker is not a record mymo trusts
+	if _, ok := ParseBaselineMarker("not json"); ok {
+		t.Error("garbage parsed as a marker")
+	}
+	if _, ok := ParseBaselineMarker(`{"baseline": "0.1"}`); ok {
+		t.Error("a marker without appliedAt parsed as a record")
+	}
+}
