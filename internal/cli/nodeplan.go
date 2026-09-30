@@ -126,7 +126,7 @@ func printPlan(w io.Writer, name string, steps []plan.Step) {
 		fmt.Fprintln(w)
 	}
 	fmt.Fprintln(w, "this plan changes nothing until it is confirmed;")
-	fmt.Fprintln(w, "apply ships with the next phase.")
+	fmt.Fprintf(w, "apply it with mymo node apply %s — typing the name is the confirmation.\n", name)
 }
 
 // printPlanBlocked names every decision standing in the way.

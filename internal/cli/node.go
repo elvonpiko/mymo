@@ -47,6 +47,10 @@ func runNode(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return runNodePreflight(ctx, rest, stdout, stderr)
 	case "plan":
 		return runNodePlan(ctx, rest, stdout, stderr)
+	case "apply":
+		return runNodeApply(ctx, rest, stdout, stderr)
+	case "promote":
+		return runNodePromote(ctx, rest, stdout, stderr)
 	case "ssh":
 		return runNodeSSH(rest, stderr)
 	case "rm":
@@ -70,6 +74,8 @@ func nodeUsage() string {
 	b.WriteString("  mymo node check <name>        probe a node over SSH and store what it finds\n")
 	b.WriteString("  mymo node preflight <name>    read-only audit before preparing as app host\n")
 	b.WriteString("  mymo node plan <name>         generate the preparation plan for review\n")
+	b.WriteString("  mymo node apply <name>        apply the confirmed plan (typing the name confirms)\n")
+	b.WriteString("  mymo node promote <name>      mark a verified node as app host\n")
 	b.WriteString("  mymo node ssh <name>          open an interactive shell on the node\n")
 	b.WriteString("  mymo node rm <name> [-f]      remove a node from local state\n")
 	b.WriteString("\nFlags for \"mymo node add\":\n")
