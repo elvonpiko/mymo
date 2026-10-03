@@ -24,6 +24,14 @@ const (
 	nodesFile = "nodes.json"
 )
 
+// App store errors.
+var (
+	// ErrAppNotFound is returned when no app with the given name exists.
+	ErrAppNotFound = errors.New("app not found")
+	// ErrAppExists is returned when adding an app whose name is taken.
+	ErrAppExists = errors.New("app already exists")
+)
+
 // Store errors.
 var (
 	// ErrNodeNotFound is returned when no node with the given name exists.
@@ -210,4 +218,115 @@ func (s *Store) writeDoc(name string, doc any) error {
 		return fmt.Errorf("replace %s: %w", name, err)
 	}
 	return nil
+}
+
+// appsFile is the on-disk name of the applications document.
+const appsFile = "apps.json"
+
+// appsDoc is the on-disk format of apps.json.
+type appsDoc struct {
+	SchemaVersion int          `json:"schema_version"`
+	Apps          []domain.App `json:"apps"`
+}
+
+// LoadApps returns all managed applications. A missing file is an
+// empty list.
+func (s *Store) LoadApps() ([]domain.App, error) {
+	b, err := os.ReadFile(filepath.Join(s.dir, appsFile))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", appsFile, err)
+	}
+	var doc appsDoc
+	if err := json.Unmarshal(b, &doc); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", appsFile, err)
+	}
+	if doc.SchemaVersion > SchemaVersion {
+		return nil, fmt.Errorf("%w (found %d, supported %d)", ErrSchemaFuture, doc.SchemaVersion, SchemaVersion)
+	}
+	if doc.Apps == nil {
+		doc.Apps = []domain.App{}
+	}
+	return doc.Apps, nil
+}
+
+// GetApp returns the application with the given name.
+func (s *Store) GetApp(name string) (domain.App, error) {
+	apps, err := s.LoadApps()
+	if err != nil {
+		return domain.App{}, err
+	}
+	for _, a := range apps {
+		if a.Name == name {
+			return a, nil
+		}
+	}
+	return domain.App{}, fmt.Errorf("%w: %s", ErrAppNotFound, name)
+}
+
+// AddApp validates and stores a new application. An existing name on
+// the same node is the same application and fails; the same name on
+// a different node is a different application and fails too — app
+// names are one word so they can be typed.
+func (s *Store) AddApp(a domain.App) error {
+	if err := a.Validate(); err != nil {
+		return err
+	}
+	apps, err := s.LoadApps()
+	if err != nil {
+		return err
+	}
+	for _, existing := range apps {
+		if existing.Name == a.Name {
+			return fmt.Errorf("%w: %s", ErrAppExists, a.Name)
+		}
+	}
+	return s.saveApps(append(apps, a))
+}
+
+// UpdateApp replaces the stored record for the app's name.
+func (s *Store) UpdateApp(a domain.App) error {
+	if err := a.Validate(); err != nil {
+		return err
+	}
+	apps, err := s.LoadApps()
+	if err != nil {
+		return err
+	}
+	for i := range apps {
+		if apps[i].Name == a.Name {
+			apps[i] = a
+			return s.saveApps(apps)
+		}
+	}
+	return fmt.Errorf("%w: %s", ErrAppNotFound, a.Name)
+}
+
+// DeleteApp removes the application's record from local state. The
+// running containers are the engine's to stop, never the store's.
+func (s *Store) DeleteApp(name string) error {
+	apps, err := s.LoadApps()
+	if err != nil {
+		return err
+	}
+	kept := make([]domain.App, 0, len(apps))
+	for _, a := range apps {
+		if a.Name != name {
+			kept = append(kept, a)
+		}
+	}
+	if len(kept) == len(apps) {
+		return fmt.Errorf("%w: %s", ErrAppNotFound, name)
+	}
+	return s.saveApps(kept)
+}
+
+// saveApps writes the apps document atomically via writeDoc.
+func (s *Store) saveApps(apps []domain.App) error {
+	if apps == nil {
+		apps = []domain.App{}
+	}
+	return s.writeDoc(appsFile, appsDoc{SchemaVersion: SchemaVersion, Apps: apps})
 }

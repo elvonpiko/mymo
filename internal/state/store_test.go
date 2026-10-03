@@ -298,3 +298,39 @@ func TestLoadNodesRejectsCorruptFile(t *testing.T) {
 		t.Fatal("LoadNodes() = nil, want parse error")
 	}
 }
+
+func TestAppStoreRoundTrip(t *testing.T) {
+	s := openTestStore(t)
+	a := domain.App{Name: "api", Node: "web-1", Type: domain.SourceImage,
+		Image: "ghcr.io/x/api:1", Port: 8080, Domain: "api.example.com"}
+	if err := s.AddApp(a); err != nil {
+		t.Fatalf("AddApp: %v", err)
+	}
+	if err := s.AddApp(a); err == nil {
+		t.Error("adding the same app twice succeeded")
+	}
+	got, err := s.GetApp("api")
+	if err != nil {
+		t.Fatalf("GetApp: %v", err)
+	}
+	got.Releases = append(got.Releases, domain.Release{ID: 1, State: domain.ReleaseActive})
+	if err := s.UpdateApp(got); err != nil {
+		t.Fatalf("UpdateApp: %v", err)
+	}
+	got, _ = s.GetApp("api")
+	if len(got.Releases) != 1 || got.Releases[0].State != domain.ReleaseActive {
+		t.Errorf("release record lost: %+v", got.Releases)
+	}
+	if _, err := s.GetApp("nope"); err == nil {
+		t.Error("unknown app found")
+	}
+	if err := s.DeleteApp("api"); err != nil {
+		t.Fatalf("DeleteApp: %v", err)
+	}
+	if apps, _ := s.LoadApps(); len(apps) != 0 {
+		t.Errorf("apps after delete = %d", len(apps))
+	}
+	if err := s.DeleteApp("api"); err == nil {
+		t.Error("deleting an unknown app succeeded")
+	}
+}
