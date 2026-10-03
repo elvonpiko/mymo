@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -29,6 +30,9 @@ import (
 const (
 	defaultDialTimeout    = 10 * time.Second
 	defaultCommandTimeout = 15 * time.Second
+	// defaultTransferTimeout bounds a context transfer when the
+	// caller sets no deadline; big trees over slow links get slack.
+	defaultTransferTimeout = 10 * time.Minute
 )
 
 // Client runs commands over SSH against one node. All methods are safe
@@ -382,4 +386,57 @@ func classify(err error, addr string) error {
 	default:
 		return fmt.Errorf("ssh: %s: %v", addr, err)
 	}
+}
+
+// Copy extracts a gzipped tarball into dest on the node, creating it
+// when missing: the bytes stream over the session's stdin, so a
+// build context travels without a second connection or a staging
+// file on either side. sudo prefixes the extraction when the
+// operator is not root — the stream flows through it.
+func (c *Client) Copy(ctx context.Context, dest string, tarball io.Reader, sudo bool) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.conn == nil {
+		return errors.New("ssh: not connected")
+	}
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, defaultTransferTimeout)
+		defer cancel()
+	}
+
+	sess, err := c.conn.NewSession()
+	if err != nil {
+		return fmt.Errorf("ssh: session: %v", err)
+	}
+	defer sess.Close()
+	// no pty: the stream is binary and must arrive unmangled, and
+	// sudo -n does not need a terminal
+	sess.Stdin = tarball
+	cmd := "sh -c " + shellQuote("mkdir -p "+dest+" && tar -xzf - -C "+dest)
+	if sudo {
+		cmd = "sudo -n " + cmd
+	}
+
+	ctxDone := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			sess.Close()
+		case <-ctxDone:
+		}
+	}()
+	defer close(ctxDone)
+
+	if err := sess.Run(cmd); err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("ssh: copy to %s: %w", dest, ctx.Err())
+		}
+		var exit *ssh.ExitError
+		if errors.As(err, &exit) {
+			return fmt.Errorf("extracting the build context failed on the node (exit %d)", exit.ExitStatus())
+		}
+		return fmt.Errorf("ssh: copy to %s: %v", dest, err)
+	}
+	return nil
 }

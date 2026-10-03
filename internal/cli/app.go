@@ -1,13 +1,14 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"sort"
 	"strings"
 )
 
-func runApp(args []string, stdout, stderr io.Writer) int {
+func runApp(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintf(stderr, "mymo app requires a subcommand.\n\n%s", appUsage())
 		return exitUsage
@@ -16,6 +17,32 @@ func runApp(args []string, stdout, stderr io.Writer) int {
 	switch sub {
 	case "list":
 		return runAppList(args[1:], stdout, stderr)
+	case "status":
+		return runAppStatus(ctx, args[1:], stdout, stderr)
+	case "logs":
+		return runAppLogs(ctx, args[1:], stdout, stderr)
+	case "restart":
+		if len(args) != 2 {
+			fmt.Fprintln(stderr, "usage: mymo app restart <name>")
+			return exitUsage
+		}
+		return runAppLifecycle(ctx, "restart", args[1], stdout, stderr)
+	case "stop":
+		if len(args) != 2 {
+			fmt.Fprintln(stderr, "usage: mymo app stop <name>")
+			return exitUsage
+		}
+		return runAppLifecycle(ctx, "stop", args[1], stdout, stderr)
+	case "start":
+		if len(args) != 2 {
+			fmt.Fprintln(stderr, "usage: mymo app start <name>")
+			return exitUsage
+		}
+		return runAppLifecycle(ctx, "start", args[1], stdout, stderr)
+	case "rollback":
+		return runAppRollback(ctx, args[1:], stdout, stderr)
+	case "shell":
+		return runAppShell(ctx, args[1:], stdout, stderr)
 	case "help", "--help", "-h":
 		fmt.Fprint(stdout, appUsage())
 		return exitOK
@@ -82,5 +109,12 @@ func appUsage() string {
 	b.WriteString("mymo app - manage applications\n\n")
 	b.WriteString("Usage:\n")
 	b.WriteString("  mymo app list    list managed applications\n")
+	b.WriteString("  mymo app status <name>     the record and the live container\n")
+	b.WriteString("  mymo app logs <name>       the active release's logs\n")
+	b.WriteString("  mymo app restart <name>    restart the active release\n")
+	b.WriteString("  mymo app stop <name>       stop the active release\n")
+	b.WriteString("  mymo app start <name>      start the active release\n")
+	b.WriteString("  mymo app rollback <name>   restore the previous release\n")
+	b.WriteString("  mymo app shell <name>      a shell inside the container\n")
 	return b.String()
 }

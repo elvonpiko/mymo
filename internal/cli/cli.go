@@ -38,7 +38,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	case "node":
 		return runNode(ctx, rest, stdout, stderr)
 	case "app":
-		return runApp(rest, stdout, stderr)
+		return runApp(ctx, rest, stdout, stderr)
+	case "deploy":
+		return runDeploy(ctx, rest, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown command %q\n\n%s", cmd, usage())
 		return exitUsage
@@ -53,6 +55,7 @@ func usage() string {
 	b.WriteString("  mymo                      fleet TUI (interactive)\n")
 	b.WriteString("  mymo node <command>       manage nodes\n")
 	b.WriteString("  mymo app <command>        manage applications\n")
+	b.WriteString("  mymo deploy [-node name]  deploy the project in this directory\n")
 	b.WriteString("  mymo version              print version\n")
 	b.WriteString("  mymo help                 print help\n")
 	return b.String()
