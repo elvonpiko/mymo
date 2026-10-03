@@ -81,6 +81,12 @@ type Model struct {
 	// the generated plan awaiting confirmation
 	planSteps []plan.Step
 
+	// the fleet's applications, read from local state; deploys write
+	// them, the TUI reads them. appCursor is the selection on the
+	// apps pages.
+	apps      []domain.App
+	appCursor int
+
 	// the apply flow: the typed confirmation, the engine's report,
 	// the verify rows, and the injectable pieces tests replace —
 	// the runner and the second-connection prover.
@@ -136,6 +142,9 @@ func New(store *state.Store) Model {
 			m.nodes = nodes
 		} else {
 			m.loadErr = err
+		}
+		if apps, err := store.LoadApps(); err == nil {
+			m.apps = apps
 		}
 		meta, err := store.LoadMeta()
 		if err != nil {
@@ -395,9 +404,59 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case scAddNode:
 		return m.updateAddReview(str)
+	case scApps, scNodeApps:
+		return m.updateAppsKeys(s, str)
+	case scAppDetail:
+		return m.updateSimpleKeys(s.kind, str)
 	default:
 		return m.updateSimpleKeys(s.kind, str)
 	}
+}
+
+// updateAppsKeys walks the applications list and opens the selected
+// app's detail page. The record is the source — the pages are the
+// fleet's eyes; the CLI holds the hands.
+func (m Model) updateAppsKeys(s screen, str string) (tea.Model, tea.Cmd) {
+	apps := m.visibleApps(s)
+	switch str {
+	case "q":
+		return m, tea.Quit
+	case "esc":
+		m.pop()
+		return m, nil
+	case "up", "k":
+		if m.appCursor > 0 {
+			m.appCursor--
+		}
+		return m, nil
+	case "down", "j":
+		if m.appCursor < len(apps)-1 {
+			m.appCursor++
+		}
+		return m, nil
+	case "enter":
+		if m.appCursor < len(apps) {
+			picked := apps[m.appCursor]
+			m.push(screen{kind: scAppDetail, node: picked.Node, app: picked.Name})
+			return m, nil
+		}
+	}
+	return m, nil
+}
+
+// visibleApps is what an apps screen shows: everything on the fleet
+// page, one node's slice on the node page.
+func (m Model) visibleApps(s screen) []domain.App {
+	if s.kind != scNodeApps {
+		return m.apps
+	}
+	var out []domain.App
+	for _, a := range m.apps {
+		if a.Node == s.node {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 // updateHomeKeys handles keys on the home hub: small letters navigate,
@@ -416,6 +475,8 @@ func (m Model) updateHomeKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "N":
 		return m.addNodeScreen()
 	case "a":
+		m.reloadApps()
+		m.appCursor = 0
 		m.push(screen{kind: scApps})
 		return m, nil
 	case "d":
@@ -453,6 +514,8 @@ func (m Model) updateFleetKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "N":
 		return m.addNodeScreen()
 	case "a":
+		m.reloadApps()
+		m.appCursor = 0
 		m.push(screen{kind: scApps})
 		return m, nil
 	case "d":
@@ -549,6 +612,8 @@ func (m Model) runAction(a actionItem) (tea.Model, tea.Cmd) {
 	case actSSH:
 		return m.runSSH()
 	case actApps:
+		m.reloadApps()
+		m.appCursor = 0
 		m.push(screen{kind: scNodeApps, node: m.selNode.Name})
 	case actInspect:
 		m.push(screen{kind: scNodeInspect, node: m.selNode.Name})
@@ -613,6 +678,18 @@ func (m *Model) reloadFleet() {
 	m.loadErr = nil
 	m.nodes = nodes
 	m.fleet.SetItems(fleetItems(nodes))
+}
+
+// reloadApps rereads the applications record — deploys and rollbacks
+// change it from the CLI while the TUI lives, so the apps screens
+// always re-ask the store on entry.
+func (m *Model) reloadApps() {
+	if m.store == nil {
+		return
+	}
+	if apps, err := m.store.LoadApps(); err == nil {
+		m.apps = apps
+	}
 }
 
 // layout recomputes the frame and sizes all widgets to the window.
@@ -712,6 +789,8 @@ func (m Model) workspaceView() string {
 			}
 		case scApps:
 			content = m.allAppsView()
+		case scAppDetail:
+			content = m.appDetailView(s)
 		case scDeploy:
 			content = m.deployView()
 		case scSettings:
@@ -830,7 +909,11 @@ func (m Model) statusTextPlain() string {
 	if len(m.nodes) == 1 {
 		nodeWord = "node"
 	}
-	return fmt.Sprintf("%d %s · 0 applications", len(m.nodes), nodeWord)
+	appWord := "applications"
+	if len(m.apps) == 1 {
+		appWord = "application"
+	}
+	return fmt.Sprintf("%d %s · %d %s", len(m.nodes), nodeWord, len(m.apps), appWord)
 }
 
 // keymap returns the help keymap for the current screen.
@@ -875,6 +958,10 @@ func (m Model) keymap() help.KeyMap {
 			return newFormKeymap()
 		}
 		return newAddReviewKeymap()
+	case scApps, scNodeApps:
+		return newAppsKeymap()
+	case scAppDetail:
+		return newSimpleKeymap()
 	default:
 		return newSimpleKeymap()
 	}

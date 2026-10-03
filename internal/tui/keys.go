@@ -249,6 +249,36 @@ type simpleKeymap struct {
 	quit key.Binding
 }
 
+// appsKeymap walks the applications pages: the record is the view,
+// enter opens one application's history.
+type appsKeymap struct {
+	back  key.Binding
+	help  key.Binding
+	quit  key.Binding
+	enter key.Binding
+	up    key.Binding
+	down  key.Binding
+}
+
+func newAppsKeymap() appsKeymap {
+	return appsKeymap{
+		back:  key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
+		help:  key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
+		quit:  key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
+		enter: key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open")),
+		up:    key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
+		down:  key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
+	}
+}
+
+func (k appsKeymap) ShortHelp() []key.Binding {
+	return []key.Binding{k.enter, k.up, k.down, k.back, k.help, k.quit}
+}
+
+func (k appsKeymap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{{k.up, k.down, k.enter}, {k.back, k.help, k.quit}}
+}
+
 func newSimpleKeymap() simpleKeymap {
 	return simpleKeymap{
 		back: key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),

@@ -13,6 +13,7 @@ const (
 	scNodePlan                           // a node's generated baseline plan
 	scNodeApplyConfirm                   // the typed-name confirmation before apply
 	scNodeApplyReport                    // the apply's report and verification rows
+	scAppDetail                          // one application: its releases and exposure
 	scApps                               // applications across the fleet
 	scDeploy                             // deploy workflow entry point
 	scSettings                           // settings and about
@@ -23,6 +24,7 @@ const (
 type screen struct {
 	kind screenKind
 	node string // node context for node-related screens
+	app  string // app context for app-related screens
 }
 
 // push appends a screen to the navigation stack and re-lays out the
@@ -61,6 +63,8 @@ func (m *Model) crumbs() []string {
 			parts = append(parts, s.node)
 		case scNodeApps:
 			parts = append(parts, "applications")
+		case scAppDetail:
+			parts = append(parts, s.app)
 		case scNodeInspect:
 			parts = append(parts, "inspect")
 		case scNodePreflight:
