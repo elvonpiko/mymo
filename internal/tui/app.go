@@ -237,6 +237,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case checkDoneMsg:
 		return m.handleCheckDone(msg)
 
+	case firstContactDoneMsg:
+		return m.handleFirstContactDone(msg)
+
 	case sshFinishedMsg:
 		return m.handleSSHFinished(msg)
 
@@ -403,6 +406,12 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case scAddNode:
+		switch m.addNode.stage {
+		case anForm:
+			return m, nil // text keys go to the embedded form
+		case anInstalling:
+			return m.updateInstalling(str)
+		}
 		return m.updateAddReview(str)
 	case scApps, scNodeApps:
 		return m.updateAppsKeys(s, str)
@@ -954,8 +963,11 @@ func (m Model) keymap() help.KeyMap {
 		}
 		return newApplyReportKeymap()
 	case scAddNode:
-		if m.addNode.stage == anForm {
+		switch m.addNode.stage {
+		case anForm:
 			return newFormKeymap()
+		case anInstalling:
+			return newLoadingKeymap()
 		}
 		return newAddReviewKeymap()
 	case scApps, scNodeApps:

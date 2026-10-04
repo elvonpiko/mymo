@@ -326,11 +326,11 @@ func TestAddNodeReviewSavesNode(t *testing.T) {
 	s := readyStore(t)
 	m := New(s)
 	m.addNode.vals = &addNodeValues{
-		name: "prod-01",
-		host: "203.0.113.10",
-		port: "22",
-		user: "root",
-		auth: domain.AuthAgent,
+		name:   "prod-01",
+		host:   "203.0.113.10",
+		port:   "22",
+		user:   "root",
+		choice: acAgent,
 	}
 	m.push(screen{kind: scAddNode})
 	m.completeAddForm()
@@ -356,7 +356,7 @@ func TestAddNodeReviewSavesNode(t *testing.T) {
 
 func TestAddNodeReviewValidationFailure(t *testing.T) {
 	m := New(readyStore(t))
-	m.addNode.vals = &addNodeValues{name: "BAD", host: "203.0.113.10", port: "22", user: "root", auth: domain.AuthAgent}
+	m.addNode.vals = &addNodeValues{name: "BAD", host: "203.0.113.10", port: "22", user: "root", choice: acAgent}
 	m.completeAddForm()
 	if m.addNode.stage != anReview {
 		t.Fatalf("stage = %v, want anReview", m.addNode.stage)
@@ -371,18 +371,18 @@ func TestAddNodeWorkflowTypedCompletion(t *testing.T) {
 	m := New(s)
 	m = press(t, m, "N")
 
-	// name
-	m = press(t, m, "p", "r", "o", "d", "-", "0", "1", "enter")
 	// host
 	m = press(t, m, "2", "0", "3", ".", "0", ".", "1", "1", "3", ".", "1", "0", "enter")
 	// port (22 is prefilled)
 	m = press(t, m, "enter")
 	// user
 	m = press(t, m, "r", "o", "o", "t", "enter")
-	// authentication: switch to SSH agent and accept
-	m = press(t, m, "down", "enter")
-	// key path: empty is valid with agent auth
-	m = press(t, m, "enter")
+	// name
+	m = press(t, m, "p", "r", "o", "d", "-", "0", "1", "enter")
+	// how to connect: default is password (first contact) — switch
+	// to SSH agent, two options down, and accept
+	m = press(t, m, "down", "down", "enter")
+	// agent needs no further page: the form completes
 
 	if m.addNode.stage != anReview {
 		t.Fatalf("stage = %v, want anReview after completing the form", m.addNode.stage)

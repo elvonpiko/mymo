@@ -7,11 +7,15 @@ package sshtest
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/pem"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
+	"sync"
 	"testing"
 
 	"golang.org/x/crypto/ssh"
@@ -107,6 +111,62 @@ func (s *Server) Node(t *testing.T, keyPath string) domain.Node {
 		KeyPath: keyPath,
 	}
 }
+
+// NewPasswordServer starts a faithful fresh box: it authenticates
+// the given password, and accepts a public key only after the
+// handler has reported its authorized_keys line installed — the
+// exact trust first contact must earn, in order.
+func NewPasswordServer(t *testing.T, handler Handler, password string) *Server {
+	t.Helper()
+	var (
+		mu        sync.Mutex
+		installed = map[string]bool{}
+	)
+	install := func(h Handler) Handler {
+		return func(cmd string) (string, int) {
+			out, code := h(cmd)
+			for _, f := range pubLineRe.FindAllString(cmd, -1) {
+				mu.Lock()
+				installed[f] = true
+				mu.Unlock()
+			}
+			return out, code
+		}
+	}
+	cfg := &ssh.ServerConfig{
+		PasswordCallback: func(_ ssh.ConnMetadata, attempt []byte) (*ssh.Permissions, error) {
+			if string(attempt) == password {
+				return &ssh.Permissions{}, nil
+			}
+			return nil, errPasswordRejected
+		},
+		PublicKeyCallback: func(_ ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			line := key.Type() + " " + base64.StdEncoding.EncodeToString(key.Marshal())
+			if installed[line] {
+				return &ssh.Permissions{}, nil
+			}
+			return nil, errKeyNotInstalled
+		},
+	}
+	cfg.AddHostKey(NewHostKey(t))
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &Server{listener: ln, config: cfg, handler: install(handler)}
+	t.Cleanup(func() { ln.Close() })
+	go srv.serve()
+	return srv
+}
+
+var (
+	errPasswordRejected = errors.New("sshtest: wrong password")
+	errKeyNotInstalled  = errors.New("sshtest: key not installed")
+
+	pubLineRe = regexp.MustCompile(`ssh-[a-z0-9@.-]+ [A-Za-z0-9+/=]{20,}`)
+)
 
 func (s *Server) serve() {
 	for {

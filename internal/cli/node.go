@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -182,6 +183,36 @@ type nodeInput struct {
 	keyPath string
 }
 
+// authPassword is the CLI's first-contact choice: it exists only in
+// this package's flow, never in a domain record — node() refuses it,
+// so no store file can ever hold it.
+const authPassword = domain.AuthMethod("password")
+
+// nodePasswordIn is where the password is read from: the terminal
+// when a human runs the command, one line of a pipe when automation
+// drives it. Injectable for tests.
+var nodePasswordIn io.Reader = os.Stdin
+
+// readNodePassword asks for the node's password — echo off at a
+// terminal, a single line from a pipe. It is never a flag: flags sit
+// in shell history. The value lives on the caller's stack and goes
+// out of scope with it.
+var readNodePassword = func(w io.Writer, user, host string) (string, error) {
+	fmt.Fprintf(w, "password for %s@%s (never stored): ", user, host)
+	if f, ok := nodePasswordIn.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
+		b, err := term.ReadPassword(int(f.Fd()))
+		fmt.Fprintln(w)
+		return string(b), err
+	}
+	line, err := bufio.NewReader(nodePasswordIn).ReadString('\n')
+	fmt.Fprintln(w)
+	return strings.TrimSpace(line), err
+}
+
+// cliFirstContact runs the password-to-key onboarding; injectable so
+// the CLI tests never need a real node.
+var cliFirstContact = ssh.FirstContact
+
 // complete reports whether all required fields are present, listing the
 // missing flag names otherwise. Port always has a default.
 func (in nodeInput) complete() (bool, []string) {
@@ -202,12 +233,20 @@ func (in nodeInput) complete() (bool, []string) {
 		if strings.TrimSpace(in.keyPath) == "" {
 			missing = append(missing, "-key")
 		}
+	case authPassword:
+		// first contact: mymo generates the dedicated key itself
 	}
 	return len(missing) == 0, missing
 }
 
 // node builds and validates the domain record from the gathered input.
 func (in nodeInput) node() (domain.Node, error) {
+	if in.auth == authPassword {
+		// the password choice must be resolved by first contact
+		// before a record is built — a password can never reach a
+		// persisted node
+		return domain.Node{}, errors.New("internal: first contact must run before the node record is built")
+	}
 	n := domain.Node{
 		Name:    strings.TrimSpace(in.name),
 		Host:    strings.TrimSpace(in.host),
@@ -232,7 +271,7 @@ func runNodeAdd(args []string, stdout, stderr io.Writer) int {
 	host := fs.String("host", "", "host or IP address")
 	port := fs.Int("port", domain.DefaultSSHPort, "SSH port")
 	user := fs.String("user", "", "SSH user")
-	auth := fs.String("auth", "", "auth method: key or agent")
+	auth := fs.String("auth", "", "auth method: password (first contact), key, or agent")
 	key := fs.String("key", "", "path to private key")
 	positional, err := parseFlags(fs, args)
 	if err != nil {
@@ -263,6 +302,32 @@ func runNodeAdd(args []string, stdout, stderr io.Writer) int {
 			return exitErr
 		}
 	}
+	if in.auth == authPassword {
+		// first contact: connect once with the password, install a
+		// dedicated key, prove it — only then is the node saved,
+		// as key-auth. The password goes out of scope here.
+		store, ok := openStore(stderr)
+		if !ok {
+			return exitErr
+		}
+		password, err := readNodePassword(stderr, in.user, in.host)
+		if err != nil {
+			fmt.Fprintf(stderr, "mymo node add: %v\n", err)
+			return exitErr
+		}
+		if strings.TrimSpace(password) == "" {
+			fmt.Fprintln(stderr, "mymo node add: the password is required for first contact")
+			return exitErr
+		}
+		keyPath := ssh.FirstContactKeyPath(store.Dir(), in.name)
+		fmt.Fprintf(stderr, "first contact with %s@%s — installing the key, proving it works…\n", in.user, in.host)
+		if err := cliFirstContact(context.Background(), in.host, in.port, in.user, password, keyPath, knownHostsPath(store)); err != nil {
+			fmt.Fprintf(stderr, "mymo node add: first contact failed, nothing was saved: %v\n", err)
+			return exitErr
+		}
+		in.auth = domain.AuthKey
+		in.keyPath = keyPath
+	}
 	node, err := in.node()
 	if err != nil {
 		fmt.Fprintf(stderr, "mymo node add: %v\n", err)
@@ -282,6 +347,11 @@ func runNodeAdd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "mymo node add: %v\n", err)
 		return exitErr
 	}
+	if node.Auth == domain.AuthKey && node.KeyPath == ssh.FirstContactKeyPath(store.Dir(), node.Name) {
+		fmt.Fprintf(stdout, "First contact complete: %q is key-auth now — the password was never stored.\n", node.Name)
+		fmt.Fprintf(stdout, "Added node %q in observe mode.\n", node.Name)
+		return exitOK
+	}
 	fmt.Fprintf(stdout, "Added node %q in observe mode.\n", node.Name)
 	return exitOK
 }
@@ -294,7 +364,7 @@ func (in *nodeInput) prompt() error {
 	}
 	auth := in.auth
 	if auth == "" {
-		auth = domain.AuthKey
+		auth = authPassword
 	}
 	form := newForm(
 		huh.NewGroup(
@@ -306,8 +376,9 @@ func (in *nodeInput) prompt() error {
 				Validate(portString),
 			huh.NewInput().Title("SSH user").Placeholder("root").Value(&in.user).
 				Validate(nonEmpty("user is required")),
-			huh.NewSelect[domain.AuthMethod]().Title("Authentication").
+			huh.NewSelect[domain.AuthMethod]().Title("How do you connect?").
 				Options(
+					huh.NewOption("Password — first contact (mymo installs a key)", authPassword),
 					huh.NewOption("Private key file", domain.AuthKey),
 					huh.NewOption("SSH agent", domain.AuthAgent),
 				).Value(&auth),

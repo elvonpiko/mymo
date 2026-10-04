@@ -1,8 +1,10 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -13,24 +15,39 @@ import (
 
 	"github.com/elvonpiko/mymo/internal/domain"
 	"github.com/elvonpiko/mymo/internal/ssh"
+	"github.com/elvonpiko/mymo/internal/state"
 )
 
 // addNodeStage identifies the workflow's current step.
 type addNodeStage int
 
 const (
-	anForm   addNodeStage = iota // embedded huh connection form
-	anReview                     // review, then save
+	anForm       addNodeStage = iota // embedded huh connection form
+	anReview                         // review, then save (and first-contact plan)
+	anInstalling                     // first contact running: key install + proof
+)
+
+// authChoice is how the operator says they connect today. Password
+// is the fresh-box reality and the select's default; it maps to a
+// key-auth node on file because mymo installs the key during first
+// contact. The password itself never leaves this workflow's memory.
+type authChoice string
+
+const (
+	acPassword authChoice = "password"
+	acKey      authChoice = "key"
+	acAgent    authChoice = "agent"
 )
 
 // addNodeValues holds the pointers the huh form binds to.
 type addNodeValues struct {
-	name    string
-	host    string
-	port    string
-	user    string
-	auth    domain.AuthMethod
-	keyPath string
+	name     string
+	host     string
+	port     string
+	user     string
+	choice   authChoice
+	password string
+	keyPath  string
 }
 
 // addNodeState carries the workflow between its stages.
@@ -40,24 +57,38 @@ type addNodeState struct {
 	// vals is a pointer shared with the form's bound accessors: the Model
 	// struct is copied between updates, so a value field would fork from
 	// the memory huh writes into.
-	vals *addNodeValues
-	node domain.Node
-	err  string
+	vals         *addNodeValues
+	node         domain.Node
+	firstContact bool
+	err          string
 }
 
-// startAddNode opens the add-node workflow on top of the navigation stack.
+// firstContactDoneMsg reports the onboarding's outcome; err is nil
+// only when the key was proven on a second connection.
+type firstContactDoneMsg struct {
+	err error
+}
+
+// firstContactRun is the injectable first-contact runner; tests
+// drive the workflow without a real node. The default runs the real
+// transport: generate, install, prove.
+var firstContactRun = func(host string, port int, user, password, keyPath, knownHostsPath string) error {
+	return ssh.FirstContact(context.Background(), host, port, user, password, keyPath, knownHostsPath)
+}
+
+// startAddNode opens the add-node workflow on top of the navigation
+// stack. The wizard mirrors what a provider hands you — host, port,
+// user — asks for a name, and only then how you connect, with the
+// fresh-box answer (password) first and its promise stated plainly.
 func (m Model) startAddNode() (tea.Model, tea.Cmd) {
-	vals := &addNodeValues{port: "22", auth: domain.AuthKey}
+	vals := &addNodeValues{port: "22", choice: acPassword}
 	m.addNode = addNodeState{stage: anForm, vals: vals}
 	v := vals
 	form := huh.NewForm(
 		huh.NewGroup(
-			huh.NewInput().Title("Name").
-				Placeholder("web-1").
-				Value(&v.name).
-				Validate(domain.ValidateNodeName),
 			huh.NewInput().Title("Host or IP address").
 				Placeholder("203.0.113.10").
+				Description("the address your provider emailed you").
 				Value(&v.host).
 				Validate(nonEmpty("host is required")),
 			huh.NewInput().Title("SSH port").
@@ -65,23 +96,49 @@ func (m Model) startAddNode() (tea.Model, tea.Cmd) {
 				Validate(portInput),
 			huh.NewInput().Title("SSH user").
 				Placeholder("root").
+				Description("the login user your provider emailed you").
 				Value(&v.user).
 				Validate(nonEmpty("user is required")),
-			huh.NewSelect[domain.AuthMethod]().Title("Authentication").
+			huh.NewInput().Title("Name").
+				Placeholder("web-1").
+				Description("one word mymo calls this node").
+				Value(&v.name).
+				Validate(domain.ValidateNodeName),
+		),
+		huh.NewGroup(
+			huh.NewSelect[authChoice]().Title("How do you connect?").
+				Description("password works for a fresh box: mymo installs a key, then forgets the password").
 				Options(
-					huh.NewOption("SSH key", domain.AuthKey),
-					huh.NewOption("SSH agent", domain.AuthAgent),
-				).Value(&v.auth),
+					huh.NewOption("Password — first contact", acPassword),
+					huh.NewOption("SSH key — I already have one", acKey),
+					huh.NewOption("SSH agent", acAgent),
+				).Value(&v.choice),
+		),
+		// the one conditional page: the password for first contact
+		huh.NewGroup(
+			huh.NewInput().Title("Password").
+				Description("held in memory for one connection — never stored, never logged").
+				Password(true).
+				Value(&v.password).
+				Validate(func(s string) error {
+					if v.choice == acPassword && strings.TrimSpace(s) == "" {
+						return errors.New("the password is required for first contact")
+					}
+					return nil
+				}),
+		).WithHideFunc(func() bool { return v.choice != acPassword }),
+		// or the key path for an existing key
+		huh.NewGroup(
 			huh.NewInput().Title("Private key path").
 				Placeholder("/home/user/.ssh/id_ed25519").
 				Value(&v.keyPath).
 				Validate(func(s string) error {
-					if v.auth == domain.AuthKey && strings.TrimSpace(s) == "" {
+					if v.choice == acKey && strings.TrimSpace(s) == "" {
 						return errors.New("key path is required for key authentication")
 					}
 					return nil
 				}),
-		),
+		).WithHideFunc(func() bool { return v.choice != acKey }),
 	).WithShowHelp(true).WithTheme(HuhTheme())
 	m.addNode.form = form
 	m.push(screen{kind: scAddNode})
@@ -108,8 +165,10 @@ func (m Model) updateAddForm(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// completeAddForm collects the form values into a node record and moves
-// the workflow to the review stage.
+// completeAddForm collects the form values into a node record and
+// moves the workflow to the review stage. Password choice becomes a
+// key-auth node whose key mymo generates on confirm — the review
+// states that plan before anything runs.
 func (m *Model) completeAddForm() {
 	port, err := strconv.Atoi(strings.TrimSpace(m.addNode.vals.port))
 	if err != nil {
@@ -122,10 +181,23 @@ func (m *Model) completeAddForm() {
 		Host:    strings.TrimSpace(m.addNode.vals.host),
 		Port:    port,
 		User:    strings.TrimSpace(m.addNode.vals.user),
-		Auth:    m.addNode.vals.auth,
-		KeyPath: strings.TrimSpace(m.addNode.vals.keyPath),
 		Mode:    domain.ModeObserve,
 		AddedAt: time.Now(),
+	}
+	switch m.addNode.vals.choice {
+	case acPassword:
+		// the node on file is key-auth; first contact installs the
+		// dedicated key before anything is saved
+		n.Auth = domain.AuthKey
+		if m.store != nil {
+			n.KeyPath = ssh.FirstContactKeyPath(m.store.Dir(), n.Name)
+		}
+		m.addNode.firstContact = true
+	case acKey:
+		n.Auth = domain.AuthKey
+		n.KeyPath = strings.TrimSpace(m.addNode.vals.keyPath)
+	default:
+		n.Auth = domain.AuthAgent
 	}
 	m.addNode.node = n
 	m.addNode.err = ""
@@ -135,22 +207,85 @@ func (m *Model) completeAddForm() {
 	m.addNode.stage = anReview
 }
 
-// updateAddReview handles keys on the review step: save or cancel.
+// updateAddReview handles keys on the review step: confirm or cancel.
+// Confirm runs first contact for a password choice — the node is
+// saved only when the key was proven on a second connection.
 func (m Model) updateAddReview(str string) (tea.Model, tea.Cmd) {
 	switch str {
 	case "q":
 		return m, tea.Quit
 	case "c", "enter":
-		node := m.addNode.node
-		if err := m.saveNewNode(node); err != nil {
-			m.addNode.err = err.Error()
-			return m, nil
+		if m.addNode.firstContact {
+			if m.store == nil {
+				m.addNode.err = "state store unavailable"
+				return m, nil
+			}
+			node := m.addNode.node
+			password := m.addNode.vals.password
+			keyPath := node.KeyPath
+			m.addNode.stage = anInstalling
+			m.loading = loadingState{active: true, node: node.Name,
+				line:   "first contact with " + node.Host,
+				detail: "installing the dedicated key, proving it works",
+				start:  time.Now()}
+			return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
+				err := firstContactRun(node.Host, node.Port, node.User, password, keyPath, knownHostsPathTUI(m.store))
+				return firstContactDoneMsg{err: err}
+			})
 		}
-		m.pop()
-		m.reloadFleet()
-		return m, m.notify("added "+node.Name+" to the fleet", toastOK)
+		return m.finishAdd()
 	case "esc":
 		m.pop()
+		return m, nil
+	}
+	return m, nil
+}
+
+// handleFirstContactDone settles the onboarding: on success the node
+// is saved and the toast says what changed; on failure nothing is
+// saved and the review screen says exactly what went wrong.
+func (m Model) handleFirstContactDone(msg firstContactDoneMsg) (tea.Model, tea.Cmd) {
+	m.loading = loadingState{}
+	m.addNode.stage = anReview
+	if msg.err != nil {
+		m.addNode.err = msg.err.Error()
+		return m, nil
+	}
+	// the password served its one connection; the values the form
+	// held go out of scope with this copy's workflow state
+	m.addNode.vals.password = ""
+	return m.finishAdd()
+}
+
+// finishAdd saves the reviewed node and lands back on the fleet.
+func (m Model) finishAdd() (tea.Model, tea.Cmd) {
+	node := m.addNode.node
+	// pop() below wipes the workflow state when the screen leaves the
+	// stack — the toast's wording depends on knowing how this node
+	// came in, so the fact is read first
+	firstContact := m.addNode.firstContact
+	if err := m.saveNewNode(node); err != nil {
+		m.addNode.err = err.Error()
+		return m, nil
+	}
+	m.pop()
+	m.reloadFleet()
+	if firstContact {
+		return m, m.notify(node.Name+" is key-auth now — the password was never stored", toastOK)
+	}
+	return m, m.notify("added "+node.Name+" to the fleet", toastOK)
+}
+
+// updateInstalling handles keys while first contact runs: esc
+// cancels back to the review, anything else waits.
+func (m Model) updateInstalling(str string) (tea.Model, tea.Cmd) {
+	switch str {
+	case "q":
+		return m, tea.Quit
+	case "esc":
+		m.loading = loadingState{}
+		m.addNode.stage = anReview
+		m.addNode.err = "first contact cancelled — nothing was changed on the node"
 		return m, nil
 	}
 	return m, nil
@@ -171,8 +306,11 @@ func (m Model) saveNewNode(n domain.Node) error {
 
 // addView renders the add-node workflow's current stage.
 func (m Model) addView() string {
-	if m.addNode.stage == anForm {
+	switch {
+	case m.addNode.stage == anForm:
 		return m.addFormView()
+	case m.addNode.stage == anInstalling:
+		return m.loadingView()
 	}
 	return m.addReviewView()
 }
@@ -185,23 +323,50 @@ func (m Model) addFormView() string {
 		lipgloss.Center, lipgloss.Center, card)
 }
 
-// addReviewView renders the review step: the record to be saved, the
-// confirm and cancel keys, and any error from saving.
+// addReviewView renders the review step: for first contact, the
+// exact plan that will run; otherwise the record to be saved.
 func (m Model) addReviewView() string {
 	n := m.addNode.node
-	inner := titleStyle.Render("Review new node") + "\n\n" +
-		factsPanel(n, "name", "host", "port", "user", "auth", "key path") +
-		"\n\n" +
-		faintStyle.Render("Nodes start in observe mode. SSH discovery and") + "\n" +
-		faintStyle.Render("app-host preparation arrive with the transport phase;") + "\n" +
-		faintStyle.Render("mymo never modifies a server without your approval.") + "\n\n" +
-		accentStyle.Render("[c]") + textStyle.Render(" save to fleet    ") +
-		accentStyle.Render("[esc]") + textStyle.Render(" cancel")
+	inner := titleStyle.Render("Review new node") + "\n\n"
+	if m.addNode.firstContact {
+		// plain fact rows, not the mini-card: this page must stay
+		// under the floor's 19 rows even with the error visible —
+		// Place clips the bottom of anything taller
+		for _, f := range [][2]string{
+			{"name", n.Name}, {"host", n.Host},
+			{"port", fmt.Sprint(n.Port)}, {"user", n.User},
+		} {
+			inner += factsLabelStyle.Width(10).Render(f[0]) + textStyle.Render(f[1]) + "\n"
+		}
+		inner += faintStyle.Render("first contact — in this order:") + "\n" +
+			"  1. generate a dedicated key beside your local state\n" +
+			"  2. connect once with the password\n" +
+			"  3. append it to authorized_keys — append-only, never rewriting it\n" +
+			"  4. prove the key works on a second connection\n" +
+			"  5. save " + n.Name + " as a key-auth node\n" +
+			faintStyle.Render("the password is never stored, never logged") + "\n\n" +
+			accentStyle.Render("[c]") + textStyle.Render(" run first contact    ") +
+			accentStyle.Render("[esc]") + textStyle.Render(" cancel")
+	} else {
+		inner += factsPanel(n, "name", "host", "port", "user", "auth", "key path") +
+			"\n\n" +
+			faintStyle.Render("Nodes start in observe mode. mymo never modifies a server") + "\n" +
+			faintStyle.Render("without your typed approval — and password authentication") + "\n" +
+			faintStyle.Render("is only ever a first contact, never a way of life.") + "\n\n" +
+			accentStyle.Render("[c]") + textStyle.Render(" save to fleet    ") +
+			accentStyle.Render("[esc]") + textStyle.Render(" cancel")
+	}
 	if m.addNode.err != "" {
 		inner += "\n\n" + errStyle.Render(m.addNode.err)
 	}
 	return lipgloss.Place(m.contentWidth, m.contentHeight,
 		lipgloss.Center, lipgloss.Center, cardStyle.Render(inner))
+}
+
+// knownHostsPathTUI is the first-contact trust store: the same TOFU
+// file the rest of the transport reads.
+func knownHostsPathTUI(store *state.Store) string {
+	return filepath.Join(store.Dir(), "known_hosts.json")
 }
 
 // nonEmpty and portInput are the small validators shared by the form.

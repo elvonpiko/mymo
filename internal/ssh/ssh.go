@@ -41,6 +41,12 @@ type Client struct {
 	node       domain.Node
 	knownHosts string // host:port -> base64 key, JSON; empty path = memory
 
+	// password is first-contact-only: set on a client that connects
+	// once with the provider's password to install a key, then goes
+	// out of scope. It is never written anywhere — no field on any
+	// persisted record can hold one.
+	password string
+
 	mu         sync.Mutex
 	conn       *ssh.Client
 	agentConn  net.Conn
@@ -56,6 +62,41 @@ func New(node domain.Node, knownHostsPath string) *Client {
 		knownHosts: knownHostsPath,
 		memoryKeys: make(map[string]string),
 	}
+}
+
+// NewFirstContact builds the one-shot client that authenticates with
+// a password: the spec's temporary password authentication for
+// bootstrap. The password lives in this client's memory for the
+// single connection it exists to make and is never persisted.
+func NewFirstContact(node domain.Node, knownHostsPath, password string) *Client {
+	c := New(node, knownHostsPath)
+	c.password = password
+	return c
+}
+
+// AppendAuthorizedKey adds one public key line to the node user's
+// authorized_keys, append-only and idempotent: an identical line is
+// never duplicated, and the file is never rewritten — the operator's
+// other keys are untouchable. This is the only mutation mymo makes
+// before a confirmed plan, and it happens only through first
+// contact, with the password the operator typed for exactly this.
+func (c *Client) AppendAuthorizedKey(ctx context.Context, pubLine string) error {
+	script := "mkdir -p ~/.ssh && chmod 700 ~/.ssh && touch ~/.ssh/authorized_keys && " +
+		"grep -qxF " + shellQuote(pubLine) + " ~/.ssh/authorized_keys || " +
+		"echo " + shellQuote(pubLine) + " >> ~/.ssh/authorized_keys; " +
+		"chmod 600 ~/.ssh/authorized_keys"
+	if out, code, err := c.Run(ctx, "sh", "-c", script); err != nil || code != 0 {
+		return fmt.Errorf("installing the key on the node failed (exit %d): %s", code, firstLineOf(out))
+	}
+	return nil
+}
+
+// firstLineOf keeps failure notes to one row.
+func firstLineOf(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	return strings.TrimSpace(s)
 }
 
 // Dial establishes and authenticates the connection. The node's host
@@ -228,6 +269,11 @@ func (c *Client) authMethods() ([]ssh.AuthMethod, net.Conn, error) {
 		}
 		return []ssh.AuthMethod{ssh.PublicKeys(signers...)}, conn, nil
 	default:
+		if c.password != "" {
+			// first contact: the one connection the password exists
+			// for — it is offered as an auth method, never stored
+			return []ssh.AuthMethod{ssh.Password(c.password)}, nil, nil
+		}
 		return nil, nil, fmt.Errorf("ssh: unsupported auth method %q", c.node.Auth)
 	}
 }
