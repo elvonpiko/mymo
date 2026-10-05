@@ -21,8 +21,9 @@ import (
 
 // opsDial opens the runner for an app operation; a var so tests
 // drive the commands hermetically.
-var opsDial = func(ctx context.Context, node domain.Node, store *state.Store) (deploy.Runner, func() error, error) {
+var opsDial = func(ctx context.Context, node domain.Node, store *state.Store, progress func(string)) (deploy.Runner, func() error, error) {
 	client := ssh.New(node, knownHostsPath(store))
+	client.WithProgress(progress)
 	if err := client.Dial(ctx); err != nil {
 		return nil, nil, err
 	}
@@ -106,7 +107,7 @@ func runAppStatus(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	if rel.ID == 0 {
 		return exitOK
 	}
-	runner, closeFn, err := opsDial(ctx, node, store)
+	runner, closeFn, err := opsDial(ctx, node, store, dialNarrator(stderr))
 	if err != nil {
 		fmt.Fprintf(stdout, "  live     unknown — the node did not answer (%v)\n", err)
 		return exitOK
@@ -178,7 +179,7 @@ func runAppLogs(ctx context.Context, args []string, stdout, stderr io.Writer) in
 		fmt.Fprintf(stderr, "mymo app logs: %s has no active release to read logs from\n", app.Name)
 		return exitErr
 	}
-	runner, closeFn, err := opsDial(ctx, node, store)
+	runner, closeFn, err := opsDial(ctx, node, store, dialNarrator(stderr))
 	if err != nil {
 		fmt.Fprintf(stderr, "mymo app logs: %v\n", err)
 		return exitErr
@@ -210,7 +211,7 @@ func runAppLifecycle(ctx context.Context, verb, name string, stdout, stderr io.W
 		fmt.Fprintf(stderr, "mymo app %s: %s has no active release\n", verb, app.Name)
 		return exitErr
 	}
-	runner, closeFn, err := opsDial(ctx, node, store)
+	runner, closeFn, err := opsDial(ctx, node, store, dialNarrator(stderr))
 	if err != nil {
 		fmt.Fprintf(stderr, "mymo app %s: %v\n", verb, err)
 		return exitErr
@@ -258,7 +259,7 @@ func runAppRollback(ctx context.Context, args []string, stdout, stderr io.Writer
 		return exitErr
 	}
 
-	runner, closeFn, err := opsDial(ctx, node, store)
+	runner, closeFn, err := opsDial(ctx, node, store, dialNarrator(stderr))
 	if err != nil {
 		fmt.Fprintf(stderr, "mymo app rollback: %v\n", err)
 		return exitErr
@@ -305,7 +306,7 @@ func runAppShell(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	}
 
 	// privilege: ask the node who is connected
-	runner, closeFn, err := opsDial(ctx, node, store)
+	runner, closeFn, err := opsDial(ctx, node, store, dialNarrator(stderr))
 	if err != nil {
 		fmt.Fprintf(stderr, "mymo app shell: %v\n", err)
 		return exitErr

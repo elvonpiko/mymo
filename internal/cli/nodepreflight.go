@@ -43,6 +43,7 @@ func runNodePreflight(ctx context.Context, args []string, stdout, stderr io.Writ
 
 	fmt.Fprintf(stderr, "preflight %s against baseline %s (read-only)...\n", node.Name, baseline.Version)
 	client := ssh.New(node, knownHostsPath(store))
+	client.WithProgress(dialNarrator(stderr))
 	if err := client.Dial(ctx); err != nil {
 		recordFailedCheck(store, node, err)
 		fmt.Fprintf(stderr, "mymo node preflight: %v\n", err)

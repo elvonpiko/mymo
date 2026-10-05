@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -65,7 +66,7 @@ func settleConfirm(t *testing.T, m Model, cmd tea.Cmd) Model {
 func TestFirstContactConfirmSavesKeyAuthNode(t *testing.T) {
 	orig := firstContactRun
 	t.Cleanup(func() { firstContactRun = orig })
-	firstContactRun = func(host string, port int, user, password, keyPath, knownHostsPath string) error {
+	firstContactRun = func(ctx context.Context, host string, port int, user, password, keyPath, knownHostsPath string, progress func(string)) error {
 		if password != "provider-secret" {
 			t.Errorf("first contact ran with password %q", password)
 		}
@@ -103,7 +104,7 @@ func TestFirstContactConfirmSavesKeyAuthNode(t *testing.T) {
 func TestFirstContactFailureShowsTheErrorAndSavesNothing(t *testing.T) {
 	orig := firstContactRun
 	t.Cleanup(func() { firstContactRun = orig })
-	firstContactRun = func(string, int, string, string, string, string) error {
+	firstContactRun = func(context.Context, string, int, string, string, string, string, func(string)) error {
 		return errors.New("the box refused the password")
 	}
 
@@ -131,7 +132,7 @@ func TestFirstContactFailureShowsTheErrorAndSavesNothing(t *testing.T) {
 func TestFirstContactExpiredPasswordSaysTheMove(t *testing.T) {
 	orig := firstContactRun
 	t.Cleanup(func() { firstContactRun = orig })
-	firstContactRun = func(string, int, string, string, string, string) error {
+	firstContactRun = func(context.Context, string, int, string, string, string, string, func(string)) error {
 		return ssh.ErrPasswordExpired
 	}
 
@@ -151,6 +152,94 @@ func TestFirstContactExpiredPasswordSaysTheMove(t *testing.T) {
 	got := view(m)
 	if !strings.Contains(got, "ssh in once, change it") {
 		t.Fatalf("the move is not rendered:\n%s", got)
+	}
+}
+
+// TestFirstContactRetryLinesLandInTheCard proves the wiring end to
+// end: the ceremony hands the runner a live progress func, a retry
+// line travels the pump, and the handler paints it on the loading
+// card while the work is still in flight.
+func TestFirstContactRetryLinesLandInTheCard(t *testing.T) {
+	var gotProgress func(string)
+	orig := firstContactRun
+	t.Cleanup(func() { firstContactRun = orig })
+	firstContactRun = func(ctx context.Context, host string, port int, user, password, keyPath, knownHostsPath string, progress func(string)) error {
+		gotProgress = progress
+		progress("still connecting to " + host + " — try 2 of 3 (i/o timeout)")
+		if _, err := ssh.GenerateEd25519(keyPath); err != nil {
+			t.Fatal(err)
+		}
+		return nil
+	}
+
+	m, s := firstContactModel(t)
+	next, cmd := m.updateAddReview("c")
+	m = next.(Model)
+
+	// while the work is in flight, the handler paints the line
+	inFlight, _ := m.Update(netProgressMsg{line: "still connecting to 203.0.113.10 — try 2 of 3 (i/o timeout)"})
+	if mm := inFlight.(Model); mm.loading.detail != "still connecting to 203.0.113.10 — try 2 of 3 (i/o timeout)" {
+		t.Fatalf("the card did not take the retry line: %q", mm.loading.detail)
+	}
+
+	m = settleConfirm(t, m, cmd)
+	if gotProgress == nil {
+		t.Fatal("the ceremony never handed the runner a progress func")
+	}
+	// the runner pushed its line through that func; the handler test
+	// above proves the same line paints the card while in flight
+	if _, err := s.GetNode("web-1"); err != nil {
+		t.Fatalf("node not saved: %v", err)
+	}
+}
+
+// TestFirstContactEscCancelsTheWork proves esc stops the onboarding
+// itself — the runner's context ends — and a late result from the
+// cancelled run can never save the node.
+func TestFirstContactEscCancelsTheWork(t *testing.T) {
+	ctxEnded := make(chan struct{})
+	orig := firstContactRun
+	t.Cleanup(func() { firstContactRun = orig })
+	firstContactRun = func(ctx context.Context, host string, port int, user, password, keyPath, knownHostsPath string, progress func(string)) error {
+		<-ctx.Done()
+		close(ctxEnded)
+		return ctx.Err()
+	}
+
+	m, s := firstContactModel(t)
+	next, cmd := m.updateAddReview("c")
+	m = next.(Model)
+
+	// the runner starts for real and parks on its context: the way
+	// the runtime does it, every batched command runs in its own
+	// goroutine — a batch is concurrency, not a queue
+	if b, ok := cmd().(tea.BatchMsg); ok {
+		for _, c := range b {
+			go func(c tea.Cmd) { _ = c() }(c)
+		}
+	}
+	mm, _ := m.updateInstalling("esc")
+	m = mm.(Model)
+	select {
+	case <-ctxEnded:
+	case <-time.After(time.Second):
+		t.Fatal("esc did not cancel the runner's context")
+	}
+	if _, err := s.GetNode("web-1"); err == nil {
+		t.Fatal("a cancelled first contact must not save the node")
+	}
+
+	// the late result from the cancelled run is dropped, not applied
+	after, _ := m.Update(firstContactDoneMsg{err: context.Canceled})
+	m = after.(Model)
+	if _, err := s.GetNode("web-1"); err == nil {
+		t.Fatal("a late result saved a node its operator cancelled")
+	}
+	if m.addNode.stage != anReview {
+		t.Fatalf("stage = %v, want anReview", m.addNode.stage)
+	}
+	if !strings.Contains(m.addNode.err, "cancelled") {
+		t.Fatalf("the esc note was clobbered: %q", m.addNode.err)
 	}
 }
 

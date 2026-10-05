@@ -21,7 +21,7 @@ func TestNodeAddPasswordRunsFirstContact(t *testing.T) {
 	var gotPort int
 	origRun, origIn := cliFirstContact, nodePasswordIn
 	t.Cleanup(func() { cliFirstContact, nodePasswordIn = origRun, origIn })
-	cliFirstContact = func(ctx context.Context, host string, port int, user, password, keyPath, knownHostsPath string) error {
+	cliFirstContact = func(ctx context.Context, host string, port int, user, password, keyPath, knownHostsPath string, progress func(string)) error {
 		gotHost, gotPort, gotPassword, gotKeyPath = host, port, password, keyPath
 		// the real onboarding leaves a dedicated key behind; the
 		// fake owes the flow the same world
@@ -77,7 +77,7 @@ func TestNodeAddPasswordFailureSavesNothing(t *testing.T) {
 
 	origRun, origIn := cliFirstContact, nodePasswordIn
 	t.Cleanup(func() { cliFirstContact, nodePasswordIn = origRun, origIn })
-	cliFirstContact = func(context.Context, string, int, string, string, string, string) error {
+	cliFirstContact = func(context.Context, string, int, string, string, string, string, func(string)) error {
 		return errors.New("the box refused the password")
 	}
 	nodePasswordIn = strings.NewReader("wrong\n")
@@ -100,6 +100,32 @@ func TestNodeAddPasswordFailureSavesNothing(t *testing.T) {
 	assertNoPasswordOnDisk(t, "wrong")
 }
 
+// TestNodeAddPasswordNarratesRetries proves the dial's retries reach
+// the operator on stderr while the box gets its chance.
+func TestNodeAddPasswordNarratesRetries(t *testing.T) {
+	s := newSession(t)
+
+	origRun, origIn := cliFirstContact, nodePasswordIn
+	t.Cleanup(func() { cliFirstContact, nodePasswordIn = origRun, origIn })
+	cliFirstContact = func(ctx context.Context, host string, port int, user, password, keyPath, knownHostsPath string, progress func(string)) error {
+		if _, err := ssh.GenerateEd25519(keyPath); err != nil {
+			t.Fatal(err)
+		}
+		progress("still connecting to " + host + " — try 2 of 3 (i/o timeout)")
+		return nil
+	}
+	nodePasswordIn = strings.NewReader("provider-secret\n")
+
+	code, _, errOut := s.run(t, "node", "add",
+		"-name", "web-1", "-host", "203.0.113.10", "-user", "root", "-auth", "password")
+	if code != exitOK {
+		t.Fatalf("exit = %d, stderr:\n%s", code, errOut)
+	}
+	if !strings.Contains(errOut, "still connecting to 203.0.113.10 — try 2 of 3 (i/o timeout)") {
+		t.Errorf("the retry was not narrated on stderr:\n%s", errOut)
+	}
+}
+
 // TestNodeAddPasswordExpiredGuidesTheReset proves the CLI turns the
 // forced reset into the operator's exact next move — no nameless
 // exit 1.
@@ -108,7 +134,7 @@ func TestNodeAddPasswordExpiredGuidesTheReset(t *testing.T) {
 
 	origRun, origIn := cliFirstContact, nodePasswordIn
 	t.Cleanup(func() { cliFirstContact, nodePasswordIn = origRun, origIn })
-	cliFirstContact = func(context.Context, string, int, string, string, string, string) error {
+	cliFirstContact = func(context.Context, string, int, string, string, string, string, func(string)) error {
 		return ssh.ErrPasswordExpired
 	}
 	nodePasswordIn = strings.NewReader("provider-secret\n")

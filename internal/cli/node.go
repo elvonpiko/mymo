@@ -213,6 +213,15 @@ var readNodePassword = func(w io.Writer, user, host string) (string, error) {
 // the CLI tests never need a real node.
 var cliFirstContact = ssh.FirstContact
 
+// dialNarrator tells a dial's retries on stderr: every mymo surface
+// tells the same story while a slow or booting box gets its chance.
+func dialNarrator(w io.Writer) func(string) {
+	if w == nil {
+		return nil
+	}
+	return func(line string) { fmt.Fprintln(w, line) }
+}
+
 // complete reports whether all required fields are present, listing the
 // missing flag names otherwise. Port always has a default.
 func (in nodeInput) complete() (bool, []string) {
@@ -321,7 +330,7 @@ func runNodeAdd(args []string, stdout, stderr io.Writer) int {
 		}
 		keyPath := ssh.FirstContactKeyPath(store.Dir(), in.name)
 		fmt.Fprintf(stderr, "first contact with %s@%s — installing the key, proving it works…\n", in.user, in.host)
-		if err := cliFirstContact(context.Background(), in.host, in.port, in.user, password, keyPath, knownHostsPath(store)); err != nil {
+		if err := cliFirstContact(context.Background(), in.host, in.port, in.user, password, keyPath, knownHostsPath(store), dialNarrator(stderr)); err != nil {
 			if errors.Is(err, ssh.ErrPasswordExpired) {
 				fmt.Fprintln(stderr, "mymo node add: the box demands a password change before the key can be installed.")
 				fmt.Fprintln(stderr, "Ubuntu providers force a reset on first login. Change it once by hand:")

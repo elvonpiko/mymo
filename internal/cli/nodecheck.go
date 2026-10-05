@@ -41,6 +41,7 @@ func runNodeCheck(ctx context.Context, args []string, stdout, stderr io.Writer) 
 
 	fmt.Fprintf(stderr, "probing %s (%s)...\n", node.Name, node.Address())
 	client := ssh.New(node, knownHostsPath(store))
+	client.WithProgress(dialNarrator(stderr))
 	if err := client.Dial(ctx); err != nil {
 		recordFailedCheck(store, node, err)
 		fmt.Fprintf(stderr, "mymo node check: %v\n", err)

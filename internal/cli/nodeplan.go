@@ -38,6 +38,7 @@ func runNodePlan(ctx context.Context, args []string, stdout, stderr io.Writer) i
 
 	fmt.Fprintf(stderr, "planning %s against baseline %s (read-only)...\n", node.Name, baseline.Version)
 	client := ssh.New(node, knownHostsPath(store))
+	client.WithProgress(dialNarrator(stderr))
 	if err := client.Dial(ctx); err != nil {
 		recordFailedCheck(store, node, err)
 		fmt.Fprintf(stderr, "mymo node plan: %v\n", err)

@@ -62,8 +62,9 @@ func newCheckSpinner() spinner.Model {
 func (m Model) beginCheck(n domain.Node, seq int) tea.Cmd {
 	knownHosts := filepath.Join(m.store.Dir(), "known_hosts.json")
 	name := n.Name
-	return func() tea.Msg {
+	return tea.Batch(m.netProgressReader(), func() tea.Msg {
 		client := ssh.New(n, knownHosts)
+		client.WithProgress(m.netSink())
 		ctx, cancel := context.WithTimeout(context.Background(), checkTimeout)
 		defer cancel()
 		if err := client.Dial(ctx); err != nil {
@@ -75,7 +76,7 @@ func (m Model) beginCheck(n domain.Node, seq int) tea.Cmd {
 			return checkDoneMsg{node: name, err: err, seq: seq}
 		}
 		return checkDoneMsg{node: name, snap: snap, client: client, seq: seq}
-	}
+	})
 }
 
 // handleCheckDone records the probe outcome in the node's record and
@@ -183,11 +184,12 @@ func (m Model) runPreflight() (tea.Model, tea.Cmd) {
 	m.auditBusy = true
 	knownHosts := filepath.Join(m.store.Dir(), "known_hosts.json")
 	name := n.Name
-	return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
+	return m, tea.Batch(m.spinner.Tick, m.netProgressReader(), func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), checkTimeout)
 		defer cancel()
 		if client == nil {
 			c := ssh.New(n, knownHosts)
+			c.WithProgress(m.netSink())
 			if err := c.Dial(ctx); err != nil {
 				return pfDoneMsg{node: name, err: err}
 			}
@@ -303,11 +305,12 @@ func (m Model) runPlan() (tea.Model, tea.Cmd) {
 	name := n.Name
 	snap := m.pfSnap
 	audit := m.pfAudit
-	return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
+	return m, tea.Batch(m.spinner.Tick, m.netProgressReader(), func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), checkTimeout)
 		defer cancel()
 		if client == nil {
 			c := ssh.New(n, knownHosts)
+			c.WithProgress(m.netSink())
 			if err := c.Dial(ctx); err != nil {
 				return planMsg{node: name, err: err}
 			}

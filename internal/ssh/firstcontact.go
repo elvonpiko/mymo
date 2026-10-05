@@ -52,9 +52,12 @@ func isExpiredPassword(err error) bool {
 // FirstContact runs the whole password-to-key onboarding for one
 // node. keyPath is where the dedicated pair lives (the caller
 // passes the store's keys directory); knownHostsPath is the trust
-// store the connection records first contact into. It returns nil
-// only when the key has been proven on a real second connection.
-func FirstContact(ctx context.Context, host string, port int, user, password, keyPath, knownHostsPath string) error {
+// store the connection records first contact into. progress, when
+// not nil, receives the connect retries and the steps between them
+// — the operator sees a booting box as "still trying", never as a
+// hang. It returns nil only when the key has been proven on a real
+// second connection.
+func FirstContact(ctx context.Context, host string, port int, user, password, keyPath, knownHostsPath string, progress func(string)) error {
 	// 1 — the dedicated key, generated locally, reused as-is when
 	// first contact is retried
 	pub, err := GenerateEd25519(keyPath)
@@ -65,11 +68,15 @@ func FirstContact(ctx context.Context, host string, port int, user, password, ke
 	// 2 — the one password-authenticated connection: install the
 	// public half, then the password is never used again
 	install := NewFirstContact(domain.Node{Host: host, Port: port, User: user}, knownHostsPath, password)
+	install.WithProgress(progress)
 	if err := install.Dial(ctx); err != nil {
 		if isExpiredPassword(err) {
 			return fmt.Errorf("%w: ssh in once, change the password, then run first contact again — it is idempotent", ErrPasswordExpired)
 		}
 		return err
+	}
+	if progress != nil {
+		progress("connected to " + host + " — installing the key")
 	}
 	defer install.Close()
 	if err := install.AppendAuthorizedKey(ctx, pub); err != nil {
@@ -83,6 +90,7 @@ func FirstContact(ctx context.Context, host string, port int, user, password, ke
 	// the node now trusts. Nothing is saved until this works.
 	verify := New(domain.Node{Host: host, Port: port, User: user,
 		Auth: domain.AuthKey, KeyPath: keyPath}, knownHostsPath)
+	verify.WithProgress(progress)
 	if err := verify.Dial(ctx); err != nil {
 		return fmt.Errorf("the key was installed but does not authenticate: %w", err)
 	}

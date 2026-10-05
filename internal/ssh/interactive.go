@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	"github.com/elvonpiko/mymo/internal/domain"
 )
@@ -65,6 +66,7 @@ func ExecCommand(node domain.Node, knownHostsPath string, sudo bool, remote ...s
 		"-p", strconv.Itoa(node.Port),
 		"-o", "UserKnownHostsFile=" + knownHostsPath,
 		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "ConnectTimeout=" + strconv.Itoa(int(defaultDialTimeout/time.Second)),
 		"-t", // a shell needs a terminal
 	}
 	if node.Auth == domain.AuthKey {

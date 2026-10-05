@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -96,7 +97,12 @@ type Model struct {
 	applyOpts     apply.Options
 	applyRunner   preflight.Runner                  // nil: the live connection or a fresh dial
 	applyProgress chan string                       // the engine's live progress pump
+	netProgress   chan string                       // the dial's live progress pump
 	newProver     func(keyPath string) apply.Prover // nil: the real second connection
+
+	// firstContactCancel stops an onboarding in flight: esc during
+	// the install cancels the work, not just its ceremony
+	firstContactCancel context.CancelFunc
 
 	// auditBusy is set while the preflight audit or plan generation
 	// runs, even if the user walked away from its loading screen —
@@ -125,16 +131,56 @@ type loadingState struct {
 	start  time.Time
 }
 
+// netProgressMsg carries one line from a dial in flight — a connect
+// retry, or the step it just reached.
+type netProgressMsg struct {
+	line string
+}
+
+// netProgressReader is the dial pump's read end: one line per
+// message, re-issued the way bubbletea's event loop would.
+func (m Model) netProgressReader() tea.Cmd {
+	ch := m.netProgress
+	if ch == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		line, ok := <-ch
+		if !ok {
+			return nil
+		}
+		return netProgressMsg{line: line}
+	}
+}
+
+// netSink is the progress func every dialing ceremony hands the
+// transport. It never blocks: a dial must not wait on the view, and
+// a line that arrives with no reader pumping is dropped, not paid
+// for with a hang.
+func (m Model) netSink() func(string) {
+	ch := m.netProgress
+	return func(line string) {
+		if ch == nil {
+			return
+		}
+		select {
+		case ch <- line:
+		default:
+		}
+	}
+}
+
 // New builds the workspace model from the given store. Loading failures are
 // surfaced inside the UI, not here.
 func New(store *state.Store) Model {
 	m := Model{
-		store:    store,
-		stack:    []screen{{kind: scHome}},
-		help:     help.New(),
-		fullHelp: help.New(),
-		width:    80,
-		height:   24,
+		store:       store,
+		netProgress: make(chan string, 8),
+		stack:       []screen{{kind: scHome}},
+		help:        help.New(),
+		fullHelp:    help.New(),
+		width:       80,
+		height:      24,
 	}
 	m.fullHelp.ShowAll = true
 	if store != nil {
@@ -256,6 +302,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case planMsg:
 		next, cmd := m.handlePlanDone(msg)
 		return withResume(next, cmd)
+
+	case netProgressMsg:
+		// one dial retry line: the loading card's detail is where a
+		// booting or slow box reads as "still trying", never as a hang
+		if m.loading.active && msg.line != "" {
+			m.loading.detail = msg.line
+		}
+		return m, m.netProgressReader()
 
 	case applyProgressMsg:
 		if m.loading.active && m.cur().kind == scNodeApplyReport && msg.line != "" {

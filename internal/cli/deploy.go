@@ -26,8 +26,9 @@ var deployConfirmIn io.Reader = os.Stdin
 // deployDial opens the runner and the context copier for a node; a
 // var so tests drive the whole command hermetically. The close func
 // releases the connection when the deploy is done with it.
-var deployDial = func(ctx context.Context, node domain.Node, store *state.Store) (r deploy.Runner, sudo func(bool) deploy.Copier, closeFn func() error, err error) {
+var deployDial = func(ctx context.Context, node domain.Node, store *state.Store, progress func(string)) (r deploy.Runner, sudo func(bool) deploy.Copier, closeFn func() error, err error) {
 	client := ssh.New(node, knownHostsPath(store))
+	client.WithProgress(progress)
 	if err := client.Dial(ctx); err != nil {
 		return nil, nil, nil, err
 	}
@@ -173,7 +174,7 @@ func runDeploy(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		return exitErr
 	}
 
-	runner, copierFor, closeFn, err := deployDial(ctx, node, store)
+	runner, copierFor, closeFn, err := deployDial(ctx, node, store, dialNarrator(stderr))
 	if err != nil {
 		fmt.Fprintf(stderr, "mymo deploy: %v\n", err)
 		return exitErr

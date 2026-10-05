@@ -71,9 +71,10 @@ type firstContactDoneMsg struct {
 
 // firstContactRun is the injectable first-contact runner; tests
 // drive the workflow without a real node. The default runs the real
-// transport: generate, install, prove.
-var firstContactRun = func(host string, port int, user, password, keyPath, knownHostsPath string) error {
-	return ssh.FirstContact(context.Background(), host, port, user, password, keyPath, knownHostsPath)
+// transport: generate, install, prove. The context is the ceremony's
+// — esc cancels it — and progress lands in the loading card.
+var firstContactRun = func(ctx context.Context, host string, port int, user, password, keyPath, knownHostsPath string, progress func(string)) error {
+	return ssh.FirstContact(ctx, host, port, user, password, keyPath, knownHostsPath, progress)
 }
 
 // startAddNode opens the add-node workflow on top of the navigation
@@ -228,8 +229,13 @@ func (m Model) updateAddReview(str string) (tea.Model, tea.Cmd) {
 				line:   "first contact with " + node.Host,
 				detail: "installing the dedicated key, proving it works",
 				start:  time.Now()}
-			return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
-				err := firstContactRun(node.Host, node.Port, node.User, password, keyPath, knownHostsPathTUI(m.store))
+			// esc cancels this context and stops the work — the
+			// ceremony ends with its operator, not after them
+			ctx, cancel := context.WithCancel(context.Background())
+			m.firstContactCancel = cancel
+			progress := m.netSink()
+			return m, tea.Batch(m.spinner.Tick, m.netProgressReader(), func() tea.Msg {
+				err := firstContactRun(ctx, node.Host, node.Port, node.User, password, keyPath, knownHostsPathTUI(m.store), progress)
 				return firstContactDoneMsg{err: err}
 			})
 		}
@@ -245,7 +251,14 @@ func (m Model) updateAddReview(str string) (tea.Model, tea.Cmd) {
 // is saved and the toast says what changed; on failure nothing is
 // saved and the review screen says exactly what went wrong.
 func (m Model) handleFirstContactDone(msg firstContactDoneMsg) (tea.Model, tea.Cmd) {
+	// a result that lands after esc belongs to a cancelled run: the
+	// review already said cancelled, and a late success must never
+	// save a node its operator walked away from
+	if m.addNode.stage != anInstalling {
+		return m, nil
+	}
 	m.loading = loadingState{}
+	m.firstContactCancel = nil
 	m.addNode.stage = anReview
 	if msg.err != nil {
 		if errors.Is(msg.err, ssh.ErrPasswordExpired) {
@@ -289,9 +302,13 @@ func (m Model) updateInstalling(str string) (tea.Model, tea.Cmd) {
 	case "q":
 		return m, tea.Quit
 	case "esc":
+		if m.firstContactCancel != nil {
+			m.firstContactCancel()
+			m.firstContactCancel = nil
+		}
 		m.loading = loadingState{}
 		m.addNode.stage = anReview
-		m.addNode.err = "first contact cancelled — nothing was changed on the node"
+		m.addNode.err = "first contact cancelled — nothing was saved; retrying is safe, the install is idempotent"
 		return m, nil
 	}
 	return m, nil

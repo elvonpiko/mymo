@@ -28,7 +28,23 @@ import (
 )
 
 const (
-	defaultDialTimeout    = 10 * time.Second
+	defaultDialTimeout = 10 * time.Second
+)
+
+// dialAttempts and dialAttemptPause shape the bounded retry a connect
+// failure earns: a fresh box is often still booting, its sshd not yet
+// listening, and one ten-second try gives up right before the box
+// would have answered. The budget is three tries of ten seconds with
+// a short pause — a blackhole costs half a minute, no more, and a
+// cancel stops the whole ceremony mid-pause. Authentication is never
+// retried: a wrong password is an answer, not a condition, and
+// hammering a box earns fail2ban, not a connection.
+var (
+	dialAttempts     = 3
+	dialAttemptPause = time.Second
+)
+
+const (
 	defaultCommandTimeout = 15 * time.Second
 	// defaultTransferTimeout bounds a context transfer when the
 	// caller sets no deadline; big trees over slow links get slack.
@@ -47,6 +63,11 @@ type Client struct {
 	// persisted record can hold one.
 	password string
 
+	// progress receives one line per connect retry — the ceremonies
+	// surface it so a slow or booting box reads as "still trying",
+	// never as a hang. Nil means silent.
+	progress func(string)
+
 	mu         sync.Mutex
 	conn       *ssh.Client
 	agentConn  net.Conn
@@ -62,6 +83,14 @@ func New(node domain.Node, knownHostsPath string) *Client {
 		knownHosts: knownHostsPath,
 		memoryKeys: make(map[string]string),
 	}
+}
+
+// WithProgress attaches the dial's narrator: one line per connect
+// retry, and the steps first contact reaches. Nil silences it. The
+// client returns for chaining.
+func (c *Client) WithProgress(fn func(string)) *Client {
+	c.progress = fn
+	return c
 }
 
 // NewFirstContact builds the one-shot client that authenticates with
@@ -107,16 +136,48 @@ func (c *Client) Dial(ctx context.Context) error {
 	if c.conn != nil {
 		return nil
 	}
-	if _, ok := ctx.Deadline(); !ok {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, defaultDialTimeout)
-		defer cancel()
-	}
-
 	addr := net.JoinHostPort(c.node.Host, strconv.Itoa(c.node.Port))
-	raw, err := (&net.Dialer{}).DialContext(ctx, "tcp", addr)
+
+	var last error
+	for attempt := 1; attempt <= dialAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			// the caller's own budget or cancel ends the retries
+			return err
+		}
+		if attempt > 1 {
+			if c.progress != nil {
+				c.progress(fmt.Sprintf("still connecting to %s — try %d of %d (%s)",
+					addr, attempt, dialAttempts, retryCause(last)))
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(dialAttemptPause):
+			}
+		}
+		last = c.dialOnce(ctx, addr)
+		if last == nil {
+			return nil
+		}
+		if !errors.Is(last, ErrUnreachable) {
+			// authentication refused, the host key changed, or the
+			// caller's context ended: none of these is "try again"
+			return last
+		}
+	}
+	return &connectError{detail: connectDetail(last) +
+		fmt.Sprintf(" — tried %d times, the box may still be booting or the address is wrong", dialAttempts)}
+}
+
+// dialOnce makes one full attempt — TCP and SSH handshake — under a
+// per-try budget; a caller's earlier deadline still bounds it.
+func (c *Client) dialOnce(ctx context.Context, addr string) error {
+	tryCtx, cancel := context.WithTimeout(ctx, defaultDialTimeout)
+	defer cancel()
+
+	raw, err := (&net.Dialer{}).DialContext(tryCtx, "tcp", addr)
 	if err != nil {
-		return fmt.Errorf("%w: %s: %v", ErrUnreachable, addr, err)
+		return &connectError{detail: addr + ": " + err.Error()}
 	}
 
 	cfg := &ssh.ClientConfig{
@@ -130,7 +191,7 @@ func (c *Client) Dial(ctx context.Context) error {
 	}
 	cfg.Auth = methods
 
-	if deadline, ok := ctx.Deadline(); ok {
+	if deadline, ok := tryCtx.Deadline(); ok {
 		_ = raw.SetDeadline(deadline)
 	}
 	conn, chans, reqs, err := ssh.NewClientConn(raw, addr, cfg)
@@ -147,6 +208,28 @@ func (c *Client) Dial(ctx context.Context) error {
 	c.agentConn = agentConn
 	return nil
 }
+
+// connectDetail keeps the transport's own words — i/o timeout,
+// connection refused — in the final report, minus mymo's wrappers.
+func connectDetail(err error) string {
+	var un *connectError
+	if errors.As(err, &un) {
+		return un.detail
+	}
+	return err.Error()
+}
+
+// connectError is the unreachable wrapper: mymo's sentinel in the
+// chain, the transport's words kept for the report.
+type connectError struct {
+	detail string
+}
+
+func (e *connectError) Error() string {
+	return ErrUnreachable.Error() + ": " + e.detail
+}
+
+func (e *connectError) Unwrap() error { return ErrUnreachable }
 
 // lockedWriter is the target for a session's combined output. x/crypto
 // copies stdout and stderr from two concurrent goroutines, so the shared
@@ -413,6 +496,22 @@ func writeKnownHosts(path string, doc map[string]string) error {
 	return os.Rename(tmp.Name(), path)
 }
 
+// retryCause names a failed try in a few honest words for the
+// loading card; the full detail stays in the final error.
+func retryCause(err error) string {
+	detail := strings.ToLower(connectDetail(err))
+	causes := []string{
+		"i/o timeout", "connection refused", "no route",
+		"connection reset", "eof",
+	}
+	for _, c := range causes {
+		if strings.Contains(detail, c) {
+			return c
+		}
+	}
+	return "no answer"
+}
+
 // classify turns x/crypto handshake errors into mymo's structured
 // errors while keeping the detail in the message.
 func classify(err error, addr string) error {
@@ -428,7 +527,7 @@ func classify(err error, addr string) error {
 		strings.Contains(msg, "no route"),
 		strings.Contains(msg, "connection reset"),
 		strings.Contains(msg, "EOF"):
-		return fmt.Errorf("%w: %s: %v", ErrUnreachable, addr, err)
+		return &connectError{detail: addr + ": " + err.Error()}
 	default:
 		return fmt.Errorf("ssh: %s: %v", addr, err)
 	}

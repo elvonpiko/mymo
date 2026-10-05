@@ -158,6 +158,7 @@ func (m Model) runApply() (tea.Model, tea.Cmd) {
 			return applyDoneMsg{node: name, res: res}
 		}
 		c := ssh.New(node, filepath.Join(store.Dir(), "known_hosts.json"))
+		c.WithProgress(m.netSink())
 		if err := c.Dial(ctx); err != nil {
 			close(progress)
 			return applyDoneMsg{node: name, err: err}
@@ -166,7 +167,7 @@ func (m Model) runApply() (tea.Model, tea.Cmd) {
 		res := apply.Apply(ctx, c, steps, opts)
 		close(progress)
 		return applyDoneMsg{node: name, res: res}
-	}, m.applyProgressReader())
+	}, m.applyProgressReader(), m.netProgressReader())
 }
 
 // applyProgressReader is the pump's read end: one line per message,

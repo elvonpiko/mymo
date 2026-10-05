@@ -145,7 +145,7 @@ func TestDeployWantsTheExactName(t *testing.T) {
 	writeProject(t, imageManifest)
 
 	deployConfirmIn = strings.NewReader("api2\n")
-	deployDial = func(ctx context.Context, node domain.Node, store *state.Store) (deploy.Runner, func(bool) deploy.Copier, func() error, error) {
+	deployDial = func(ctx context.Context, node domain.Node, store *state.Store, progress func(string)) (deploy.Runner, func(bool) deploy.Copier, func() error, error) {
 		t.Fatal("the gate refused, yet the deploy dialed")
 		return nil, nil, nil, nil
 	}
@@ -175,7 +175,7 @@ func TestDeployRecordsTheRelease(t *testing.T) {
 	r := happyNodeRunner()
 	happyHealth(r, "mymo-api-r1")
 	deployConfirmIn = strings.NewReader("api\n")
-	deployDial = func(ctx context.Context, node domain.Node, store *state.Store) (deploy.Runner, func(bool) deploy.Copier, func() error, error) {
+	deployDial = func(ctx context.Context, node domain.Node, store *state.Store, progress func(string)) (deploy.Runner, func(bool) deploy.Copier, func() error, error) {
 		return r, func(bool) deploy.Copier { return nil }, func() error { return nil }, nil
 	}
 	t.Cleanup(func() {
@@ -227,7 +227,7 @@ func TestDeployFailureIsHistoryToo(t *testing.T) {
 	r := happyNodeRunner()
 	r.codes["sudo -n docker pull ghcr.io/x/api:1.2.3"] = 1
 	deployConfirmIn = strings.NewReader("api\n")
-	deployDial = func(ctx context.Context, node domain.Node, store *state.Store) (deploy.Runner, func(bool) deploy.Copier, func() error, error) {
+	deployDial = func(ctx context.Context, node domain.Node, store *state.Store, progress func(string)) (deploy.Runner, func(bool) deploy.Copier, func() error, error) {
 		return r, func(bool) deploy.Copier { return nil }, func() error { return nil }, nil
 	}
 	t.Cleanup(func() {
@@ -273,7 +273,7 @@ func TestRollbackRestoresThePreviousRelease(t *testing.T) {
 	happyHealth(r, "mymo-api-r1")
 	happyHealth(r, "mymo-api-r2")
 	deployConfirmIn = strings.NewReader("api\n")
-	opsDial = func(ctx context.Context, node domain.Node, store *state.Store) (deploy.Runner, func() error, error) {
+	opsDial = func(ctx context.Context, node domain.Node, store *state.Store, progress func(string)) (deploy.Runner, func() error, error) {
 		return r, func() error { return nil }, nil
 	}
 	t.Cleanup(func() {
@@ -313,7 +313,7 @@ func TestRollbackAbortsOnTheWrongName(t *testing.T) {
 	}
 
 	deployConfirmIn = strings.NewReader("nope\n")
-	opsDial = func(ctx context.Context, node domain.Node, store *state.Store) (deploy.Runner, func() error, error) {
+	opsDial = func(ctx context.Context, node domain.Node, store *state.Store, progress func(string)) (deploy.Runner, func() error, error) {
 		t.Fatal("the gate refused, yet the rollback dialed")
 		return nil, nil, nil
 	}
@@ -346,7 +346,7 @@ func TestAppLifecycleRestartsTheActiveRelease(t *testing.T) {
 	}
 
 	r := happyNodeRunner()
-	opsDial = func(ctx context.Context, node domain.Node, store *state.Store) (deploy.Runner, func() error, error) {
+	opsDial = func(ctx context.Context, node domain.Node, store *state.Store, progress func(string)) (deploy.Runner, func() error, error) {
 		return r, func() error { return nil }, nil
 	}
 	t.Cleanup(func() { opsDial = defaultOpsDial })
@@ -376,7 +376,7 @@ func TestAppLogsAndStatusSeeTheTruth(t *testing.T) {
 	r := happyNodeRunner()
 	happyHealth(r, "mymo-api-r2")
 	r.responses["sudo -n docker logs --tail 100 mymo-api-r2"] = "listening on 8080\n"
-	opsDial = func(ctx context.Context, node domain.Node, store *state.Store) (deploy.Runner, func() error, error) {
+	opsDial = func(ctx context.Context, node domain.Node, store *state.Store, progress func(string)) (deploy.Runner, func() error, error) {
 		return r, func() error { return nil }, nil
 	}
 	t.Cleanup(func() { opsDial = defaultOpsDial })

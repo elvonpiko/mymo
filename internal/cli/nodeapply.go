@@ -63,6 +63,7 @@ func runNodeApply(ctx context.Context, args []string, stdout, stderr io.Writer) 
 
 	fmt.Fprintf(stderr, "applying %s against baseline %s...\n", node.Name, baseline.Version)
 	client := ssh.New(node, knownHostsPath(store))
+	client.WithProgress(dialNarrator(stderr))
 	if err := client.Dial(ctx); err != nil {
 		recordFailedCheck(store, node, err)
 		fmt.Fprintf(stderr, "mymo node apply: %v\n", err)

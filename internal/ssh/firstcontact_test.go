@@ -77,7 +77,7 @@ func TestFirstContactEndToEnd(t *testing.T) {
 	keyPath := filepath.Join(t.TempDir(), "web-1.key")
 	knownHosts := filepath.Join(t.TempDir(), "known_hosts.json")
 
-	if err := FirstContact(context.Background(), host, port, "root", password, keyPath, knownHosts); err != nil {
+	if err := FirstContact(context.Background(), host, port, "root", password, keyPath, knownHosts, nil); err != nil {
 		t.Fatalf("FirstContact() = %v, want nil", err)
 	}
 	box.mu.Lock()
@@ -97,7 +97,7 @@ func TestFirstContactEndToEnd(t *testing.T) {
 
 	// a retry is idempotent: grep answers "present", the append
 	// never runs, and the flow still ends proven
-	if err := FirstContact(context.Background(), host, port, "root", password, keyPath, knownHosts); err != nil {
+	if err := FirstContact(context.Background(), host, port, "root", password, keyPath, knownHosts, nil); err != nil {
 		t.Fatalf("retry FirstContact() = %v, want nil", err)
 	}
 	box.mu.Lock()
@@ -117,7 +117,7 @@ func TestFirstContactExpiredPasswordNamesTheCondition(t *testing.T) {
 	host, port := hostPort(t, srv.Addr())
 
 	err := FirstContact(context.Background(), host, port, "ubuntu", "provider-mailed-this",
-		filepath.Join(t.TempDir(), "web-1.key"), filepath.Join(t.TempDir(), "known_hosts.json"))
+		filepath.Join(t.TempDir(), "web-1.key"), filepath.Join(t.TempDir(), "known_hosts.json"), nil)
 	if !errors.Is(err, ErrPasswordExpired) {
 		t.Fatalf("err = %v, want ErrPasswordExpired", err)
 	}
@@ -143,7 +143,7 @@ func TestFirstContactWrongPasswordIsRefused(t *testing.T) {
 	host, port := hostPort(t, srv.Addr())
 
 	err := FirstContact(context.Background(), host, port, "root", "wrong",
-		filepath.Join(t.TempDir(), "web-1.key"), filepath.Join(t.TempDir(), "known_hosts.json"))
+		filepath.Join(t.TempDir(), "web-1.key"), filepath.Join(t.TempDir(), "known_hosts.json"), nil)
 	if err == nil {
 		t.Fatal("wrong password must fail first contact")
 	}
@@ -166,7 +166,7 @@ func TestFirstContactWrongLoginUserIsRefused(t *testing.T) {
 	host, port := hostPort(t, srv.Addr())
 
 	err := FirstContact(context.Background(), host, port, "root", password,
-		filepath.Join(t.TempDir(), "web-1.key"), filepath.Join(t.TempDir(), "known_hosts.json"))
+		filepath.Join(t.TempDir(), "web-1.key"), filepath.Join(t.TempDir(), "known_hosts.json"), nil)
 	if err == nil || !strings.Contains(err.Error(), "not \"root\"") {
 		t.Fatalf("whoami mismatch must refuse with the reason: %v", err)
 	}
