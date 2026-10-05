@@ -224,9 +224,14 @@ func writeFile(ctx context.Context, r preflight.Runner, f plan.File, o Options) 
 	// the comparison is exact bytes: cat returns the file as it is,
 	// and "already in place" must mean precisely that
 	content := expand(f.Content, o)
-	current, _, err := runArgv(ctx, r, o.wrap("cat", f.Path))
-	if err != nil {
-		current = "" // unreadable: the write below is the source of truth
+	// presence is the exit code's to say, not the output's: a failed
+	// cat folds its "No such file or directory" into the stream, and
+	// the first write on a fresh node must never mistake that for
+	// present-but-different content — it would try to back up a file
+	// that does not exist and fail the whole apply
+	current, catCode, _ := runArgv(ctx, r, o.wrap("cat", f.Path))
+	if catCode != 0 {
+		current = "" // absent or unreadable: the write below is the source of truth
 	}
 	if current == content {
 		o.report("kept · " + f.Path + " already holds the intended content")

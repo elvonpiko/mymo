@@ -26,6 +26,9 @@ type fakeRunner struct {
 	codes     map[string]int
 	calls     [][]string
 	files     map[string]string
+	// catErrors answers a cat of a missing file the way the real
+	// transport does: the complaint folded into the output, exit 1
+	catErrors map[string]string
 }
 
 func (f *fakeRunner) Run(_ context.Context, name string, args ...string) (string, int, error) {
@@ -49,9 +52,14 @@ func (f *fakeRunner) Run(_ context.Context, name string, args ...string) (string
 		return "", 0, nil
 	}
 
-	if name == "cat" && f.files != nil {
-		if content, ok := f.files[strings.Join(args, " ")]; ok {
-			return content, 0, nil
+	if name == "cat" {
+		if f.files != nil {
+			if content, ok := f.files[strings.Join(args, " ")]; ok {
+				return content, 0, nil
+			}
+		}
+		if miss, ok := f.catErrors[strings.Join(args, " ")]; ok {
+			return miss, 1, nil
 		}
 	}
 	if out, ok := f.responses[key]; ok {
@@ -408,6 +416,39 @@ func TestSecondDeployRetiresKeepsAndEventuallyPrunes(t *testing.T) {
 	}
 	if act, _ := res2.App.ActiveRelease(); act.ID != 3 {
 		t.Errorf("active = %+v, want r3", act)
+	}
+}
+
+// TestFirstDeployWithNoCaddyfile reproduces the fresh-box shape: the
+// Caddyfile read fails and the complaint folds into the output with
+// exit 1. That text must never land inside the serving config.
+func TestFirstDeployWithNoCaddyfile(t *testing.T) {
+	app := imageApp()
+	r := nodeRunner()
+	r.catErrors = map[string]string{
+		"/etc/caddy/Caddyfile": "cat: /etc/caddy/Caddyfile: No such file or directory",
+	}
+	firstDeployHealth(r, "mymo-api-r1")
+
+	res := Deploy(context.Background(), r, app, goodOpts())
+	if !res.OK {
+		t.Fatalf("deploy failed at %s:\n%s", res.FailedAt, r.callList())
+	}
+	var caddyfile string
+	found := false
+	for _, w := range r.writtenContents() {
+		if strings.Contains(w, "import mymo/*.caddy") {
+			caddyfile, found = w, true
+		}
+	}
+	if !found {
+		t.Fatal("the Caddyfile was never wired")
+	}
+	if strings.Contains(caddyfile, "cat:") {
+		t.Errorf("cat's complaint became the serving config:\n%s", caddyfile)
+	}
+	if !strings.HasPrefix(caddyfile, "import mymo/*.caddy") {
+		t.Errorf("the Caddyfile should be only the import for a fresh box:\n%s", caddyfile)
 	}
 }
 

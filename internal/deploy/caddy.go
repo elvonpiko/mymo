@@ -75,7 +75,13 @@ func activateRoute(ctx context.Context, r Runner, o Options, app domainApp, cont
 // ensureImport wires mymo's route directory into the Caddyfile
 // exactly once, with a backup of the original beside it.
 func ensureImport(ctx context.Context, r Runner, o Options) error {
-	current, _, _ := runW(ctx, r, o, "cat", caddyFile)
+	// the exit code — not the output — says the Caddyfile is there:
+	// a failed cat folds its error into the stream, and writing that
+	// back would put cat's complaint inside the serving config
+	current, catCode, _ := runW(ctx, r, o, "cat", caddyFile)
+	if catCode != 0 {
+		current = ""
+	}
 	if strings.Contains(current, importLine) {
 		return nil
 	}

@@ -124,6 +124,31 @@ func TestApplyRunsEveryStepInOrder(t *testing.T) {
 	}
 }
 
+// TestApplyFirstWriteOnAFreshNode reproduces the real fresh-box shape
+// mymo met in the wild: cat reports the missing file on stderr —
+// which the transport captures into the output — and exits 1. The
+// first apply must write the file, not try to back up what is not
+// there.
+func TestApplyFirstWriteOnAFreshNode(t *testing.T) {
+	r := &fakeRunner{respond: func(argv []string) (string, int, error) {
+		if strings.Join(argv, " ") == "cat /etc/sudoers.d/mymo" {
+			return "cat: /etc/sudoers.d/mymo: No such file or directory", 1, nil
+		}
+		return "", 0, nil
+	}}
+	res := Apply(context.Background(), r, testSteps(), testOptions(r, &fakeProver{r: r}))
+	if res.Failed {
+		t.Fatalf("first write on a fresh node failed: %+v", res)
+	}
+	flat := strings.Join(r.flat(), "\n")
+	if strings.Contains(flat, "cp /etc/sudoers.d/mymo") {
+		t.Errorf("a file that does not exist must never be backed up:\n%s", flat)
+	}
+	if !strings.Contains(flat, "mv /etc/sudoers.d/mymo.mymo-new /etc/sudoers.d/mymo") {
+		t.Errorf("the sudoers file was never written:\n%s", flat)
+	}
+}
+
 func TestApplyStopsAtFirstFailure(t *testing.T) {
 	r := &fakeRunner{respond: func(argv []string) (string, int, error) {
 		if argv[0] == "apt-get" {
