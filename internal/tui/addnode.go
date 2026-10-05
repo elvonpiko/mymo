@@ -248,7 +248,13 @@ func (m Model) handleFirstContactDone(msg firstContactDoneMsg) (tea.Model, tea.C
 	m.loading = loadingState{}
 	m.addNode.stage = anReview
 	if msg.err != nil {
-		m.addNode.err = msg.err.Error()
+		if errors.Is(msg.err, ssh.ErrPasswordExpired) {
+			// the forced reset is the box's condition, not a failure
+			// report: the move is one line and stays the operator's
+			m.addNode.err = "password change forced: ssh in once, change it, then run first contact again"
+		} else {
+			m.addNode.err = msg.err.Error()
+		}
 		return m, nil
 	}
 	// the password served its one connection; the values the form
@@ -329,15 +335,12 @@ func (m Model) addReviewView() string {
 	n := m.addNode.node
 	inner := titleStyle.Render("Review new node") + "\n\n"
 	if m.addNode.firstContact {
-		// plain fact rows, not the mini-card: this page must stay
-		// under the floor's 19 rows even with the error visible —
-		// Place clips the bottom of anything taller
-		for _, f := range [][2]string{
-			{"name", n.Name}, {"host", n.Host},
-			{"port", fmt.Sprint(n.Port)}, {"user", n.User},
-		} {
-			inner += factsLabelStyle.Width(10).Render(f[0]) + textStyle.Render(f[1]) + "\n"
-		}
+		// one identity line, not a fact table: the floor reserves 19
+		// rows for this page, and the failure note — which can wrap —
+		// must stay visible at the bottom
+		inner += textStyle.Render(n.Name) + faintStyle.Render(" · ") +
+			textStyle.Render(n.Host+":"+fmt.Sprint(n.Port)) + faintStyle.Render(" · ") +
+			textStyle.Render(n.User) + "\n"
 		inner += faintStyle.Render("first contact — in this order:") + "\n" +
 			"  1. generate a dedicated key beside your local state\n" +
 			"  2. connect once with the password\n" +
@@ -357,7 +360,10 @@ func (m Model) addReviewView() string {
 			accentStyle.Render("[esc]") + textStyle.Render(" cancel")
 	}
 	if m.addNode.err != "" {
-		inner += "\n\n" + errStyle.Render(m.addNode.err)
+		inner += "\n\n"
+		for _, l := range wrapDetail(m.addNode.err, m.stageW-8) {
+			inner += errStyle.Render(l) + "\n"
+		}
 	}
 	return lipgloss.Place(m.contentWidth, m.contentHeight,
 		lipgloss.Center, lipgloss.Center, cardStyle.Render(inner))

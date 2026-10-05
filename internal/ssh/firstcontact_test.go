@@ -107,6 +107,36 @@ func TestFirstContactEndToEnd(t *testing.T) {
 	box.mu.Unlock()
 }
 
+// TestFirstContactExpiredPasswordNamesTheCondition reproduces the
+// real fresh-thing the user met: Ubuntu's forced reset answers the
+// first command with its banner and a refusal, and mymo must name
+// the condition instead of reporting a nameless exit 1.
+func TestFirstContactExpiredPasswordNamesTheCondition(t *testing.T) {
+	box := &expiredBox{}
+	srv := sshtest.NewPasswordServer(t, box.handler, "provider-mailed-this")
+	host, port := hostPort(t, srv.Addr())
+
+	err := FirstContact(context.Background(), host, port, "ubuntu", "provider-mailed-this",
+		filepath.Join(t.TempDir(), "web-1.key"), filepath.Join(t.TempDir(), "known_hosts.json"))
+	if !errors.Is(err, ErrPasswordExpired) {
+		t.Fatalf("err = %v, want ErrPasswordExpired", err)
+	}
+	if !strings.Contains(err.Error(), "idempotent") {
+		t.Errorf("the refusal must teach the retry move: %v", err)
+	}
+}
+
+// expiredBox answers every command the way a forced-reset account
+// does: the MOTD banner and a dead exit code.
+type expiredBox struct{}
+
+func (b *expiredBox) handler(cmd string) (string, int) {
+	if strings.Contains(cmd, "authorized_keys") {
+		return "WARNING: Your password has expired.\nYou must change your password now and login again!", 1
+	}
+	return "You are required to change your password immediately (administrator enforced).", 1
+}
+
 func TestFirstContactWrongPasswordIsRefused(t *testing.T) {
 	box := &fakeBox{whoamiAs: "root"}
 	srv := sshtest.NewPasswordServer(t, box.handler, "right")

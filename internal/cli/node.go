@@ -322,6 +322,13 @@ func runNodeAdd(args []string, stdout, stderr io.Writer) int {
 		keyPath := ssh.FirstContactKeyPath(store.Dir(), in.name)
 		fmt.Fprintf(stderr, "first contact with %s@%s — installing the key, proving it works…\n", in.user, in.host)
 		if err := cliFirstContact(context.Background(), in.host, in.port, in.user, password, keyPath, knownHostsPath(store)); err != nil {
+			if errors.Is(err, ssh.ErrPasswordExpired) {
+				fmt.Fprintln(stderr, "mymo node add: the box demands a password change before the key can be installed.")
+				fmt.Fprintln(stderr, "Ubuntu providers force a reset on first login. Change it once by hand:")
+				fmt.Fprintf(stderr, "  ssh %s@%s\n", in.user, in.host)
+				fmt.Fprintln(stderr, "then run the same mymo command again — first contact is idempotent.")
+				return exitErr
+			}
 			fmt.Fprintf(stderr, "mymo node add: first contact failed, nothing was saved: %v\n", err)
 			return exitErr
 		}

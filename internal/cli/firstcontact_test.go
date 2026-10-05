@@ -100,6 +100,39 @@ func TestNodeAddPasswordFailureSavesNothing(t *testing.T) {
 	assertNoPasswordOnDisk(t, "wrong")
 }
 
+// TestNodeAddPasswordExpiredGuidesTheReset proves the CLI turns the
+// forced reset into the operator's exact next move — no nameless
+// exit 1.
+func TestNodeAddPasswordExpiredGuidesTheReset(t *testing.T) {
+	s := newSession(t)
+
+	origRun, origIn := cliFirstContact, nodePasswordIn
+	t.Cleanup(func() { cliFirstContact, nodePasswordIn = origRun, origIn })
+	cliFirstContact = func(context.Context, string, int, string, string, string, string) error {
+		return ssh.ErrPasswordExpired
+	}
+	nodePasswordIn = strings.NewReader("provider-secret\n")
+
+	code, _, errOut := s.run(t, "node", "add",
+		"-name", "web-1", "-host", "203.0.113.10", "-user", "ubuntu", "-auth", "password")
+	if code != exitErr {
+		t.Fatalf("exit = %d, want exitErr", code)
+	}
+	for _, want := range []string{
+		"demands a password change",
+		"ssh ubuntu@203.0.113.10",
+		"idempotent",
+	} {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("stderr missing %q:\n%s", want, errOut)
+		}
+	}
+	if _, err := state.Open(); err != nil {
+		t.Fatal(err)
+	}
+	assertNoPasswordOnDisk(t, "provider-secret")
+}
+
 // assertNoPasswordOnDisk greps the state directory for the secret:
 // the honest promise is that it exists nowhere persistent.
 func assertNoPasswordOnDisk(t *testing.T, secret string) {

@@ -10,12 +10,44 @@ package ssh
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
 
 	"github.com/elvonpiko/mymo/internal/domain"
 )
+
+// ErrPasswordExpired reports the box's forced password reset: fresh
+// provider images demand a change before any command runs, and first
+// contact cannot install the key until the operator has made it. The
+// move stays theirs — mymo never rotates a credential it does not
+// own; it says the condition plainly instead of spewing the box's
+// refusal as a nameless exit 1.
+var ErrPasswordExpired = errors.New("the node demands a password change before first contact")
+
+// expiredSignatures are what sshd and its MOTD print when the
+// account is in the forced-reset state.
+var expiredSignatures = []string{
+	"password has expired",
+	"required to change your password",
+	"must change your password",
+}
+
+// isExpiredPassword tells a forced reset from an ordinary failure by
+// the box's own words.
+func isExpiredPassword(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, sig := range expiredSignatures {
+		if strings.Contains(msg, sig) {
+			return true
+		}
+	}
+	return false
+}
 
 // FirstContact runs the whole password-to-key onboarding for one
 // node. keyPath is where the dedicated pair lives (the caller
@@ -34,10 +66,16 @@ func FirstContact(ctx context.Context, host string, port int, user, password, ke
 	// public half, then the password is never used again
 	install := NewFirstContact(domain.Node{Host: host, Port: port, User: user}, knownHostsPath, password)
 	if err := install.Dial(ctx); err != nil {
+		if isExpiredPassword(err) {
+			return fmt.Errorf("%w: ssh in once, change the password, then run first contact again — it is idempotent", ErrPasswordExpired)
+		}
 		return err
 	}
 	defer install.Close()
 	if err := install.AppendAuthorizedKey(ctx, pub); err != nil {
+		if isExpiredPassword(err) {
+			return fmt.Errorf("%w: ssh in once, change the password, then run first contact again — it is idempotent", ErrPasswordExpired)
+		}
 		return err
 	}
 

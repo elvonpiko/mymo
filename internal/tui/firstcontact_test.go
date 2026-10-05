@@ -125,6 +125,35 @@ func TestFirstContactFailureShowsTheErrorAndSavesNothing(t *testing.T) {
 	}
 }
 
+// TestFirstContactExpiredPasswordSaysTheMove proves the review names
+// the forced reset as the box's condition with the operator's next
+// step — a one-line move, no nameless failure.
+func TestFirstContactExpiredPasswordSaysTheMove(t *testing.T) {
+	orig := firstContactRun
+	t.Cleanup(func() { firstContactRun = orig })
+	firstContactRun = func(string, int, string, string, string, string) error {
+		return ssh.ErrPasswordExpired
+	}
+
+	m, s := firstContactModel(t)
+	next, cmd := m.updateAddReview("c")
+	m = settleConfirm(t, next.(Model), cmd)
+
+	if _, err := s.GetNode("web-1"); err == nil {
+		t.Fatal("an expired password must not save the node")
+	}
+	if m.addNode.stage != anReview {
+		t.Fatalf("stage = %v, want anReview", m.addNode.stage)
+	}
+	if !strings.Contains(m.addNode.err, "password change forced") {
+		t.Fatalf("the review must name the move: %q", m.addNode.err)
+	}
+	got := view(m)
+	if !strings.Contains(got, "ssh in once, change it") {
+		t.Fatalf("the move is not rendered:\n%s", got)
+	}
+}
+
 func TestFirstContactEscDuringInstallCancels(t *testing.T) {
 	m, s := firstContactModel(t)
 	next, _ := m.updateAddReview("c")
