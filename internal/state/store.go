@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/elvonpiko/mymo/internal/domain"
 )
@@ -154,6 +155,39 @@ func (s *Store) UpdateNode(n domain.Node) error {
 		}
 	}
 	return fmt.Errorf("%w: %s", ErrNodeNotFound, n.Name)
+}
+
+// ErrNodeHasApps refuses a removal that would orphan application
+// records: their release history should not vanish as a side
+// effect of removing the node it ran on.
+var ErrNodeHasApps = errors.New("node still has mymo applications")
+
+// RemoveNode is the whole of mymo's side of removal: the node's
+// record, its dedicated key pair, and nothing else — the box keeps
+// everything mymo built there, running and untouched. Refused while
+// applications still reference the node; apps are removed one by
+// one, each as deliberate as this.
+func (s *Store) RemoveNode(name string) error {
+	apps, err := s.LoadApps()
+	if err != nil {
+		return err
+	}
+	var names []string
+	for _, a := range apps {
+		if a.Node == name {
+			names = append(names, a.Name)
+		}
+	}
+	if len(names) > 0 {
+		return fmt.Errorf("%w (%s) — remove them first", ErrNodeHasApps, strings.Join(names, ", "))
+	}
+	keyPath := filepath.Join(s.dir, "keys", name+".key")
+	for _, p := range []string{keyPath, keyPath + ".pub"} {
+		if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return s.DeleteNode(name)
 }
 
 // DeleteNode removes the node's record from local state. The server itself

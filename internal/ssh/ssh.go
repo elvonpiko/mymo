@@ -496,6 +496,27 @@ func writeKnownHosts(path string, doc map[string]string) error {
 	return os.Rename(tmp.Name(), path)
 }
 
+// ForgetHostKey removes one host's trust entry — what a removed
+// node leaves behind. Forgetting is mymo's side of removal: a
+// re-imaged box answers with a different key, and a node mymo no
+// longer knows must be met as a first contact, not refused as an
+// imposter. Missing path or entry is already forgotten.
+func ForgetHostKey(path, host string, port int) error {
+	if path == "" {
+		return nil
+	}
+	hostname := net.JoinHostPort(host, strconv.Itoa(port))
+	doc, err := readKnownHosts(path)
+	if err != nil {
+		return err
+	}
+	if _, known := doc[hostname]; !known {
+		return nil
+	}
+	delete(doc, hostname)
+	return writeKnownHosts(path, doc)
+}
+
 // retryCause names a failed try in a few honest words for the
 // loading card; the full detail stays in the final error.
 func retryCause(err error) string {
