@@ -164,34 +164,36 @@ func TestApplyWantsTheExactName(t *testing.T) {
 	runner := &cannedApplyRunner{}
 	m := atPlanScreen(t, runner, fakeTUIProver{})
 
-	m = press(t, m, "a")
-	if m.cur().kind != scNodeApplyConfirm {
-		t.Fatalf("a did not open the confirmation: %v", m.cur().kind)
+	// the plan page is the confirmation: the steps, the guard, and
+	// the typed name on one card
+	if m.cur().kind != scNodePlan {
+		t.Fatalf("not on the plan page: %v", m.cur().kind)
 	}
 	out := view(m)
-	for _, want := range []string{"Apply the plan", "type web-1 to apply", "gate"} {
+	for _, want := range []string{"Initial setup", "type web-1 in full to apply",
+		"a second connection with the new mymo key"} {
 		if !strings.Contains(ansiStrip(out), want) {
-			t.Errorf("confirm view missing %q:\n%s", want, out)
+			t.Errorf("plan view missing %q:\n%s", want, out)
 		}
 	}
 
 	// a near-miss is refused, loudly
 	m = press(t, m, "w", "e", "b", "enter")
-	if m.cur().kind != scNodeApplyConfirm {
-		t.Fatalf("a wrong name left the confirmation screen: %v", m.cur().kind)
+	if m.cur().kind != scNodePlan {
+		t.Fatalf("a wrong name left the plan page: %v", m.cur().kind)
 	}
 	if m.toast == nil || !strings.Contains(m.toast.text, "does not match") {
 		t.Fatal("the wrong name did not toast")
 	}
 
-	// esc cancels without a trace
-	m = press(t, m, "esc")
-	if m.cur().kind != scNodePlan {
-		t.Fatalf("esc did not cancel back to the plan: %v", m.cur().kind)
+	// esc goes back to the check page without a trace
+	mEsc := atPlanScreen(t, runner, fakeTUIProver{})
+	mEsc = press(t, mEsc, "esc")
+	if mEsc.cur().kind != scNodePreflight {
+		t.Fatalf("esc did not go back to the check: %v", mEsc.cur().kind)
 	}
 
 	// the exact name proceeds: confirmed, then applying
-	m = press(t, m, "a")
 	m = press(t, m, "w", "e", "b", "-", "1", "enter")
 	if m.cur().kind != scNodeApplyReport {
 		t.Fatalf("the matching name did not start the apply: %v", m.cur().kind)
@@ -216,7 +218,6 @@ func TestApplyFailureStopsAndReportsWhere(t *testing.T) {
 	runner := &cannedApplyRunner{failCmd: "visudo"}
 	m := atPlanScreen(t, runner, fakeTUIProver{})
 
-	m = press(t, m, "a")
 	m = press(t, m, "w", "e", "b", "-", "1")
 	m, msgs := drive(t, m, keyMsg("enter"))
 	m = drain(t, m, msgs)
@@ -260,7 +261,6 @@ func TestApplyVerifiesAndReachesReady(t *testing.T) {
 	runner := &cannedApplyRunner{}
 	m := atPlanScreen(t, runner, fakeTUIProver{})
 
-	m = press(t, m, "a")
 	m = press(t, m, "w", "e", "b", "-", "1")
 	m, msgs := drive(t, m, keyMsg("enter"))
 	// success flows straight into verify; the drain follows it
@@ -270,7 +270,7 @@ func TestApplyVerifiesAndReachesReady(t *testing.T) {
 	}
 	out := ansiStrip(view(m))
 	for _, want := range []string{
-		"DONE", "PROVEN", "the mymo key was proven",
+		"DONE",
 		"sshd posture", "applied and verified",
 		"mymo node promote web-1",
 	} {

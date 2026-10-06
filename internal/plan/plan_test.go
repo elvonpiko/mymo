@@ -272,7 +272,7 @@ func TestGenerateRootOperatorWarnsAndCarvesOnlyMymo(t *testing.T) {
 			ssh = s
 		}
 	}
-	if !strings.Contains(ssh.Detail, "disable root ssh") {
+	if !strings.Contains(ssh.Detail, "no root ssh") {
 		t.Errorf("root lockout not stated: %q", ssh.Detail)
 	}
 	if !strings.Contains(ssh.Files[0].Content, "Match User mymo\n") {

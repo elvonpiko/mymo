@@ -146,13 +146,13 @@ func Apply(ctx context.Context, r preflight.Runner, steps []plan.Step, o Options
 			if err != nil {
 				return fail(i, s.Control, s.Title, err.Error())
 			}
-			o.report("gate · proving the mymo key on a second connection")
+			o.report("proving the mymo key on a second connection — your current access is untouched")
 			if err := o.Prover.ProveMymoKey(ctx); err != nil {
 				return fail(i, s.Control, s.Title,
 					"the gate refused — "+err.Error()+"; sshd was not reloaded and the operator's current access is untouched")
 			}
 			res.GateProven = true
-			o.report("gate · the new path is proven")
+			o.report("the new key is proven — sshd reloads next")
 			exec = exec[len(exec)-1:]
 		}
 

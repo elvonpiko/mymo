@@ -52,11 +52,11 @@ func TestPreflightFromObservePage(t *testing.T) {
 	}
 	out := view(m)
 	for _, want := range []string{
-		"Preflight", "baseline 0.1", "read-only audit",
+		"Initial setup", "the check", "read-only",
 		"platform", "Ubuntu 24.04.5 LTS", "privilege",
 		"passwordless sudo as root", "free for Caddy",
-		"verdict: ok", "the path is clear",
-		"nothing on the node has changed",
+		"everything mymo needs is already here",
+		"enter to see the plan",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("preflight view missing %q\n%s", want, out)
@@ -96,7 +96,7 @@ func TestPreflightDecideShowsBlockedPath(t *testing.T) {
 	m = step(t, m, pfDoneMsg{node: "web-1", snap: snap, audit: audit})
 
 	out := view(m)
-	for _, want := range []string{"80 nginx", "443 free", "only proxy", "verdict: decide"} {
+	for _, want := range []string{"80 nginx", "443 free", "only proxy", "a few findings need your call"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("decide verdict missing %q\n%s", want, out)
 		}
@@ -237,12 +237,12 @@ func TestPlanFromClearedPreflight(t *testing.T) {
 	if m.loading.active {
 		t.Fatal("plan landed but the ceremony never cleared")
 	}
-	out = view(m)
+	out = ansiStrip(view(m))
 	for _, want := range []string{
-		"Plan", "web-1", "baseline 0.1", "3 steps",
+		"Initial setup", "the plan", "web-1", "baseline 0.1", "3 steps",
 		"mymo admin user", "sshd hardening", "mymo state",
-		"gate", "second connection", "press a to apply",
-		"changes nothing yet",
+		"second connection",
+		"type web-1 in full to apply",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("plan view missing %q\n%s", want, out)

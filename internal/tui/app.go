@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -379,6 +380,17 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	str := msg.String()
 
+	// h is home from anywhere: one fixed way back, on every page —
+	// forms own their keys, and a ceremony in flight is not left
+	// behind mid-act (esc and q still serve there)
+	if str == "h" && !m.formActive() && !m.loading.active && m.introDone &&
+		m.cur().kind != scHome {
+		m.stopLive()
+		m.confirmRemove = false
+		m.stack = []screen{{kind: scHome}}
+		return m, nil
+	}
+
 	if str == "?" {
 		m.helpOpen = !m.helpOpen
 		return m, nil
@@ -427,12 +439,8 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		if str == "a" {
-			return m.startApplyConfirm()
-		}
-		return m.updateSimpleKeys(s.kind, str)
-	case scNodeApplyConfirm:
-		return m.updateApplyConfirm(str)
+		// the plan page is the confirmation: runes build the name
+		return m.updatePlanKeys(str)
 	case scNodeApplyReport:
 		if m.loading.active {
 			switch msg.String() {
@@ -656,15 +664,23 @@ func (m Model) updateRemoveConfirm(str string) (tea.Model, tea.Cmd) {
 			m.confirmRemove = false
 			return m, m.notify("state store unavailable", toastErr)
 		}
-		if err := m.store.DeleteNode(m.selNode.Name); err != nil {
-			m.confirmRemove = false
-			return m, m.notify(err.Error(), toastErr)
-		}
 		name := m.selNode.Name
+		host, port := m.selNode.Host, m.selNode.Port
+		// removal is mymo forgetting its whole side: the record, the
+		// key pair, and the trust entry — the box itself keeps
+		// everything mymo built there, running and untouched
+		if err := m.store.RemoveNode(name); err != nil {
+			m.confirmRemove = false
+			return m, m.notify(shorten(err.Error(), 44), toastErr)
+		}
+		if err := ssh.ForgetHostKey(filepath.Join(m.store.Dir(), "known_hosts.json"), host, port); err != nil {
+			m.confirmRemove = false
+			return m, m.notify("the node was removed but a trust entry stayed: "+shorten(err.Error(), 30), toastErr)
+		}
 		m.confirmRemove = false
 		m.pop()
 		m.reloadFleet()
-		return m, m.notify("removed "+name+" from the fleet", toastOK)
+		return m, m.notify("removed "+name+" — mymo forgot it; the box was not touched", toastOK)
 	case "esc", "n", "N":
 		m.confirmRemove = false
 		return m, nil
@@ -851,8 +867,6 @@ func (m Model) workspaceView() string {
 			} else {
 				content = m.planView()
 			}
-		case scNodeApplyConfirm:
-			content = m.applyConfirmView()
 		case scNodeApplyReport:
 			if m.loading.active {
 				content = m.loadingView()
@@ -970,7 +984,13 @@ func (m Model) footerRow() string {
 	if m.toast != nil {
 		row = m.toast.view()
 	} else {
-		row = m.help.View(m.keymap())
+		// the home hint rides every footer where h is live: never
+		// during forms, ceremonies, or on the home page itself
+		km := help.KeyMap(m.keymap())
+		if !m.formActive() && !m.loading.active && m.introDone && m.cur().kind != scHome {
+			km = keymapWithHome{inner: m.keymap()}
+		}
+		row = m.help.View(km)
 	}
 	return lipgloss.PlaceHorizontal(m.contentWidth, lipgloss.Center, row)
 }
@@ -1020,8 +1040,6 @@ func (m Model) keymap() help.KeyMap {
 			return newLoadingKeymap()
 		}
 		return newPlanKeymap()
-	case scNodeApplyConfirm:
-		return newApplyConfirmKeymap()
 	case scNodeApplyReport:
 		if m.loading.active {
 			return newLoadingKeymap()

@@ -133,13 +133,13 @@ func captureDistro(ctx context.Context, r preflight.Runner) (id, codename string
 
 // sshGateSecondConnection is the one gate the whole lifecycle turns
 // on: sshd's new posture loads only after the new key works.
-const sshGateSecondConnection = "the new mymo key is proven on a second connection before reload"
+const sshGateSecondConnection = "the new key is proven on a fresh connection before sshd reloads — your access is untouched"
 
 func mymoUserStep() Step {
 	return Step{
 		Control: "mymo-user",
 		Title:   "mymo admin user",
-		Detail:  "create mymo user; install its key and sudoers drop-in",
+		Detail:  "create mymo user with its key and sudo rule",
 		Files: []File{
 			{Path: baseline.MymoSudoersDropin, Content: baseline.MymoSudoersRule + "\n", Mode: "0440", Owner: "root:root"},
 		},
@@ -164,7 +164,7 @@ func sshStep(f facts.Node, dropin string) Step {
 
 	detail := "harden sshd: no root, no passwords, in a drop-in"
 	if f.User == "root" {
-		detail = "disable root ssh; access continues as mymo + console"
+		detail = "no root ssh; access continues as mymo + console"
 	}
 	return Step{
 		Control: "ssh-hardening",
@@ -280,7 +280,7 @@ func dockerStep(f facts.Node, a preflight.Audit, id, codename, arch string) Step
 		return Step{
 			Control: "docker",
 			Title:   "docker \u2014 adopt",
-			Detail:  "adopt the installed docker; nothing is reinstalled",
+			Detail:  "adopt the installed docker; nothing reinstalls",
 			Exec:    [][]string{{"systemctl", "enable", "docker"}},
 		}
 	}
@@ -288,7 +288,7 @@ func dockerStep(f facts.Node, a preflight.Audit, id, codename, arch string) Step
 	return Step{
 		Control: "docker",
 		Title:   "docker engine",
-		Detail:  "install docker-ce + plugins from the official repo",
+		Detail:  "install docker-ce + plugins from docker's repo",
 		Files: []File{
 			{Path: "/etc/apt/sources.list.d/docker.list",
 				Content: fmt.Sprintf("deb [arch=%s signed-by=/etc/apt/keyrings/docker.asc] %s %s stable\n", arch, repo, codename),

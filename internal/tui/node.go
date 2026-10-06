@@ -43,8 +43,8 @@ func nodeIsManaged(n domain.Node) bool {
 func actionDefs(n domain.Node) []actionItem {
 	defs := make([]actionItem, 0, 5)
 	if !nodeIsManaged(n) {
-		defs = append(defs, actionItem{actSetup, "Set up this node",
-			"preflight · plan · apply — turn this box into a mymo node"})
+		defs = append(defs, actionItem{actSetup, "Initial setup",
+			"check · plan · apply — turn this box into a mymo node"})
 	}
 	return append(defs,
 		actionItem{actSSH, "SSH", "open an interactive session on the node"},
@@ -112,10 +112,10 @@ func (m Model) nodeView() string {
 	n := m.selNode
 	var b strings.Builder
 	b.WriteString(m.nodeHeadingLine(n))
-	// the floor is 19 rows and every action must be visible: the
-	// cards' borders and the colored statement are their own breaks,
-	// so the air is spent between cards and nowhere else
-	b.WriteString("\n")
+	// air between every section: heading, cards, actions — the floor
+	// is 19 rows and this layout was re-counted to afford it, with
+	// the mymo state in the heading badge instead of a statement row
+	b.WriteString("\n\n")
 	b.WriteString(m.systemCard(n))
 	// the LIVE card exists only once something is there to sample,
 	// and spans the same width as the SYSTEM card beside it
@@ -123,16 +123,7 @@ func (m Model) nodeView() string {
 		b.WriteString("\n\n")
 		b.WriteString(titledCard("LIVE", padLines(m.liveCardInner(), m.cardW())))
 	}
-	b.WriteString("\n")
-	if !nodeIsManaged(n) {
-		// the page states what the box is before it offers to change
-		// it — an honest sentence, not a badge to decode
-		b.WriteString(warnStyle.Render("this box is not yet a mymo node") +
-			subtextStyle.Render(" — one setup makes it mymo's"))
-		b.WriteString("\n")
-	}
-	b.WriteString(sectionLabel("ACTIONS"))
-	b.WriteString("\n")
+	b.WriteString("\n\n")
 	b.WriteString(m.actions.View())
 	return fitHeight(b.String(), m.contentHeight)
 }
@@ -224,6 +215,12 @@ func (m Model) nodeHeadingLine(n domain.Node) string {
 		if lipgloss.Width(line)+lipgloss.Width(piece)+lipgloss.Width(health) <= m.stageW-2 {
 			line += piece
 		}
+	}
+	if !nodeIsManaged(n) {
+		// an unmanaged box states itself in the identity row: the
+		// setup action below is the answer to this fact, and the
+		// warning color ties them together
+		return line + warnStyle.Render(" · not a mymo node")
 	}
 	return line + health
 }

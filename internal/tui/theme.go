@@ -56,6 +56,10 @@ var (
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color(colSurface)).
 			Padding(1, 3)
+	wizardPanelStyle = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color(colSurface)).
+				Padding(0, 3)
 
 	// cardStyle is an interactive card: forms, reviews, confirmations.
 	// Visually identical to the info panels — the content itself shows

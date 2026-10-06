@@ -4,20 +4,19 @@ package tui
 type screenKind int
 
 const (
-	scHome             screenKind = iota // the home hub: what mymo is, where to go
-	scFleet                              // the node list
-	scNode                               // one node: facts and actions
-	scNodeApps                           // applications on a node
-	scNodeInspect                        // a node's full stored record
-	scNodePreflight                      // a node's app-host preflight verdicts
-	scNodePlan                           // a node's generated baseline plan
-	scNodeApplyConfirm                   // the typed-name confirmation before apply
-	scNodeApplyReport                    // the apply's report and verification rows
-	scAppDetail                          // one application: its releases and exposure
-	scApps                               // applications across the fleet
-	scDeploy                             // deploy workflow entry point
-	scSettings                           // settings and about
-	scAddNode                            // add-node workflow (overlay)
+	scHome            screenKind = iota // the home hub: what mymo is, where to go
+	scFleet                             // the node list
+	scNode                              // one node: facts and actions
+	scNodeApps                          // applications on a node
+	scNodeInspect                       // a node's full stored record
+	scNodePreflight                     // a node's app-host preflight verdicts
+	scNodePlan                          // a node's generated baseline plan
+	scNodeApplyReport                   // the apply's report and verification rows
+	scAppDetail                         // one application: its releases and exposure
+	scApps                              // applications across the fleet
+	scDeploy                            // deploy workflow entry point
+	scSettings                          // settings and about
+	scAddNode                           // add-node workflow (overlay)
 )
 
 // screen is one entry of the navigation stack.
@@ -68,11 +67,9 @@ func (m *Model) crumbs() []string {
 		case scNodeInspect:
 			parts = append(parts, "inspect")
 		case scNodePreflight:
-			parts = append(parts, "preflight")
+			parts = append(parts, "check")
 		case scNodePlan:
 			parts = append(parts, "plan")
-		case scNodeApplyConfirm:
-			parts = append(parts, "confirm")
 		case scNodeApplyReport:
 			parts = append(parts, "apply")
 		case scApps:

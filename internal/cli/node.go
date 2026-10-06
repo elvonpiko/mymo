@@ -443,7 +443,8 @@ func runNodeRemove(args []string, stdout, stderr io.Writer) int {
 	if !ok {
 		return exitErr
 	}
-	if _, err := store.GetNode(name); err != nil {
+	node, err := store.GetNode(name)
+	if err != nil {
 		fmt.Fprintf(stderr, "mymo node rm: %v\n", err)
 		return exitErr
 	}
@@ -470,11 +471,18 @@ func runNodeRemove(args []string, stdout, stderr io.Writer) int {
 			return exitOK
 		}
 	}
-	if err := store.DeleteNode(name); err != nil {
+	// removal is mymo forgetting its whole side: the record, the key
+	// pair, and the trust entry — the box itself keeps everything
+	// mymo built there, running and untouched
+	if err := store.RemoveNode(name); err != nil {
 		fmt.Fprintf(stderr, "mymo node rm: %v\n", err)
 		return exitErr
 	}
-	fmt.Fprintf(stdout, "Removed node %q.\n", name)
+	if err := ssh.ForgetHostKey(knownHostsPath(store), node.Host, node.Port); err != nil {
+		fmt.Fprintf(stderr, "mymo node rm: removed %q but a trust entry stayed: %v\n", name, err)
+		return exitErr
+	}
+	fmt.Fprintf(stdout, "Removed node %q. mymo forgot it; the box was not touched.\n", name)
 	return exitOK
 }
 

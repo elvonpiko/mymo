@@ -228,7 +228,7 @@ func TestNavigationStack(t *testing.T) {
 		client: ssh.New(domain.Node{}, ""),
 		seq:    m.checkSeq,
 	})
-	if got := view(m); !strings.Contains(got, "ACTIONS") {
+	if got := view(m); !strings.Contains(got, "Initial setup") {
 		t.Fatalf("observe page did not open after the probe:\n%s", got)
 	}
 	m = press(t, m, "esc")
@@ -256,7 +256,7 @@ func TestNodeActionsNavigation(t *testing.T) {
 		snap:   facts.Node{Hostname: "web-1", CollectedAt: time.Now()},
 		client: ssh.New(domain.Node{}, ""),
 	})
-	if got := view(m); !strings.Contains(got, "Set up this node") {
+	if got := view(m); !strings.Contains(got, "Initial setup") {
 		t.Fatalf("an unmanaged box must offer setup first:\n%s", got)
 	}
 
@@ -265,7 +265,7 @@ func TestNodeActionsNavigation(t *testing.T) {
 		t.Fatalf("applications action missing:\n%s", got)
 	}
 	m = press(t, m, "esc")
-	if got := view(m); !strings.Contains(got, "ACTIONS") {
+	if got := view(m); !strings.Contains(got, "Inspect record") {
 		t.Fatalf("esc did not return to the observe page:\n%s", got)
 	}
 
@@ -280,7 +280,7 @@ func TestNodeActionsNavigation(t *testing.T) {
 		t.Fatalf("remove confirmation missing:\n%s", got)
 	}
 	m = press(t, m, "n") // cancel
-	if got := view(m); !strings.Contains(got, "ACTIONS") {
+	if got := view(m); !strings.Contains(got, "Inspect record") {
 		t.Fatalf("n did not cancel removal:\n%s", got)
 	}
 }

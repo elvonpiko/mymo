@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"fmt"
 	"path/filepath"
 	"strings"
 	"time"
@@ -49,26 +48,22 @@ type verifyDoneMsg struct {
 	ok     bool
 }
 
-// startApplyConfirm opens the typed-name confirmation on top of the
-// plan. The name is the confirmation: nothing shorter, nothing else.
-func (m Model) startApplyConfirm() (tea.Model, tea.Cmd) {
-	if len(m.planSteps) == 0 {
-		return m, m.notify("no plan to apply — draft one from a cleared preflight", toastWarn)
-	}
-	m.applyTyped = ""
-	m.push(screen{kind: scNodeApplyConfirm, node: m.selNode.Name})
-	return m, nil
-}
-
-// updateApplyConfirm is the confirmation screen's keyboard: runes
-// build the name, enter checks it, esc cancels without a trace.
-func (m Model) updateApplyConfirm(str string) (tea.Model, tea.Cmd) {
+// updatePlanKeys is the plan page's keyboard: the typed name is the
+// confirmation — runes build it, enter checks it in full, esc goes
+// back without a trace.
+func (m Model) updatePlanKeys(str string) (tea.Model, tea.Cmd) {
 	switch str {
 	case "esc":
 		m.pop()
 		return m, nil
 	case "enter":
+		if len(m.planSteps) == 0 {
+			return m, m.notify("no plan to apply — draft one from a cleared check", toastWarn)
+		}
 		if m.applyTyped != m.selNode.Name {
+			// a refused name does not linger to corrupt the next
+			// attempt — the buffer starts over with the operator
+			m.applyTyped = ""
 			return m, m.notify("that does not match "+m.selNode.Name+" — nothing runs until it does", toastWarn)
 		}
 		return m.runApply()
@@ -92,7 +87,6 @@ func (m Model) updateApplyConfirm(str string) (tea.Model, tea.Cmd) {
 func (m Model) runApply() (tea.Model, tea.Cmd) {
 	n := m.selNode
 	// the plan is no longer under review — it is running
-	m.pop()
 	m.pop()
 	m.push(screen{kind: scNodeApplyReport, node: n.Name})
 	m.applyResult = apply.Result{}
@@ -369,75 +363,18 @@ func mymoTUIKeyPath(store interface{ Dir() string }, name string) string {
 	return filepath.Join(store.Dir(), "keys", name+".key")
 }
 
-// applyConfirmView renders the human gate: the plan's shape, its
-// gate, the loud warning for root operators, and the typed name —
-// matched in full or it does not count.
-func (m Model) applyConfirmView() string {
-	n := m.selNode
-	// the panel's own frame (border + padding) eats 8 columns of
-	// the stage; long lines wrap inside the panel, never past it
-	w := m.contentWidth - 8
-	inner := titleStyle.Render("Apply the plan") + "\n" +
-		faintStyle.Render("· "+n.Name+" · baseline "+baseline.Version+" · "+fmt.Sprint(len(m.planSteps))+" steps") + "\n\n"
-
-	for _, s := range m.planSteps {
-		for i, line := range wrapDetail(s.Detail, w-17) {
-			if i == 0 {
-				inner += factsLabelStyle.Width(16).Render(s.Title) + " " + textStyle.Render(line) + "\n"
-			} else {
-				inner += strings.Repeat(" ", 17) + textStyle.Render(line) + "\n"
-			}
-		}
-	}
-	inner += "\n"
-
-	for _, s := range m.planSteps {
-		if s.Gate != "" {
-			for i, line := range wrapDetail(s.Gate, w-6) {
-				if i == 0 {
-					inner += warnStyle.Render("gate") + " " + subtextStyle.Render(line) + "\n"
-				} else {
-					inner += strings.Repeat(" ", 6) + subtextStyle.Render(line) + "\n"
-				}
-			}
-		}
-	}
-	if n.User == "root" {
-		note := "you connect as root — after apply, sshd refuses root logins; access continues as mymo (mymo holds that key) and the console"
-		for i, line := range wrapDetail(note, w-6) {
-			if i == 0 {
-				inner += warnStyle.Render("note") + " " + subtextStyle.Render(line) + "\n"
-			} else {
-				inner += strings.Repeat(" ", 6) + subtextStyle.Render(line) + "\n"
-			}
-		}
-	}
-
-	typed := m.applyTyped
-	cursor := accentStyle.Render("▌")
-	if typed == n.Name {
-		cursor = okStyle.Render("▌")
-	}
-	// the name to type is the one affordance on this page: dim
-	// sentence, bright name — the eye lands on the act, not the
-	// policy
-	inner += "\n" + subtextStyle.Render("type ") + accentStyle.Render(n.Name) + subtextStyle.Render(" to apply — anything else aborts") + "\n\n" +
-		accentStyle.Render("> ") + textStyle.Render(typed) + cursor
-
-	return m.centeredPanel(inner)
-}
-
 // applyReportView renders the outcome: every step done, kept, failed,
 // or blocked — the failure's full reason, the gate's proof, the
 // verify rows, and the lifecycle's honest position.
 func (m Model) applyReportView() string {
 	var b strings.Builder
+	w := m.contentWidth - 8 // the card's frame eats 8 columns
 	verdict := "applied"
 	if m.applyResult.Failed {
 		verdict = "stopped at " + m.applyResult.FailedAt
 	}
-	b.WriteString(titleStyle.Render("Apply report") + " " +
-		faintStyle.Render("· "+m.selNode.Name+" · "+verdict) + "\n\n")
+	b.WriteString(titleStyle.Render("Initial setup") + " " +
+		faintStyle.Render("\u00b7 the report \u00b7 "+m.selNode.Name+" \u00b7 "+verdict) + "\n\n")
 
 	for _, s := range m.applyResult.Steps {
 		// the state word is the row's spine: uppercase, one width,
@@ -454,14 +391,14 @@ func (m Model) applyReportView() string {
 		}
 		b.WriteString("  " + style.Width(7).Render(state) + " " + textStyle.Render(s.Title) + "\n")
 		if s.State == apply.StepFailed {
-			for _, line := range wrapDetail(s.Note, m.stageW-8) {
-				b.WriteString("         " + subtextStyle.Render(line) + "\n")
+			for _, line := range wrapDetail(s.Note, w-9) {
+				b.WriteString(strings.Repeat(" ", 9) + subtextStyle.Render(line) + "\n")
 			}
 		}
 	}
-	if m.applyResult.GateProven {
-		b.WriteString("\n  " + okStyle.Width(7).Render("PROVEN") + " " + subtextStyle.Render("the mymo key was proven on a second connection before the reload") + "\n")
-	}
+	// the gate's proof is not a step and never was: the loading card
+	// narrated it live ("proving the mymo key on a second
+	// connection"), and the sshd row below carries its outcome
 	if len(m.applyChecks) > 0 {
 		b.WriteString("\n")
 		for _, c := range m.applyChecks {
@@ -472,7 +409,7 @@ func (m Model) applyReportView() string {
 			if c.Outcome != preflight.Pass {
 				mark = errStyle.Render("FAILED ")
 			}
-			for i, line := range wrapDetail(c.Detail, m.stageW-30) {
+			for i, line := range wrapDetail(c.Detail, w-29) {
 				if i == 0 {
 					b.WriteString("  " + mark + " " + factsLabelStyle.Width(18).Render(c.Title) + " " +
 						subtextStyle.Render(line) + "\n")
@@ -486,7 +423,7 @@ func (m Model) applyReportView() string {
 	b.WriteString("\n")
 	switch {
 	case m.applyResult.Failed:
-		for _, line := range wrapDetail("the steps after the failure were never attempted — the operator's current access is untouched", m.stageW-2) {
+		for _, line := range wrapDetail("the steps after the failure were never attempted — the operator's current access is untouched", w) {
 			b.WriteString(warnStyle.Render(line) + "\n")
 		}
 	case len(m.applyChecks) > 0 && m.selNode.Bootstrap.State == domain.BootstrapReady:
@@ -495,7 +432,7 @@ func (m Model) applyReportView() string {
 	default:
 		b.WriteString(faintStyle.Render("esc back — the report stays in the node's lifecycle record") + "\n")
 	}
-	return fitHeight(b.String(), m.contentHeight)
+	return m.wizardPanelFit(b.String())
 }
 
 // centeredPanel is the dialog pattern: centered on the stage.

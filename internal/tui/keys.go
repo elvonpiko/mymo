@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
 )
 
@@ -25,6 +26,27 @@ func newHomeKeymap() homeKeymap {
 		help:     key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 		quit:     key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
 	}
+}
+
+// homeHint is the one global shortcut: h is home from anywhere, so
+// the way back is never a guess.
+var homeHint = key.NewBinding(key.WithKeys("h"), key.WithHelp("h", "home"))
+
+// keymapWithHome appends the home shortcut to any page's keymap: one
+// adapter, every footer.
+type keymapWithHome struct{ inner help.KeyMap }
+
+func (k keymapWithHome) ShortHelp() []key.Binding {
+	return append(k.inner.ShortHelp(), homeHint)
+}
+
+func (k keymapWithHome) FullHelp() [][]key.Binding {
+	groups := k.inner.FullHelp()
+	if len(groups) == 0 {
+		return [][]key.Binding{{homeHint}}
+	}
+	groups[len(groups)-1] = append(groups[len(groups)-1], homeHint)
+	return groups
 }
 
 // ShortHelp stays minimal: the home page itself is the key guide.
@@ -133,52 +155,28 @@ func (k preflightKeymap) FullHelp() [][]key.Binding {
 }
 
 // Plan keymap: the plan changes nothing until its author applies it.
+// Plan keymap: the typed name is the confirmation; the footer says
+// so instead of advertising a key that no longer exists.
 type planKeymap struct {
-	apply key.Binding
-	back  key.Binding
-	help  key.Binding
-	quit  key.Binding
+	back key.Binding
+	help key.Binding
+	quit key.Binding
 }
 
 func newPlanKeymap() planKeymap {
 	return planKeymap{
-		apply: key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "apply")),
-		back:  key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
-		help:  key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
-		quit:  key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
+		back: key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
+		help: key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
+		quit: key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
 	}
 }
 
 func (k planKeymap) ShortHelp() []key.Binding {
-	return []key.Binding{k.apply, k.back, k.help, k.quit}
+	return []key.Binding{k.back, k.help, k.quit}
 }
 
 func (k planKeymap) FullHelp() [][]key.Binding {
-	return [][]key.Binding{{k.apply, k.back}, {k.help, k.quit}}
-}
-
-// Apply-confirm keymap: the node's name typed in full is the
-// confirmation; esc is the only way out besides matching it.
-type applyConfirmKeymap struct {
-	confirm key.Binding
-	back    key.Binding
-	help    key.Binding
-}
-
-func newApplyConfirmKeymap() applyConfirmKeymap {
-	return applyConfirmKeymap{
-		confirm: key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "confirm")),
-		back:    key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
-		help:    key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
-	}
-}
-
-func (k applyConfirmKeymap) ShortHelp() []key.Binding {
-	return []key.Binding{k.confirm, k.back, k.help}
-}
-
-func (k applyConfirmKeymap) FullHelp() [][]key.Binding {
-	return [][]key.Binding{{k.confirm, k.back}, {k.help}}
+	return [][]key.Binding{{k.back}, {k.help, k.quit}}
 }
 
 // Apply-report keymap: the report stays until walked away from.
@@ -221,7 +219,7 @@ func newNodeKeymap() nodeKeymap {
 		navigate: key.NewBinding(key.WithKeys("up", "down"), key.WithHelp("↑↓", "navigate")),
 		open:     key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "select")),
 		ssh:      key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "ssh")),
-		setup:    key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "set up this node")),
+		setup:    key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "setup")),
 		back:     key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
 		help:     key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 		quit:     key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),

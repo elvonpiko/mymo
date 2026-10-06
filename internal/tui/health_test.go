@@ -124,7 +124,7 @@ func TestEnteringObservesWithLoadingPage(t *testing.T) {
 	if strings.Contains(got, "fleet / web-1") {
 		t.Errorf("loading page shows the header:\n%s", got)
 	}
-	if strings.Contains(got, "ACTIONS") {
+	if strings.Contains(got, "Inspect record") {
 		t.Errorf("loading page showed the observe page early:\n%s", got)
 	}
 
@@ -151,7 +151,7 @@ func TestObservePageShowsFactsAndLive(t *testing.T) {
 	got := view(m)
 	for _, want := range []string{
 		"SYSTEM", "Ubuntu 24.04.5 LTS", "x86_64", "6.8.0-31-generic", "1d 18h",
-		"32 GiB/39 GiB free", "27.3.1", "✓", "checked just now",
+		"32 GiB/39 GiB free", "27.3.1", "✓", "not a mymo node",
 		"LIVE", "3.2 GiB/3.8 GiB avail", "warming", "LOAD",
 	} {
 		if !strings.Contains(got, want) {
@@ -315,20 +315,21 @@ func TestObservePageSectionsBreathe(t *testing.T) {
 	if !strings.Contains(lines[3], "root@203.0.113.10:22") || !strings.Contains(lines[3], "agent auth") {
 		t.Errorf("heading lost the connection identity: %q", lines[3])
 	}
-	// air between the cards — the floor is 19 rows, and borders and
-	// the colored statement are their own breaks
-	for _, i := range []int{10} {
+	// air between the heading, the cards, and the actions — the
+	// mymo state rides the heading badge, so the page affords full
+	// breathing at the 19-row floor with every action visible
+	for _, i := range []int{4, 11, 16} {
 		if strings.Trim(lines[i], "\u2502 ") != "" {
 			t.Errorf("row %d should be air between sections: %q", i, lines[i])
 		}
 	}
-	// SYSTEM and LIVE keep their titles; the unmanaged statement
-	// leads the actions; all five actions survive the 19-row floor
-	if !strings.Contains(lines[4], "SYSTEM") || !strings.Contains(lines[11], "LIVE") {
+	// SYSTEM and LIVE keep their titles; the heading badge carries
+	// the mymo state; all five actions survive the 19-row floor
+	if !strings.Contains(lines[5], "SYSTEM") || !strings.Contains(lines[12], "LIVE") {
 		t.Fatalf("section layout shifted:\n%s", strings.Join(lines, "\n"))
 	}
-	if !strings.Contains(lines[15], "not yet a mymo node") {
-		t.Errorf("the unmanaged statement left the page: %q", lines[15])
+	if !strings.Contains(lines[3], "not a mymo node") {
+		t.Errorf("the heading lost the mymo state: %q", lines[3])
 	}
 	if !strings.Contains(lines[21], "Remove") {
 		t.Errorf("last action clipped at the floor: %q", lines[21])
@@ -339,7 +340,7 @@ func TestObservePageSectionsBreathe(t *testing.T) {
 			t.Errorf("SYSTEM card carries snapshot trivia: %q", r)
 		}
 	}
-	if !strings.Contains(lines[13], "UP") || !strings.Contains(lines[13], "1d 18h") {
+	if !strings.Contains(lines[14], "UP") || !strings.Contains(lines[14], "1d 18h") {
 		t.Errorf("LIVE card lost the uptime: %q", lines[13])
 	}
 }
@@ -362,8 +363,8 @@ func TestCardsSpanTheStage(t *testing.T) {
 		}
 		return utf8.RuneCountInString(line[:i])
 	}
-	top := colOf(lines[4], "\u256e")    // ╮
-	bottom := colOf(lines[9], "\u256f") // ╯
+	top := colOf(lines[5], "\u256e")     // ╮
+	bottom := colOf(lines[10], "\u256f") // ╯
 	if top < 0 || top != bottom {
 		t.Errorf("card corners misaligned: top=%d bottom=%d\n%s", top, bottom, lines[4]+"\n"+lines[9])
 	}

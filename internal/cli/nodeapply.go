@@ -240,9 +240,9 @@ func printApplyReport(w io.Writer, res apply.Result) {
 			fmt.Fprintf(w, "         %s\n", s.Note)
 		}
 	}
-	if res.GateProven {
-		fmt.Fprintln(w, "  PROVEN the mymo key was proven on a second connection before the reload")
-	}
+	// the gate's proof is narrated live during apply ("proving the
+	// mymo key on a second connection — your current access is
+	// untouched"); the sshd row below carries its outcome here
 }
 
 // printVerifyChecks renders the verification rows: what the system

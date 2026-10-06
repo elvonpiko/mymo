@@ -9,37 +9,35 @@ import (
 	"github.com/elvonpiko/mymo/internal/preflight"
 )
 
-// preflightView renders the audit's verdicts: one row per check, the
-// overall verdict last, and an honest note that planning and apply
-// are not part of this phase — the screen changes nothing, ever.
+// preflightView renders the audit as the first page of initial
+// setup: one row per finding, the verdict as a sentence, and an
+// honest note that this page changes nothing, ever.
 func (m Model) preflightView() string {
-	var b strings.Builder
-	b.WriteString(titleStyle.Render("Preflight") + " " +
-		faintStyle.Render("\u00b7 mymo baseline "+baseline.Version+" \u00b7 read-only audit") + "\n\n")
+	w := m.contentWidth - 8 // the card's frame eats 8 columns
+	inner := titleStyle.Render("Initial setup") + " " +
+		faintStyle.Render("\u00b7 the check \u00b7 baseline "+baseline.Version) + "\n\n"
 
 	for _, c := range m.pfChecks {
-		b.WriteString(m.pfRow(c))
+		inner += m.pfRow(c, w-17)
 	}
 
-	b.WriteString("\n")
-	b.WriteString(pfVerdictLine(m.pfVerdict) + "\n")
+	// every verdict sentence fits one line at the floor — wrapPlain
+	// is for plain text, and the verdict carries its color
+	inner += "\n" + pfVerdictLine(m.pfVerdict) + "\n"
 	switch m.pfVerdict {
 	case preflight.Pass, preflight.Adopt:
-		b.WriteString(faintStyle.Render("planning the baseline changes arrives next; ") +
-			faintStyle.Render("nothing on the node has changed"))
+		inner += "\n" + faintStyle.Render("read-only — nothing on the box changes \u00b7 enter to see the plan")
 	case preflight.Decide:
-		b.WriteString(faintStyle.Render("resolve the decisions above, then re-run; ") +
-			faintStyle.Render("nothing on the node has changed"))
+		inner += "\n" + faintStyle.Render("read-only \u00b7 the findings above need your call — resolve them, then check again")
 	default:
-		b.WriteString(faintStyle.Render("this node is not suitable as a mymo app host; ") +
-			faintStyle.Render("nothing was changed"))
+		inner += "\n" + faintStyle.Render("read-only \u00b7 this box cannot become a mymo node as it stands")
 	}
-	return fitHeight(b.String(), m.contentHeight)
+	return m.wizardPanelFit(inner)
 }
 
 // pfRow renders one check: verdict glyph, title, and detail, wrapping
 // long details under the title so honesty is never clipped away.
-func (m Model) pfRow(c preflight.Check) string {
+func (m Model) pfRow(c preflight.Check, detailW int) string {
 	var glyph string
 	var g lipgloss.Style
 	switch c.Outcome {
@@ -57,7 +55,6 @@ func (m Model) pfRow(c preflight.Check) string {
 	// continuation lines line up under it
 	indent := 17
 	label := factsLabelStyle.Width(14).Render(c.Title)
-	detailW := max(m.stageW-indent, 30)
 	var b strings.Builder
 	b.WriteString(g.Render(glyph) + " " + label + " ")
 	for i, line := range wrapPlain(c.Detail, detailW) {
@@ -70,19 +67,33 @@ func (m Model) pfRow(c preflight.Check) string {
 	return b.String()
 }
 
-// pfVerdictLine renders the summary in the verdict's color.
+// pfVerdictLine renders the verdict as one plain sentence in its
+// color: what mymo concluded, in the words the operator would use.
 func pfVerdictLine(v preflight.Outcome) string {
-	style := okStyle
-	word := "the path is clear"
+	style, word := okStyle, "everything mymo needs is already here"
 	switch v {
 	case preflight.Adopt:
-		style, word = adoptStyle, "existing components can be adopted"
+		style, word = adoptStyle, "mymo recognizes its own work here — the plan keeps what exists"
 	case preflight.Decide:
-		style, word = warnStyle, "your call is required before anything is planned"
+		style, word = warnStyle, "a few findings need your call before anything is planned"
 	case preflight.Abort:
-		style, word = errStyle, "this node cannot be prepared as an app host"
+		style, word = errStyle, "this box cannot become a mymo node as it stands"
 	}
-	return style.Render("verdict: "+v.String()) + textStyle.Render(" \u2014 "+word)
+	return style.Render(word)
+}
+
+// wizardPanelFit is the wizard card: same border and side padding as
+// the dialogs, with the page's own air rows providing the vertical
+// breathing — so a floor terminal keeps every step. A card that
+// would not fit renders full-width instead: a step is never clipped
+// to keep a border.
+func (m Model) wizardPanelFit(inner string) string {
+	panel := wizardPanelStyle.Render(inner)
+	if lipgloss.Height(panel) > m.contentHeight {
+		return fitHeight(inner, m.contentHeight)
+	}
+	return lipgloss.Place(m.contentWidth, m.contentHeight,
+		lipgloss.Center, lipgloss.Center, panel)
 }
 
 // wrapPlain wraps plain text at word boundaries to width w.
