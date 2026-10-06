@@ -235,17 +235,33 @@ func Scan(ctx context.Context, r Runner) (Audit, error) {
 		}
 	}
 
+	// The sudoers drop-in and the marker are root-only files: the
+	// probe reads them with whatever privilege the operator holds —
+	// root directly, anyone else through the passwordless sudo the
+	// audit has already confirmed. The exit code, not the output,
+	// says whether the file is there: a refused read is an unknown,
+	// never a "missing" rule that isn't.
+	readPrivileged := func(path string) (string, bool) {
+		argv := []string{"cat", path}
+		if s.UID != 0 {
+			argv = []string{"sudo", "-n", "cat", path}
+		}
+		out, code, err := r.Run(ctx, argv[0], argv[1:]...)
+		if err != nil || code != 0 {
+			return "", false
+		}
+		return strings.TrimSpace(out), true
+	}
 	// The sudoers drop-in is mymo's fingerprint: an existing mymo
 	// user is only adoptable when the rule on the node is the rule
 	// this baseline writes.
-	if out, _, err := r.Run(ctx, "cat", baseline.MymoSudoersDropin); err == nil {
-		s.MymoSudoers = strings.TrimSpace(out)
+	if content, ok := readPrivileged(baseline.MymoSudoersDropin); ok {
+		s.MymoSudoers = content
 	}
 	// The baseline marker a completed apply records: what ran, and
 	// when — the drift surface.
-	if out, _, err := r.Run(ctx, "sh", "-c",
-		"test -f "+baseline.StateDir+"/baseline.json && cat "+baseline.StateDir+"/baseline.json"); err == nil {
-		s.MymoMarker = strings.TrimSpace(out)
+	if content, ok := readPrivileged(baseline.StateDir + "/baseline.json"); ok {
+		s.MymoMarker = content
 	}
 
 	return s, nil
@@ -537,7 +553,7 @@ func Evaluate(f facts.Node, s Audit) []Check {
 				"baseline " + rec.Baseline + " is recorded; " + baseline.Version + " would supersede it — upgrades are explicit, never silent"})
 		case marked:
 			checks = append(checks, Check{"mymo", "mymo state", Decide,
-				"a baseline marker exists but mymo's sudoers rule is missing — resolve on the node"})
+				"the marker is mine but the sudoers rule is not — the box's rules were edited; mymo refuses to guess who did what"})
 		case fingerprint:
 			checks = append(checks, Check{"mymo", "mymo state", Adopt,
 				"an interrupted mymo bootstrap — apply resumes where it stopped, keeping what exists"})
@@ -549,7 +565,8 @@ func Evaluate(f facts.Node, s Audit) []Check {
 			if s.MymoDirUsed {
 				what = append(what, "state dir "+baseline.StateDir+" exists without a marker")
 			}
-			checks = append(checks, Check{"mymo", "mymo state", Decide, strings.Join(what, "; ") + " — resolve on the node"})
+			checks = append(checks, Check{"mymo", "mymo state", Decide,
+				strings.Join(what, "; ") + " — mymo never leaves its user without its rule, so this was written by something else; decide before mymo touches the box"})
 		}
 	}
 

@@ -330,8 +330,8 @@ func TestScanReadsTheFingerprintAndMarker(t *testing.T) {
 	r := baseRunner()
 	r.responses["sh -c id mymo 2>/dev/null; test -d /var/lib/mymo && echo mymo-dir"] =
 		"uid=980(mymo) gid=980(mymo) groups=980(mymo)\nmymo-dir\n"
-	r.responses["cat "+baseline.MymoSudoersDropin] = baseline.MymoSudoersRule + "\n"
-	r.responses["sh -c test -f /var/lib/mymo/baseline.json && cat /var/lib/mymo/baseline.json"] =
+	r.responses["sudo -n cat "+baseline.MymoSudoersDropin] = baseline.MymoSudoersRule + "\n"
+	r.responses["sudo -n cat /var/lib/mymo/baseline.json"] =
 		"{\"baseline\": \"0.1\", \"appliedAt\": \"2026-02-15T10:00:00Z\"}\n"
 	s, err := Scan(context.Background(), r)
 	if err != nil {
@@ -380,7 +380,7 @@ func TestEvaluateMymoStateFingerprint(t *testing.T) {
 			name: "a marker without mymo's rule decides",
 			s: Audit{UID: 0, Firewall: "absent", Listeners: map[int]string{},
 				MymoDirUsed: true, MymoMarker: marker(baseline.Version)},
-			want: Decide, detail: "resolve on the node",
+			want: Decide, detail: "refuses to guess who did what",
 		},
 	}
 	for _, tc := range cases {
@@ -401,5 +401,52 @@ func TestEvaluateMymoStateFingerprint(t *testing.T) {
 		if !strings.Contains(found.Detail, tc.detail) {
 			t.Errorf("%s: detail = %q, want it to say %q", tc.name, found.Detail, tc.detail)
 		}
+	}
+}
+
+// TestScanWithRefusedPrivilegeNeverFingersTheBox proves the live
+// regression stays dead: on the first real box, a non-root operator's
+// denied read of the root-only sudoers file folded "Permission
+// denied" into the fingerprint and preflight reported a rule mymo
+// itself had just written as missing. A refused read is an unknown —
+// and the privilege abort, not a fingerprint verdict, is what the
+// operator sees.
+func TestScanWithRefusedPrivilegeNeverFingersTheBox(t *testing.T) {
+	r := baseRunner()
+	r.responses["sh -c id mymo 2>/dev/null; test -d /var/lib/mymo && echo mymo-dir"] =
+		"uid=980(mymo) gid=980(mymo) groups=980(mymo)\nmymo-dir\n"
+	// the box refuses the operator's privilege entirely — the
+	// shape the live bug hid behind: root-only files, no way to
+	// read them, and a user that is genuinely there
+	r.codes["sudo -n true"] = 1
+	r.responses["sudo -n cat "+baseline.MymoSudoersDropin] = ""
+	r.codes["sudo -n cat "+baseline.MymoSudoersDropin] = 1
+	r.responses["sudo -n cat /var/lib/mymo/baseline.json"] = ""
+	r.codes["sudo -n cat /var/lib/mymo/baseline.json"] = 1
+
+	s, err := Scan(context.Background(), r)
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if s.Sudo {
+		t.Fatal("the box that refuses sudo must not be recorded as having it")
+	}
+	if s.MymoSudoers != "" || s.MymoMarker != "" {
+		t.Fatalf("a refused read fabricated a fingerprint: %q / %q", s.MymoSudoers, s.MymoMarker)
+	}
+	if !s.MymoUserUsed {
+		t.Fatal("the box genuinely carries the mymo user")
+	}
+	// the operator's way in is blocked by the privilege abort
+	// before any mymo-state verdict can mislead
+	checks := Evaluate(facts.Node{User: "ubuntu"}, s)
+	var sawAbort bool
+	for _, c := range checks {
+		if c.Outcome == Abort && c.Title == "privilege" {
+			sawAbort = true
+		}
+	}
+	if !sawAbort {
+		t.Fatal("a refused privilege must abort before any mymo-state verdict")
 	}
 }

@@ -144,7 +144,9 @@ func mymoUserStep() Step {
 			{Path: baseline.MymoSudoersDropin, Content: baseline.MymoSudoersRule + "\n", Mode: "0440", Owner: "root:root"},
 		},
 		Exec: [][]string{
-			{"useradd", "-m", "-s", "/bin/bash", baseline.MymoUser},
+			// a resume finds the user already there; useradd alone
+			// would refuse and break the second run
+			{"sh", "-c", "id " + baseline.MymoUser + " >/dev/null 2>&1 || useradd -m -s /bin/bash " + baseline.MymoUser},
 			{"install", "-d", "-m", "0700", "-o", baseline.MymoUser, "-g", baseline.MymoUser, "/home/" + baseline.MymoUser + "/.ssh"},
 			// the key pair is generated locally and the public key
 			// lands here at apply; the placeholder is replaced with

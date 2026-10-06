@@ -413,3 +413,22 @@ func TestGenerateResumesAnInterruptedBootstrap(t *testing.T) {
 		t.Error("the mymo-user step is missing from the resume plan")
 	}
 }
+
+// TestMyMoUserStepSurvivesItsOwnResume proves the fix the second
+// live test forced: a failed apply that had already created the mymo
+// user stranded the box — a re-apply ran useradd again, sshd refused
+// (exit 6, user exists), and mymo could not heal what it started.
+// The step's first command must be a no-op when its work is done.
+func TestMyMoUserStepSurvivesItsOwnResume(t *testing.T) {
+	step := mymoUserStep()
+	if len(step.Exec) == 0 {
+		t.Fatal("the mymo user step has no commands")
+	}
+	first := strings.Join(step.Exec[0], " ")
+	if !strings.Contains(first, "id mymo") || !strings.Contains(first, "useradd") {
+		t.Fatalf("user creation must be conditional on the user being absent: %q", first)
+	}
+	if strings.HasPrefix(strings.TrimSpace(first), "useradd") {
+		t.Fatalf("useradd must never run unconditionally: %q", first)
+	}
+}

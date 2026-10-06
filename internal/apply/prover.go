@@ -3,6 +3,7 @@ package apply
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/elvonpiko/mymo/internal/domain"
 	"github.com/elvonpiko/mymo/internal/ssh"
@@ -29,12 +30,14 @@ func (p SSHProver) ProveMymoKey(ctx context.Context) error {
 	n.KeyPath = p.PrivateKey
 	c := ssh.New(n, p.KnownHosts)
 	if err := c.Dial(ctx); err != nil {
-		return fmt.Errorf("second connection as %s: %w", MymoKeyUser, err)
+		return fmt.Errorf("the second connection as %s failed: %w", MymoKeyUser, err)
 	}
 	defer c.Close()
 	out, code, err := c.Run(ctx, "id", "-un")
-	if err != nil || code != 0 || out != MymoKeyUser {
-		return fmt.Errorf("second connection as %s: the key was accepted but the identity check failed", MymoKeyUser)
+	// a real node answers "mymo\n" — the trailing newline is the
+	// terminal's shape, not a different identity
+	if err != nil || code != 0 || strings.TrimSpace(out) != MymoKeyUser {
+		return fmt.Errorf("the key was accepted but the identity check failed")
 	}
 	return nil
 }

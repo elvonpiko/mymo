@@ -206,7 +206,7 @@ func (m Model) handleApplyDone(msg applyDoneMsg) (tea.Model, tea.Cmd) {
 		m.auditBusy = false
 		m.loading = loadingState{}
 		m.layout()
-		m.setBootstrapVerdict(msg.node, "failed at "+msg.res.FailedAt)
+		m.reopenBootstrap(msg.node, "apply stopped at "+msg.res.FailedAt+" — preflight again to resume")
 		if m.cur().kind != scNodeApplyReport {
 			return m, m.notify("the apply stopped at "+msg.res.FailedAt+" — walk back to see why", toastErr)
 		}
@@ -289,7 +289,7 @@ func (m Model) handleVerifyDone(msg verifyDoneMsg) (tea.Model, tea.Cmd) {
 	m.layout()
 	m.applyChecks = msg.checks
 	if !msg.ok {
-		m.setBootstrapVerdict(msg.node, "verify failed")
+		m.reopenBootstrap(msg.node, "verify failed — preflight again to resume")
 		return m, m.notify("the baseline ran but did not verify — mymo will not call this node ready", toastErr)
 	}
 	m.advanceBootstrap(msg.node, domain.BootstrapReady, "ready")
@@ -319,8 +319,32 @@ func (m *Model) advanceBootstrap(name string, to domain.BootstrapState, verdict 
 	}
 }
 
+// reopenBootstrap rolls a failed run back to the start of the flow.
+// The lifecycle never steps back on success; failure is the one
+// honest exception: an apply that stopped must be re-audited, because
+// the box is whatever it is now — and preflight, not the plan, is
+// what reads it. Without this, a failed apply would strand the
+// record at "applying" with no way back in.
+func (m *Model) reopenBootstrap(name, verdict string) {
+	if m.store == nil {
+		return
+	}
+	n, err := m.store.GetNode(name)
+	if err != nil {
+		return
+	}
+	n.Bootstrap = domain.Bootstrap{State: domain.BootstrapPreflight, Verdict: verdict, At: time.Now()}
+	if err := m.store.UpdateNode(n); err != nil {
+		return
+	}
+	m.reloadFleet()
+	if m.selNode.Name == name {
+		m.selNode = n
+	}
+}
+
 // setBootstrapVerdict records what happened without moving the
-// state: a failed apply is still an interrupted apply.
+// state.
 func (m *Model) setBootstrapVerdict(name, verdict string) {
 	if m.store == nil {
 		return

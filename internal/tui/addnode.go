@@ -284,6 +284,13 @@ func (m Model) finishAdd() (tea.Model, tea.Cmd) {
 	// came in, so the fact is read first
 	firstContact := m.addNode.firstContact
 	if err := m.saveNewNode(node); err != nil {
+		if errors.Is(err, state.ErrNodeExists) {
+			// the name is taken by a node that is already here —
+			// the operator's intent is to work on that node, and
+			// the way in is the fleet, not another wizard run
+			m.addNode.err = "a node named " + node.Name + " already exists — open it from the fleet and set it up there"
+			return m, nil
+		}
 		m.addNode.err = err.Error()
 		return m, nil
 	}

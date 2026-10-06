@@ -3,12 +3,14 @@ package tui
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/elvonpiko/mymo/internal/apply"
 	"github.com/elvonpiko/mymo/internal/domain"
 	"github.com/elvonpiko/mymo/internal/ssh"
 	"github.com/elvonpiko/mymo/internal/state"
@@ -258,5 +260,75 @@ func TestFirstContactEscDuringInstallCancels(t *testing.T) {
 	}
 	if !strings.Contains(m.addNode.err, "cancelled") {
 		t.Fatalf("the review must say it was cancelled: %q", m.addNode.err)
+	}
+}
+
+// TestFailedApplyReopensTheFlow proves the fix the second live test
+// forced: a failed apply left the record stranded at "applying",
+// every way back into the plan was gated, and the operator's only
+// recourse was removing the node and adding it again. A failed run
+// must roll the record back to preflight — the box is re-audited as
+// it is now, and mymo heals what it started.
+func TestFailedApplyReopensTheFlow(t *testing.T) {
+	s, err0 := state.OpenDir(t.TempDir())
+	if err0 != nil {
+		t.Fatal(err0)
+	}
+	n := domain.Node{Name: "web-1", Host: "203.0.113.10", Port: 22, User: "root",
+		Auth: domain.AuthKey, KeyPath: "/keys/web-1.key", Mode: domain.ModeObserve,
+		Bootstrap: domain.Bootstrap{State: domain.BootstrapApplying, Verdict: "applying"}}
+	if err := s.AddNode(n); err != nil {
+		t.Fatal(err)
+	}
+
+	m := New(s)
+	next, _ := m.handleApplyDone(applyDoneMsg{node: "web-1",
+		res: apply.Result{Failed: true, FailedAt: "sshd hardening"}})
+	m = next.(Model)
+
+	after, err := s.GetNode("web-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Bootstrap.State != domain.BootstrapPreflight {
+		t.Fatalf("state after a failed apply = %q, want preflight", after.Bootstrap.State)
+	}
+	if !strings.Contains(after.Bootstrap.Verdict, "preflight again to resume") {
+		t.Fatalf("verdict = %q, want the resume guidance", after.Bootstrap.Verdict)
+	}
+}
+
+// TestAddWizardPointsHomeWhenTheNameIsTaken proves the other fix the
+// second live test forced: adding a node whose name already exists
+// was a dead end — the operator removed the node and re-added it
+// just to get back into the flow. The error now points at the door
+// that was always open: the fleet.
+func TestAddWizardPointsHomeWhenTheNameIsTaken(t *testing.T) {
+	s, err0 := state.OpenDir(t.TempDir())
+	if err0 != nil {
+		t.Fatal(err0)
+	}
+	if err := s.AddNode(domain.Node{Name: "web-1", Host: "203.0.113.10", Port: 22,
+		User: "root", Auth: domain.AuthKey, KeyPath: "/keys/web-1.key", Mode: domain.ModeObserve}); err != nil {
+		t.Fatal(err)
+	}
+
+	m := New(s)
+	keyPath := filepath.Join(t.TempDir(), "web-1.key")
+	if _, err := ssh.GenerateEd25519(keyPath); err != nil {
+		t.Fatal(err)
+	}
+	m.addNode = addNodeState{stage: anReview}
+	m.addNode.vals = &addNodeValues{
+		name: "web-1", host: "203.0.113.10", port: "22", user: "root",
+		choice: acKey, keyPath: keyPath,
+	}
+	m.addNode.node = domain.Node{Name: "web-1", Host: "203.0.113.10", Port: 22,
+		User: "root", Auth: domain.AuthKey, KeyPath: keyPath, Mode: domain.ModeObserve}
+
+	next, _ := m.finishAdd()
+	m = next.(Model)
+	if !strings.Contains(m.addNode.err, "open it from the fleet") {
+		t.Fatalf("wizard error = %q, want the pointer to the fleet", m.addNode.err)
 	}
 }

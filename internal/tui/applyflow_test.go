@@ -236,8 +236,11 @@ func TestApplyFailureStopsAndReportsWhere(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n.Bootstrap.State != domain.BootstrapApplying || !strings.Contains(n.Bootstrap.Verdict, "failed at") {
-		t.Fatalf("bootstrap = %s/%s, want applying with a failed-at verdict", n.Bootstrap.State, n.Bootstrap.Verdict)
+	// a failed apply reopens the flow: the record rolls back to
+	// preflight with the resume guidance — never stranded at
+	// "applying" with no way back in
+	if n.Bootstrap.State != domain.BootstrapPreflight || !strings.Contains(n.Bootstrap.Verdict, "preflight again to resume") {
+		t.Fatalf("bootstrap = %s/%s, want preflight with the resume guidance", n.Bootstrap.State, n.Bootstrap.Verdict)
 	}
 	if strings.Contains(strings.Join(runner.calls, "\n"), "systemctl reload ssh") {
 		t.Fatal("a failed earlier step still reached the sshd reload")
