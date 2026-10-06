@@ -204,7 +204,7 @@ func New(store *state.Store) Model {
 	// typing; a first-timer meets the intro first.
 	m.descAnim = m.introDone
 	m.fleet = newFleetList(m.nodes)
-	m.actions = newActionsList()
+	m.actions = newActionsList(domain.Node{})
 	m.spinner = newCheckSpinner()
 	m.liveCPU = -1
 	applyHelpPalette(&m.help)
@@ -621,7 +621,12 @@ func (m Model) updateNodeKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "s":
 		return m.runSSH()
 	case "p":
-		return m.runPreflight()
+		// the shortcut exists exactly when the action does: a
+		// managed node has no setup to offer and no p to press
+		if !nodeIsManaged(m.selNode) {
+			return m.runPreflight()
+		}
+		return m, nil
 	case "enter":
 		if a, ok := m.actions.SelectedItem().(actionItem); ok {
 			return m.runAction(a)
@@ -682,6 +687,8 @@ func (m Model) runAction(a actionItem) (tea.Model, tea.Cmd) {
 		m.push(screen{kind: scNodeInspect, node: m.selNode.Name})
 	case actRemove:
 		m.confirmRemove = true
+	case actSetup:
+		return m.runPreflight()
 	}
 	return m, nil
 }
@@ -692,9 +699,9 @@ func (m Model) runAction(a actionItem) (tea.Model, tea.Cmd) {
 func (m *Model) openNode(n domain.Node) tea.Cmd {
 	m.stopLive()
 	m.selNode = n
-	m.actions = newActionsList()
+	m.actions = newActionsList(n)
 	// the rebuilt list must be sized to the window, not its default
-	m.actions.SetSize(m.contentWidth, len(actionDefs())+1)
+	m.actions.SetSize(m.contentWidth, len(actionDefs(n))+1)
 	m.push(screen{kind: scNode, node: n.Name})
 	m.loading = loadingState{
 		active: true,
@@ -774,7 +781,9 @@ func (m *Model) layout() {
 		fleetH = 1
 	}
 	m.fleet.SetSize(m.cardW(), fleetH)
-	m.actions.SetSize(m.stageW, len(actionDefs())+1)
+	// the list's own length is the truth: setup adds and removes a
+	// row as the box's state changes
+	m.actions.SetSize(m.stageW, len(m.actions.Items())+1)
 	m.help.SetWidth(m.stageW)
 	m.fullHelp.SetWidth(max(10, m.stageW-8))
 	if m.addNode.form != nil {
@@ -993,7 +1002,9 @@ func (m Model) keymap() help.KeyMap {
 		if m.confirmRemove {
 			return newConfirmKeymap()
 		}
-		return newNodeKeymap()
+		km := newNodeKeymap()
+		km.setup.SetEnabled(!nodeIsManaged(m.selNode))
+		return km
 	case scNodePreflight:
 		if m.loading.active {
 			return newLoadingKeymap()

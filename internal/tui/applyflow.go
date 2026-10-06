@@ -418,8 +418,11 @@ func (m Model) applyConfirmView() string {
 	if typed == n.Name {
 		cursor = okStyle.Render("▌")
 	}
-	inner += "\n" + subtextStyle.Render("type "+n.Name+" to apply — anything else aborts") + "\n\n" +
-		textStyle.Render("> ") + textStyle.Render(typed) + cursor
+	// the name to type is the one affordance on this page: dim
+	// sentence, bright name — the eye lands on the act, not the
+	// policy
+	inner += "\n" + subtextStyle.Render("type ") + accentStyle.Render(n.Name) + subtextStyle.Render(" to apply — anything else aborts") + "\n\n" +
+		accentStyle.Render("> ") + textStyle.Render(typed) + cursor
 
 	return m.centeredPanel(inner)
 }
@@ -437,22 +440,27 @@ func (m Model) applyReportView() string {
 		faintStyle.Render("· "+m.selNode.Name+" · "+verdict) + "\n\n")
 
 	for _, s := range m.applyResult.Steps {
+		// the state word is the row's spine: uppercase, one width,
+		// so done and failure read as the same column
+		state, style := "DONE", okStyle
 		switch s.State {
 		case apply.StepDone:
-			b.WriteString("  " + okStyle.Render("done") + "   " + textStyle.Render(s.Title) + "\n")
 		case apply.StepKept:
-			b.WriteString("  " + faintStyle.Render("kept") + "   " + textStyle.Render(s.Title) + "\n")
+			state, style = "KEPT", faintStyle
 		case apply.StepFailed:
-			b.WriteString("  " + errStyle.Render("FAILED") + " " + textStyle.Render(s.Title) + "\n")
+			state, style = "FAILED", errStyle
+		default:
+			state, style = "BLOCKED", faintStyle
+		}
+		b.WriteString("  " + style.Width(7).Render(state) + " " + textStyle.Render(s.Title) + "\n")
+		if s.State == apply.StepFailed {
 			for _, line := range wrapDetail(s.Note, m.stageW-8) {
 				b.WriteString("         " + subtextStyle.Render(line) + "\n")
 			}
-		default:
-			b.WriteString("  " + faintStyle.Render("blocked") + " " + textStyle.Render(s.Title) + "\n")
 		}
 	}
 	if m.applyResult.GateProven {
-		b.WriteString("\n  " + okStyle.Render("gate") + "   " + subtextStyle.Render("the mymo key was proven on a second connection before the reload") + "\n")
+		b.WriteString("\n  " + okStyle.Width(7).Render("PROVEN") + " " + subtextStyle.Render("the mymo key was proven on a second connection before the reload") + "\n")
 	}
 	if len(m.applyChecks) > 0 {
 		b.WriteString("\n")

@@ -121,11 +121,11 @@ func TestPrintApplyReportTellsTheWholeStory(t *testing.T) {
 	printApplyReport(&buf, res)
 	out := buf.String()
 	for _, want := range []string{
-		"done   system update",
-		"kept   mymo admin user",
-		"FAILED sshd hardening",
+		"DONE    system update",
+		"KEPT    mymo admin user",
+		"FAILED  sshd hardening",
 		"the gate refused",
-		"blocked docker engine",
+		"BLOCKED docker engine",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("report missing %q:\n%s", want, out)
@@ -143,7 +143,7 @@ func TestPrintVerifyChecksMarksFailures(t *testing.T) {
 		{Group: "verify", Title: "firewall", Outcome: preflight.Abort, Detail: "ufw is inactive"},
 	})
 	out := buf.String()
-	if !strings.Contains(out, "ok     sshd posture") || !strings.Contains(out, "FAILED firewall") {
+	if !strings.Contains(out, "OK     sshd posture") || !strings.Contains(out, "FAILED firewall") {
 		t.Errorf("verify rows:\n%s", out)
 	}
 }

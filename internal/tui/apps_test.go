@@ -101,9 +101,11 @@ func TestNodeAppsPageFiltersToOneNode(t *testing.T) {
 	seedApp(t, s, sampleApp("celery", "web-2"))
 
 	m := press(t, New(s), "n", "enter")
-	// the probe answers, then the ACTIONS list: down to Applications
+	// the probe answers, then the ACTIONS list: down twice to
+	// Applications — setup leads the list on an unmanaged box
 	m = observe(t, m, "web-1", richSnapshot("web-1"))
 	m = driveKeys(t, m,
+		tea.KeyPressMsg{Code: tea.KeyDown},
 		tea.KeyPressMsg{Code: tea.KeyDown},
 		tea.KeyPressMsg{Code: tea.KeyEnter},
 	)

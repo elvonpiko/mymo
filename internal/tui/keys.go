@@ -207,36 +207,36 @@ func (k applyReportKeymap) FullHelp() [][]key.Binding {
 // Node keymap: the observe page's action list plus direct ssh and
 // the app-host preflight.
 type nodeKeymap struct {
-	navigate  key.Binding
-	open      key.Binding
-	ssh       key.Binding
-	preflight key.Binding
-	back      key.Binding
-	help      key.Binding
-	quit      key.Binding
+	navigate key.Binding
+	open     key.Binding
+	ssh      key.Binding
+	setup    key.Binding
+	back     key.Binding
+	help     key.Binding
+	quit     key.Binding
 }
 
 func newNodeKeymap() nodeKeymap {
 	return nodeKeymap{
-		navigate:  key.NewBinding(key.WithKeys("up", "down"), key.WithHelp("↑↓", "navigate")),
-		open:      key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "select")),
-		ssh:       key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "ssh")),
-		preflight: key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "preflight")),
-		back:      key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
-		help:      key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
-		quit:      key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
+		navigate: key.NewBinding(key.WithKeys("up", "down"), key.WithHelp("↑↓", "navigate")),
+		open:     key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "select")),
+		ssh:      key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "ssh")),
+		setup:    key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "set up this node")),
+		back:     key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
+		help:     key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
+		quit:     key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
 	}
 }
 
 // ShortHelp keeps only the page's distinctive keys; everything else
 // waits behind ?.
 func (k nodeKeymap) ShortHelp() []key.Binding {
-	return []key.Binding{k.open, k.ssh, k.preflight, k.back, k.help, k.quit}
+	return []key.Binding{k.open, k.ssh, k.setup, k.back, k.help, k.quit}
 }
 
 func (k nodeKeymap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.navigate, k.open, k.ssh, k.preflight},
+		{k.navigate, k.open, k.ssh, k.setup},
 		{k.back},
 		{k.help, k.quit},
 	}

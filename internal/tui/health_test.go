@@ -283,8 +283,9 @@ func TestInspectShowsRecordAndFacts(t *testing.T) {
 	nodeWithFacts(t, s, "web-1")
 	m := press(t, New(s), "n", "enter")
 	m = observe(t, m, "web-1", richSnapshot("web-1"))
-	// two downs land on Inspect record (third action)
-	m = press(t, m, "down", "down", "enter")
+	// three downs land on Inspect record (fourth action — setup
+	// leads the list on an unmanaged box)
+	m = press(t, m, "down", "down", "down", "enter")
 	got := view(m)
 	for _, want := range []string{
 		"Stored record", "Discovered", "Ubuntu 24.04.5 LTS", "just now", "last check", "ok just now",
@@ -314,16 +315,20 @@ func TestObservePageSectionsBreathe(t *testing.T) {
 	if !strings.Contains(lines[3], "root@203.0.113.10:22") || !strings.Contains(lines[3], "agent auth") {
 		t.Errorf("heading lost the connection identity: %q", lines[3])
 	}
-	// air between the heading, the cards, and the actions
-	for _, i := range []int{4, 11, 16} {
+	// air between the cards — the floor is 19 rows, and borders and
+	// the colored statement are their own breaks
+	for _, i := range []int{10} {
 		if strings.Trim(lines[i], "\u2502 ") != "" {
 			t.Errorf("row %d should be air between sections: %q", i, lines[i])
 		}
 	}
-	// SYSTEM and LIVE keep their titles; all four actions survive the
-	// exact 19-row floor budget
-	if !strings.Contains(lines[5], "SYSTEM") || !strings.Contains(lines[12], "LIVE") {
+	// SYSTEM and LIVE keep their titles; the unmanaged statement
+	// leads the actions; all five actions survive the 19-row floor
+	if !strings.Contains(lines[4], "SYSTEM") || !strings.Contains(lines[11], "LIVE") {
 		t.Fatalf("section layout shifted:\n%s", strings.Join(lines, "\n"))
+	}
+	if !strings.Contains(lines[15], "not yet a mymo node") {
+		t.Errorf("the unmanaged statement left the page: %q", lines[15])
 	}
 	if !strings.Contains(lines[21], "Remove") {
 		t.Errorf("last action clipped at the floor: %q", lines[21])
@@ -334,8 +339,8 @@ func TestObservePageSectionsBreathe(t *testing.T) {
 			t.Errorf("SYSTEM card carries snapshot trivia: %q", r)
 		}
 	}
-	if !strings.Contains(lines[14], "UP") || !strings.Contains(lines[14], "1d 18h") {
-		t.Errorf("LIVE card lost the uptime: %q", lines[14])
+	if !strings.Contains(lines[13], "UP") || !strings.Contains(lines[13], "1d 18h") {
+		t.Errorf("LIVE card lost the uptime: %q", lines[13])
 	}
 }
 
@@ -357,10 +362,10 @@ func TestCardsSpanTheStage(t *testing.T) {
 		}
 		return utf8.RuneCountInString(line[:i])
 	}
-	top := colOf(lines[5], "\u256e")     // ╮
-	bottom := colOf(lines[10], "\u256f") // ╯
+	top := colOf(lines[4], "\u256e")    // ╮
+	bottom := colOf(lines[9], "\u256f") // ╯
 	if top < 0 || top != bottom {
-		t.Errorf("card corners misaligned: top=%d bottom=%d\n%s", top, bottom, lines[5]+"\n"+lines[10])
+		t.Errorf("card corners misaligned: top=%d bottom=%d\n%s", top, bottom, lines[4]+"\n"+lines[9])
 	}
 	// and the card spans the wide stage instead of hugging the old
 	// fixed width

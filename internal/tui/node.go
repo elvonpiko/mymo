@@ -24,17 +24,34 @@ const (
 	actApps
 	actInspect
 	actRemove
+	actSetup
 )
 
-// actionDefs lists the observe page's actions. Checking is not among
-// them: entering the page is the check.
-func actionDefs() []actionItem {
-	return []actionItem{
-		{actSSH, "SSH", "open an interactive session on the node"},
-		{actApps, "Applications", "list applications on this node"},
-		{actInspect, "Inspect record", "the full stored state for this node"},
-		{actRemove, "Remove", "remove this node from mymo"},
+// nodeIsManaged reports whether the baseline has been applied and
+// verified — whether this box already answers to mymo.
+func nodeIsManaged(n domain.Node) bool {
+	return n.Bootstrap.State == domain.BootstrapVerified ||
+		n.Bootstrap.State == domain.BootstrapReady
+}
+
+// actionDefs lists the observe page's actions, the first one offered
+// only while it can still be used: setup exists for a box that is
+// not yet a mymo node and disappears the moment it is one. A managed
+// node never sees it again — drift and upgrades are later work, not
+// a re-run of onboarding. Checking is not among these either:
+// entering the page is the check.
+func actionDefs(n domain.Node) []actionItem {
+	defs := make([]actionItem, 0, 5)
+	if !nodeIsManaged(n) {
+		defs = append(defs, actionItem{actSetup, "Set up this node",
+			"preflight · plan · apply — turn this box into a mymo node"})
 	}
+	return append(defs,
+		actionItem{actSSH, "SSH", "open an interactive session on the node"},
+		actionItem{actApps, "Applications", "list applications on this node"},
+		actionItem{actInspect, "Inspect record", "the full stored state for this node"},
+		actionItem{actRemove, "Remove", "remove this node from mymo"},
+	)
 }
 
 // actionItem adapts a node action for the actions list.
@@ -64,16 +81,23 @@ func (actionDelegate) Render(w io.Writer, m list.Model, index int, item list.Ite
 		cursor = "> "
 		titleStyle = itemSelStyle
 	}
+	if a.id == actSetup {
+		// the one action that will not be here forever is the one
+		// the eye must find first
+		titleStyle = accentStyle
+	}
 	fmt.Fprint(w, cursor+titleStyle.Width(18).Render(a.title)+dimStyle.Render(a.desc))
 }
 
-// newActionsList builds the node actions list.
-func newActionsList() list.Model {
-	items := make([]list.Item, 0, len(actionDefs()))
-	for _, a := range actionDefs() {
+// newActionsList builds the node actions list for the node being
+// opened — the offered actions belong to the box, not the app.
+func newActionsList(n domain.Node) list.Model {
+	defs := actionDefs(n)
+	items := make([]list.Item, 0, len(defs))
+	for _, a := range defs {
 		items = append(items, a)
 	}
-	l := list.New(items, actionDelegate{}, 80, len(actionDefs()))
+	l := list.New(items, actionDelegate{}, 80, len(defs))
 	l.SetShowTitle(false)
 	l.SetShowStatusBar(false)
 	l.SetShowHelp(false)
@@ -88,9 +112,10 @@ func (m Model) nodeView() string {
 	n := m.selNode
 	var b strings.Builder
 	b.WriteString(m.nodeHeadingLine(n))
-	// air between the heading, the cards, and the actions: sections
-	// read as sections, not one squeezed block
-	b.WriteString("\n\n")
+	// the floor is 19 rows and every action must be visible: the
+	// cards' borders and the colored statement are their own breaks,
+	// so the air is spent between cards and nowhere else
+	b.WriteString("\n")
 	b.WriteString(m.systemCard(n))
 	// the LIVE card exists only once something is there to sample,
 	// and spans the same width as the SYSTEM card beside it
@@ -98,7 +123,14 @@ func (m Model) nodeView() string {
 		b.WriteString("\n\n")
 		b.WriteString(titledCard("LIVE", padLines(m.liveCardInner(), m.cardW())))
 	}
-	b.WriteString("\n\n")
+	b.WriteString("\n")
+	if !nodeIsManaged(n) {
+		// the page states what the box is before it offers to change
+		// it — an honest sentence, not a badge to decode
+		b.WriteString(warnStyle.Render("this box is not yet a mymo node") +
+			subtextStyle.Render(" — one setup makes it mymo's"))
+		b.WriteString("\n")
+	}
 	b.WriteString(sectionLabel("ACTIONS"))
 	b.WriteString("\n")
 	b.WriteString(m.actions.View())

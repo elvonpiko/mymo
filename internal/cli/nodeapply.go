@@ -225,20 +225,23 @@ func mymoKeyPath(store *state.Store, name string) string {
 // blocked — with the failure's reason in full.
 func printApplyReport(w io.Writer, res apply.Result) {
 	for _, s := range res.Steps {
+		state := "DONE"
 		switch s.State {
 		case apply.StepDone:
-			fmt.Fprintf(w, "  %-6s %s\n", "done", s.Title)
 		case apply.StepKept:
-			fmt.Fprintf(w, "  %-6s %s\n", "kept", s.Title)
+			state = "KEPT"
 		case apply.StepFailed:
-			fmt.Fprintf(w, "  %-6s %s\n", "FAILED", s.Title)
-			fmt.Fprintf(w, "         %s\n", s.Note)
+			state = "FAILED"
 		default:
-			fmt.Fprintf(w, "  %-6s %s\n", "blocked", s.Title)
+			state = "BLOCKED"
+		}
+		fmt.Fprintf(w, "  %-7s %s\n", state, s.Title)
+		if s.State == apply.StepFailed {
+			fmt.Fprintf(w, "         %s\n", s.Note)
 		}
 	}
 	if res.GateProven {
-		fmt.Fprintln(w, "  gate   the mymo key was proven on a second connection before the reload")
+		fmt.Fprintln(w, "  PROVEN the mymo key was proven on a second connection before the reload")
 	}
 }
 
@@ -246,7 +249,7 @@ func printApplyReport(w io.Writer, res apply.Result) {
 // now enforces, effective state, not config file claims.
 func printVerifyChecks(w io.Writer, checks []preflight.Check) {
 	for _, c := range checks {
-		mark := "ok"
+		mark := "OK"
 		if c.Outcome != preflight.Pass {
 			mark = "FAILED"
 		}

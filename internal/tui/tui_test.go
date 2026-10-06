@@ -245,17 +245,22 @@ func TestNodeActionsNavigation(t *testing.T) {
 	s := readyStore(t)
 	seedNode(t, s, "web-1")
 
-	// Actions in display order: SSH, Applications, Inspect record,
-	// Remove. SSH execs a real ssh client, so the journey skips it:
-	// this test walks the navigable screens.
+	// Actions in display order for an unmanaged box: Set up this
+	// node, SSH, Applications, Inspect record, Remove. SSH execs a
+	// real ssh client and Set up starts a real probe, so the journey
+	// walks the navigable screens — after proving the setup action
+	// is offered first.
 	m := press(t, New(s), "n", "enter")
 	m = step(t, m, checkDoneMsg{
 		node: "web-1", seq: m.checkSeq,
 		snap:   facts.Node{Hostname: "web-1", CollectedAt: time.Now()},
 		client: ssh.New(domain.Node{}, ""),
 	})
+	if got := view(m); !strings.Contains(got, "Set up this node") {
+		t.Fatalf("an unmanaged box must offer setup first:\n%s", got)
+	}
 
-	m = press(t, m, "down", "enter") // action 1: Applications
+	m = press(t, m, "down", "down", "enter") // action 2: Applications
 	if got := view(m); !strings.Contains(got, "no mymo-managed applications") {
 		t.Fatalf("applications action missing:\n%s", got)
 	}
@@ -264,13 +269,13 @@ func TestNodeActionsNavigation(t *testing.T) {
 		t.Fatalf("esc did not return to the observe page:\n%s", got)
 	}
 
-	m = press(t, m, "down", "enter") // action 2: Inspect (index preserved at 1)
+	m = press(t, m, "down", "enter") // action 3: Inspect (index preserved at 2)
 	if got := view(m); !strings.Contains(got, "Stored record") {
 		t.Fatalf("inspect action missing:\n%s", got)
 	}
 	m = press(t, m, "esc")
 
-	m = press(t, m, "down", "enter") // action 3: Remove (index preserved at 2)
+	m = press(t, m, "down", "enter") // action 4: Remove (index preserved at 3)
 	if got := view(m); !strings.Contains(got, "not touched") {
 		t.Fatalf("remove confirmation missing:\n%s", got)
 	}
@@ -290,9 +295,9 @@ func TestRemoveNodeFlow(t *testing.T) {
 		snap:   facts.Node{Hostname: "web-1", CollectedAt: time.Now()},
 		client: ssh.New(domain.Node{}, ""),
 	})
-	// four actions: SSH, Applications, Inspect, Remove — three downs
-	// land on Remove.
-	m = press(t, m, "down", "down", "down", "enter", "y")
+	// five actions for an unmanaged box: Set up, SSH, Applications,
+	// Inspect, Remove — four downs land on Remove.
+	m = press(t, m, "down", "down", "down", "down", "enter", "y")
 	if _, err := s.GetNode("web-1"); !errors.Is(err, state.ErrNodeNotFound) {
 		t.Fatalf("node still present after confirm: %v", err)
 	}

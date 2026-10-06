@@ -225,7 +225,7 @@ func TestApplyFailureStopsAndReportsWhere(t *testing.T) {
 	}
 	out := ansiStrip(view(m))
 	for _, want := range []string{
-		"FAILED", "blocked", "the steps after the failure were never attempted",
+		"FAILED", "BLOCKED", "the steps after the failure were never attempted",
 		"untouched",
 	} {
 		if !strings.Contains(out, want) {
@@ -270,7 +270,7 @@ func TestApplyVerifiesAndReachesReady(t *testing.T) {
 	}
 	out := ansiStrip(view(m))
 	for _, want := range []string{
-		"done", "gate", "the mymo key was proven",
+		"DONE", "PROVEN", "the mymo key was proven",
 		"sshd posture", "applied and verified",
 		"mymo node promote web-1",
 	} {
