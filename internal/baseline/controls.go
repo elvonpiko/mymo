@@ -193,6 +193,74 @@ const DockerDaemonConfig = `{
   "live-restore": true
 }`
 
+// CaddyVersion is the caddy release mymo pins: upgrades are
+// explicit baseline changes, never a silent drift from a rolling
+// repository.
+const CaddyVersion = "2.11.7"
+
+// CaddyReleaseBase is where the official release assets live.
+const CaddyReleaseBase = "https://github.com/caddyserver/caddy/releases/download/v" + CaddyVersion + "/"
+
+// CaddyAsset is the official release artifact for one architecture:
+// the archive file name and its SHA-512 digest from the release's
+// own checksums file.
+type CaddyAsset struct {
+	File   string
+	SHA512 string
+}
+
+// CaddyAssets maps the box's uname machine to its artifact. The
+// cloudsmith apt repository is not used: it is sponsor-quota
+// limited and was observed serving 402 Payment Required to every
+// apt on the box — a fleet's proxy cannot hang on a bandwidth
+// ledger. The static binary is Caddy's own distribution, pinned by
+// version and digest.
+var CaddyAssets = map[string]CaddyAsset{
+	"x86_64":  {"caddy_" + CaddyVersion + "_linux_amd64.tar.gz", "a7a433a1b133efc3c8d10eb0b99d52a24b5ef5c322dc77f5282182b1c0402139ab83f3a99f0c52409df77d20123fb0b523edad8a66d8f5e49136197bf61ef0e7"},
+	"aarch64": {"caddy_" + CaddyVersion + "_linux_arm64.tar.gz", "3db36ba90c7a6e8dda40ee3dd71fa08844c76b5fb08f61b31e5e78d2ed38e71c51dc7baed875e50d1ca1279196e84302967237386ae87c91ae9f2aaceada682e"},
+	"armv7l":  {"caddy_" + CaddyVersion + "_linux_armv7.tar.gz", "6eb3894f9a215f75f3ec50e627c34b2cd6fb81d10ec7838f27c30dcf417b810f618136b507766bc17e7400a5c0f4fa6001bb062ebb7a401ee63505012615825e"},
+}
+
+// CaddyServiceUnit is the official systemd unit from caddy's own
+// dist (caddyserver/dist init/caddy.service), byte for byte: mymo
+// runs caddy the way its makers run it.
+const CaddyServiceUnit = `# caddy.service
+#
+# For using Caddy with a config file.
+#
+# Make sure the ExecStart and ExecReload commands are correct
+# for your installation.
+#
+# See https://caddyserver.com/docs/install for instructions.
+#
+# WARNING: This service does not use the --resume flag, so if you
+# use the API to make changes, they will be overwritten by the
+# Caddyfile next time the service is restarted. If you intend to
+# use Caddy's API to configure it, add the --resume flag to the
+# ` + "`caddy run`" + ` command or use the caddy-api.service file instead.
+
+[Unit]
+Description=Caddy
+Documentation=https://caddyserver.com/docs/
+After=network.target network-online.target
+Requires=network-online.target
+
+[Service]
+Type=notify
+User=caddy
+Group=caddy
+ExecStart=/usr/bin/caddy run --environ --config /etc/caddy/Caddyfile
+ExecReload=/usr/bin/caddy reload --config /etc/caddy/Caddyfile --force
+TimeoutStopSec=5s
+LimitNOFILE=1048576
+PrivateTmp=true
+ProtectSystem=full
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target
+`
+
 // CaddyImport is the one line mymo adds to /etc/caddy/Caddyfile:
 // its marker for recognizing its own caddy, in preflight and at
 // deploy alike.

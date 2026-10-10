@@ -394,55 +394,99 @@ func caddyAdoptable(f facts.Node, a preflight.Audit) bool {
 	return f.Caddy != ""
 }
 
+// caddyCloudsmithAside moves the cloudsmith apt repository out of
+// apt's way, keeping one copy: the repository is sponsor-quota
+// limited and has served 402 Payment Required to every apt on the
+// box, and mymo does not use it. Whatever put the file there — a
+// person, an earlier mymo — the box's apt does not work while it
+// stands.
+const caddyCloudsmithAside = "rm -f /etc/apt/sources.list.d/caddy-stable.list.pre-mymo 2>/dev/null; " +
+	"mv /etc/apt/sources.list.d/caddy-stable.list /etc/apt/sources.list.d/caddy-stable.list.pre-mymo 2>/dev/null || true"
+
+// caddyStep installs caddy by its official production recipe: the
+// static binary from its own release distribution, verified by the
+// release's own SHA-512 digest, run under its official systemd unit.
+// No third-party apt repository — the cloudsmith one is
+// sponsor-quota limited and was observed refusing every apt on the
+// box with 402 Payment Required. A version pinned by digest is
+// deterministic; a rolling repo is not.
 func caddyStep(f facts.Node, a preflight.Audit) Step {
 	if caddyAdoptable(f, a) {
 		return Step{
 			Control: "caddy",
 			Title:   "caddy \u2014 adopt",
-			Detail:  "adopt caddy " + firstWord(f.Caddy) + "; its config is untouched",
-			Exec:    [][]string{{"systemctl", "enable", "caddy"}},
+			Detail:  "adopt caddy " + firstWord(f.Caddy) + "; nothing reinstalls",
+			Exec: [][]string{
+				{"sh", "-c", caddyCloudsmithAside},
+				{"install", "-d", "/etc/caddy/mymo"},
+				{"sh", "-c", "test -f /etc/caddy/mymo/Placeholder.caddy || printf '# mymo routes land here as apps deploy\n' > /etc/caddy/mymo/Placeholder.caddy"},
+				{"sh", "-c", "grep -q '" + baseline.CaddyImport + "' /etc/caddy/Caddyfile 2>/dev/null || printf '" + baseline.CaddyImport + "\n' >> /etc/caddy/Caddyfile"},
+				{"systemctl", "enable", "--now", "caddy"},
+				{"systemctl", "reload", "caddy"},
+			},
+			Notes: []string{
+				"moving the cloudsmith repo aside \u2014 it breaks apt",
+				"making mymo's route directory",
+				"planting the routes placeholder",
+				"adding mymo's import to the Caddyfile",
+				"enabling caddy",
+				"reloading caddy with mymo's import",
+			},
 		}
 	}
+	asset, ok := baseline.CaddyAssets[f.Arch]
+	if !ok {
+		// preflight refuses unsupported architectures before a plan
+		// is ever generated; this arm keeps the step honest if it is
+		// ever reached anyway
+		asset, ok = baseline.CaddyAssets["x86_64"]
+		if !ok {
+			asset = baseline.CaddyAsset{}
+		}
+	}
+	url := baseline.CaddyReleaseBase + asset.File
 	return Step{
 		Control:  "caddy",
 		Title:    "caddy",
-		Detail:   "install caddy from its official cloudsmith repo",
+		Detail:   "install caddy " + baseline.CaddyVersion + " \u2014 official pinned binary",
 		Packages: []string{baseline.CaddyPackage},
-		Check:    installedCheck(baseline.CaddyPackage),
-		// caddy's official install recipe: the repo's prerequisite
-		// packages, the signing key dearmored into the system
-		// keyring, then the repo file, then the install. The key
-		// lands before the file (ADR-0009) and --yes lets the
-		// dearmor overwrite an earlier attempt's keyring, so a
-		// resume runs the recipe again to the same end.
+		// the end state is the binary in place and mymo's marker in
+		// the Caddyfile: both present and the step is done, however
+		// many attempts it took
+		Check: []string{"sh", "-c", "test -x /usr/bin/caddy && grep -q '" + baseline.CaddyImport + "' /etc/caddy/Caddyfile 2>/dev/null"},
+		Files: []File{
+			// the official systemd unit, byte for byte from
+			// caddy's own dist: mymo runs caddy the way its makers
+			// run it
+			{Path: "/etc/systemd/system/caddy.service",
+				Content: baseline.CaddyServiceUnit, Mode: "0644", Owner: "root:root"},
+		},
 		Exec: [][]string{
-			{"sh", "-c", "test -r /usr/share/keyrings/caddy-stable-archive-keyring.gpg || mv /etc/apt/sources.list.d/caddy-stable.list /etc/apt/sources.list.d/caddy-stable.list.interrupted 2>/dev/null || true"},
+			{"sh", "-c", caddyCloudsmithAside},
 			{"apt-get", "update"},
-			{"apt-get", "install", "-y", "debian-keyring", "debian-archive-keyring", "apt-transport-https", "ca-certificates", "curl", "gpg"},
-			{"install", "-d", "/usr/share/keyrings"},
-			{"sh", "-c", "curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --batch --yes --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg"},
-			repoFileWrite("/etc/apt/sources.list.d/caddy-stable.list",
-				"deb [signed-by=/usr/share/keyrings/caddy-stable-archive-keyring.gpg] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any main"),
-			{"apt-get", "update"},
-			{"apt-get", "install", "-y", baseline.CaddyPackage},
-			{"systemctl", "enable", "--now", baseline.CaddyPackage},
-			// the import line is mymo's marker in caddy's config: it
-			// is what preflight later recognizes as its own, and the
-			// placeholder keeps the import valid until apps arrive
+			{"apt-get", "install", "-y", "ca-certificates", "curl", "tar"},
+			{"sh", "-c", "getent group caddy >/dev/null || groupadd --system caddy"},
+			{"useradd", "--system", "--gid", "caddy", "--create-home", "--home-dir", "/var/lib/caddy", "--shell", "/usr/sbin/nologin", "--comment", "Caddy web server", "caddy"},
+			{"curl", "-fsSL", url, "-o", "/tmp/caddy.tar.gz"},
+			{"sh", "-c", "echo '" + asset.SHA512 + "  /tmp/caddy.tar.gz' | sha512sum -c -"},
+			{"sh", "-c", "tar -xzf /tmp/caddy.tar.gz -C /tmp caddy && install -m 0755 /tmp/caddy /usr/bin/caddy && rm -f /tmp/caddy /tmp/caddy.tar.gz"},
+			{"systemctl", "daemon-reload"},
+			{"systemctl", "enable", "--now", "caddy"},
 			{"install", "-d", "/etc/caddy/mymo"},
 			{"sh", "-c", "test -f /etc/caddy/mymo/Placeholder.caddy || printf '# mymo routes land here as apps deploy\n' > /etc/caddy/mymo/Placeholder.caddy"},
-			{"sh", "-c", "grep -q '" + baseline.CaddyImport + "' /etc/caddy/Caddyfile || printf '" + baseline.CaddyImport + "\n' >> /etc/caddy/Caddyfile"},
-			{"systemctl", "reload", baseline.CaddyPackage},
+			{"sh", "-c", "grep -q '" + baseline.CaddyImport + "' /etc/caddy/Caddyfile 2>/dev/null || printf '" + baseline.CaddyImport + "\n' >> /etc/caddy/Caddyfile"},
+			{"systemctl", "reload", "caddy"},
 		},
 		Notes: []string{
-			"moving any keyless leftover repo file aside",
-			"refreshing apt before anything lands",
-			"installing the repo's prerequisite packages",
-			"making the keyring directory",
-			"fetching caddy's signing key",
-			"adding caddy's repository",
-			"refreshing apt with caddy's repo",
-			"installing caddy",
+			"moving the cloudsmith repo aside \u2014 it breaks apt",
+			"refreshing apt before the prerequisites",
+			"installing ca-certificates, curl, tar",
+			"creating the caddy group",
+			"creating the caddy service user",
+			"downloading caddy " + baseline.CaddyVersion + " for " + f.Arch,
+			"verifying the release checksum",
+			"installing the caddy binary to /usr/bin",
+			"loading caddy's systemd unit",
 			"enabling caddy",
 			"making mymo's route directory",
 			"planting the routes placeholder",

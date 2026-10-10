@@ -188,35 +188,39 @@ func TestGenerateCleanUbuntuPlan(t *testing.T) {
 			caddy = s
 		}
 	}
-	// the repo line is pinned in the command that writes it —
-	// cloudsmith's own stable repo, this keyring's signature
-	var caddyLine string
-	for _, argv := range caddy.Exec {
-		if j := strings.Join(argv, " "); strings.Contains(j, "sources.list.d/caddy-stable.list") && strings.Contains(j, "printf") {
-			caddyLine = j
-		}
-	}
-	if !strings.Contains(caddyLine, "https://dl.cloudsmith.io/public/caddy/stable/deb/debian any main") {
-		t.Errorf("caddy source list wrong: %q", caddyLine)
-	}
-	// the setup plants mymo's marker so the box is recognizable as
-	// mymo's own from the first setup onward: the route directory,
-	// its placeholder, the import line, the reload
+	// caddy is the official static binary: no third-party apt
+	// repository at all, the release archive verified by its own
+	// digest, run under the official systemd unit
 	var all strings.Builder
 	for _, argv := range caddy.Exec {
 		all.WriteString(strings.Join(argv, " ") + "\n")
 	}
 	caddyExec := all.String()
 	for _, want := range []string{
+		baseline.CaddyReleaseBase,
+		"sha512sum -c",
+		"install -m 0755 /tmp/caddy /usr/bin/caddy",
+		"useradd --system --gid caddy",
+		"systemctl daemon-reload",
 		"install -d /etc/caddy/mymo",
 		"/etc/caddy/mymo/Placeholder.caddy",
-		"grep -q 'import mymo/*.caddy' /etc/caddy/Caddyfile",
 		"printf 'import mymo/*.caddy\n' >> /etc/caddy/Caddyfile",
 		"systemctl reload caddy",
+		// the cloudsmith repo is moved aside wherever it came from:
+		// while it stands it 402s every apt on the box
+		"mv /etc/apt/sources.list.d/caddy-stable.list /etc/apt/sources.list.d/caddy-stable.list.pre-mymo",
 	} {
 		if !strings.Contains(caddyExec, want) {
-			t.Errorf("the caddy setup misses its marker (%s):\n%s", want, caddyExec)
+			t.Errorf("the caddy setup misses its official recipe (%s):\n%s", want, caddyExec)
 		}
+	}
+	if strings.Contains(caddyExec, "dl.cloudsmith.io/public") {
+		t.Errorf("the caddy step still talks to the cloudsmith repository:\n%s", caddyExec)
+	}
+	// the official systemd unit, byte for byte
+	if len(caddy.Files) != 1 || caddy.Files[0].Path != "/etc/systemd/system/caddy.service" ||
+		!strings.Contains(caddy.Files[0].Content, "ExecStart=/usr/bin/caddy run --environ --config /etc/caddy/Caddyfile") {
+		t.Errorf("the official systemd unit is not the caddy step's file: %+v", caddy.Files)
 	}
 
 	// the marker names every control
@@ -538,33 +542,14 @@ func TestARepoFileNeverExistsWithoutItsKey(t *testing.T) {
 			}
 		}
 		if s.Control == "caddy" {
-			if !strings.Contains(strings.Join(s.Exec[0], " "), "mv /etc/apt/sources.list.d/caddy-stable.list") {
-				t.Errorf("the caddy step does not unpoison a keyless repo file first:\n%s", strings.Join(s.Exec[0], " "))
-			}
-			keyAt, fileAt := -1, -1
-			for i, argv := range s.Exec {
-				j := strings.Join(argv, " ")
-				if strings.Contains(j, "gpg.key") && strings.Contains(j, "dearmor") {
-					keyAt = i
-				}
-				if strings.Contains(j, "sources.list.d/caddy-stable.list") && i > 0 {
-					if fileAt < 0 {
-						fileAt = i
-					}
-				}
-			}
-			if keyAt < 0 || fileAt < 0 || fileAt < keyAt {
-				t.Errorf("the caddy repo file (cmd %d) does not follow its key (cmd %d)", fileAt, keyAt)
-			}
-			// the official recipe's prerequisite packages ride along
-			found := false
+			// caddy carries no apt repository at all: the rule holds
+			// trivially, and the cloudsmith leftover is moved aside
+			// wherever it came from — it 402s every apt on the box
 			for _, argv := range s.Exec {
-				if strings.Join(argv, " ") == "apt-get install -y debian-keyring debian-archive-keyring apt-transport-https ca-certificates curl gpg" {
-					found = true
+				if strings.Contains(strings.Join(argv, " "), "sources.list.d/caddy-stable.list") &&
+					!strings.Contains(strings.Join(argv, " "), "mv ") {
+					t.Errorf("the caddy step writes a repo file instead of moving it aside: %v", argv)
 				}
-			}
-			if !found {
-				t.Error("the caddy step skips the official recipe's prerequisite packages")
 			}
 		}
 	}
