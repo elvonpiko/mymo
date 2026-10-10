@@ -148,6 +148,13 @@ func runDeploy(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		fmt.Fprintf(stderr, "mymo deploy: %v\n", err)
 		return exitErr
 	}
+	// a public hostname belongs to one app: the conflict is
+	// detectable here, so it is refused here — before the dial,
+	// before the confirm, before any mutation on the node
+	if err := store.CheckDomainFree(app); err != nil {
+		fmt.Fprintf(stderr, "mymo deploy: %v\n", err)
+		return exitErr
+	}
 
 	expose := app.Domain
 	if expose == "" {

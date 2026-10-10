@@ -52,6 +52,19 @@ func (f *fakeRunner) Run(_ context.Context, name string, args ...string) (string
 		return "", 0, nil
 	}
 
+	// docker inspect answers like the real one: exit 0 with the
+	// object when it exists, exit 1 when it does not — the orphan
+	// detection depends on the difference
+	if name == "docker" && len(args) >= 2 && args[0] == "inspect" {
+		if out, ok := f.responses[key]; ok {
+			return out, 0, nil
+		}
+		if code, ok := f.codes[key]; ok {
+			return "", code, nil
+		}
+		return "Error: No such object: " + strings.Join(args[1:], " "), 1, nil
+	}
+
 	if name == "cat" {
 		if f.files != nil {
 			if content, ok := f.files[strings.Join(args, " ")]; ok {
@@ -552,5 +565,67 @@ func TestArchiveSkipsGitAndKeepsTheRest(t *testing.T) {
 	}
 	if strings.Contains(joined, ".git") {
 		t.Errorf(".git traveled to the node:\n%s", joined)
+	}
+}
+
+// An interrupted deploy leaves an orphaned staging container: mymo
+// died after docker run but before the record was written, so the
+// next attempt computes the same release id and the name collides.
+// The engine detects its own leftover at the door — the container
+// name is by construction this release's — removes it, says so, and
+// the release starts fresh.
+func TestInterruptedDeployIsRecoveredAtTheNextAttempt(t *testing.T) {
+	app := imageApp()
+	r := nodeRunner()
+	// the interrupted attempt left r1's container on the node; the
+	// record knows nothing about it
+	r.responses["docker inspect mymo-api-r1"] = `{"Name":"mymo-api-r1","State":{"Status":"exited"}}`
+	firstDeployHealth(r, "mymo-api-r1")
+
+	var narrated []string
+	o := goodOpts()
+	o.Progress = func(line string) { narrated = append(narrated, line) }
+
+	res := Deploy(context.Background(), r, app, o)
+	if !res.OK {
+		t.Fatalf("the interrupted deploy was not recovered (failed at %s):\n%s", res.FailedAt, r.callList())
+	}
+	if !r.called("docker rm -f mymo-api-r1") {
+		t.Fatal("the orphaned staging container was left in the way")
+	}
+	said := false
+	for _, line := range narrated {
+		if strings.Contains(line, "interrupted r1 staging container") {
+			said = true
+		}
+	}
+	if !said {
+		t.Errorf("the recovery was silent:\n%s", strings.Join(narrated, "\n"))
+	}
+	if len(res.App.Releases) != 1 || res.App.Releases[0].ID != 1 ||
+		res.App.Releases[0].State != domain.ReleaseActive {
+		t.Errorf("releases = %+v", res.App.Releases)
+	}
+}
+
+// When the leftover cannot be removed — a stuck container, a
+// permissions drift — the deploy refuses before starting anything,
+// and says exactly what stands in the way and whose it is.
+func TestUnremovableLeftoverRefusesBeforeStarting(t *testing.T) {
+	app := imageApp()
+	r := nodeRunner()
+	r.responses["docker inspect mymo-api-r1"] = `{"Name":"mymo-api-r1"}`
+	r.codes["docker rm -f mymo-api-r1"] = 1
+	firstDeployHealth(r, "mymo-api-r1")
+
+	res := Deploy(context.Background(), r, app, goodOpts())
+	if res.OK || res.FailedAt != "stage" {
+		t.Fatalf("a stuck leftover let the deploy through: ok=%v failedAt=%s", res.OK, res.FailedAt)
+	}
+	if len(res.Steps) == 0 || !strings.Contains(res.Steps[len(res.Steps)-1].Note, "interrupted mid-staging") {
+		t.Errorf("the refusal does not say what stands in the way:\n%+v", res.Steps)
+	}
+	if r.called("docker run -d") {
+		t.Fatal("a second container was started on top of a stuck leftover")
 	}
 }

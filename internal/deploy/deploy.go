@@ -250,6 +250,17 @@ func Deploy(ctx context.Context, r Runner, app domain.App, o Options) Result {
 			}
 		}
 	}
+	// an interrupted deploy never recorded its release, so this
+	// attempt reuses the same id — and the orphaned staging
+	// container, by construction mymo's own for this exact release,
+	// is in the way. Detectable, so it is detected: removed,
+	// narrated, and the release starts fresh.
+	if _, code, err := runW(ctx, r, o, "docker", "inspect", container); err == nil && code == 0 {
+		if out, code, err := runW(ctx, r, o, "docker", "rm", "-f", container); err != nil || code != 0 {
+			return fail(stage, fmt.Sprintf("release r%d was interrupted mid-staging earlier and its leftover container %s could not be removed (%d): %s — remove it by hand, then deploy again", id, container, code, firstLine(out)), "stage")
+		}
+		o.report("removed the interrupted r" + fmt.Sprint(id) + " staging container — it never became a release")
+	}
 	runArgv := []string{"docker", "run", "-d",
 		"--name", container,
 		"--network", NetworkName,

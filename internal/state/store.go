@@ -31,6 +31,10 @@ var (
 	ErrAppNotFound = errors.New("app not found")
 	// ErrAppExists is returned when adding an app whose name is taken.
 	ErrAppExists = errors.New("app already exists")
+	// ErrDomainTaken is returned when a public domain is already
+	// claimed by another app — one hostname, one app, no silent
+	// route theft.
+	ErrDomainTaken = errors.New("domain already belongs to another app")
 )
 
 // Store errors.
@@ -304,6 +308,31 @@ func (s *Store) GetApp(name string) (domain.App, error) {
 // the same node is the same application and fails; the same name on
 // a different node is a different application and fails too — app
 // names are one word so they can be typed.
+// checkDomainFree refuses a public domain another app already
+// claims. The self name keeps its own domain through updates —
+// ownership is about the pair, not the record.
+func checkDomainFree(apps []domain.App, a domain.App) error {
+	if a.Domain == "" {
+		return nil
+	}
+	for _, existing := range apps {
+		if existing.Name != a.Name && existing.Domain == a.Domain {
+			return fmt.Errorf("%w: %s belongs to %s", ErrDomainTaken, a.Domain, existing.Name)
+		}
+	}
+	return nil
+}
+
+// CheckDomainFree is the caller's gate: the same ownership rule the
+// store enforces on writes, asked before a deploy spends a dial.
+func (s *Store) CheckDomainFree(a domain.App) error {
+	apps, err := s.LoadApps()
+	if err != nil {
+		return err
+	}
+	return checkDomainFree(apps, a)
+}
+
 func (s *Store) AddApp(a domain.App) error {
 	if err := a.Validate(); err != nil {
 		return err
@@ -317,6 +346,9 @@ func (s *Store) AddApp(a domain.App) error {
 			return fmt.Errorf("%w: %s", ErrAppExists, a.Name)
 		}
 	}
+	if err := checkDomainFree(apps, a); err != nil {
+		return err
+	}
 	return s.saveApps(append(apps, a))
 }
 
@@ -327,6 +359,9 @@ func (s *Store) UpdateApp(a domain.App) error {
 	}
 	apps, err := s.LoadApps()
 	if err != nil {
+		return err
+	}
+	if err := checkDomainFree(apps, a); err != nil {
 		return err
 	}
 	for i := range apps {
