@@ -21,9 +21,9 @@ func TestPrintPreflightRendersVerdicts(t *testing.T) {
 	out := buf.String()
 	for _, want := range []string{
 		"preflight · web-1 · baseline 0.1",
-		"ok     platform", "Ubuntu 24.04.5 LTS",
-		"decide ports", "80 nginx", "fix · stop or disable whatever holds the ports",
-		"adopt  docker", "adopt and manage it",
+		"OK     platform", "Ubuntu 24.04.5 LTS",
+		"DECIDE ports", "80 nginx", "fix · stop or disable whatever holds the ports",
+		"ADOPT  docker", "adopt and manage it",
 		"verdict: decide", "follow the fixes above, then check again",
 	} {
 		if !strings.Contains(out, want) {

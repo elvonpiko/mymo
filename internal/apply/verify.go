@@ -44,14 +44,19 @@ func Verify(ctx context.Context, r preflight.Runner, o Options, version string) 
 				posture[f[0]] = f[1]
 			}
 		}
+		// one row, whatever it found: a posture that lies is named
+		// in full, a posture that holds is stated once — never both
+		var lies []string
 		for _, d := range baseline.SSHDirectives {
 			key := strings.ToLower(d.Key)
 			got := posture[key]
 			if got != d.Value {
-				add("sshd posture", false, fmt.Sprintf("effective %s is %q — the baseline expects %q", d.Key, got, d.Value))
+				lies = append(lies, fmt.Sprintf("effective %s is %q — the baseline expects %q", d.Key, got, d.Value))
 			}
 		}
-		if posture["permitrootlogin"] != "" && posture["passwordauthentication"] != "" {
+		if len(lies) > 0 {
+			add("sshd posture", false, strings.Join(lies, "; "))
+		} else {
 			add("sshd posture", true, "no root, no passwords — the live posture")
 		}
 	}

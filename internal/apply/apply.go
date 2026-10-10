@@ -70,6 +70,9 @@ type StepResult struct {
 	Title   string
 	State   StepState
 	Note    string
+	// Detail is the step's own description from the plan — the
+	// informative line the finished page keeps under its row
+	Detail string
 }
 
 // Result is the apply's report: what ran, what was kept, and where it
@@ -105,10 +108,10 @@ type Options struct {
 func Apply(ctx context.Context, r preflight.Runner, steps []plan.Step, o Options) Result {
 	res := Result{Steps: make([]StepResult, 0, len(steps))}
 
-	fail := func(i int, control, title, note string) Result {
-		res.Steps = append(res.Steps, StepResult{Control: control, Title: title, State: StepFailed, Note: note})
+	fail := func(i int, control, title, note, detail string) Result {
+		res.Steps = append(res.Steps, StepResult{Control: control, Title: title, State: StepFailed, Note: note, Detail: detail})
 		for _, rest := range steps[i+1:] {
-			res.Steps = append(res.Steps, StepResult{Control: rest.Control, Title: rest.Title, State: StepBlocked})
+			res.Steps = append(res.Steps, StepResult{Control: rest.Control, Title: rest.Title, State: StepBlocked, Detail: rest.Detail})
 		}
 		res.Failed = true
 		res.FailedAt = control
@@ -119,7 +122,7 @@ func Apply(ctx context.Context, r preflight.Runner, steps []plan.Step, o Options
 		o.report(fmt.Sprintf("step %d/%d · %s", i+1, len(steps), s.Title))
 
 		if s.Gate != "" && o.Prover == nil {
-			return fail(i, s.Control, s.Title, "the sshd gate requires a second-connection prover; none was provided")
+			return fail(i, s.Control, s.Title, "the sshd gate requires a second-connection prover; none was provided", s.Detail)
 		}
 
 		// a converged step is not re-run: the check is the step's
@@ -127,10 +130,10 @@ func Apply(ctx context.Context, r preflight.Runner, steps []plan.Step, o Options
 		// pay again — apt refreshes and downloads included
 		if len(s.Check) > 0 {
 			if _, code, err := runArgv(ctx, r, o.wrap(s.Check...)); err != nil {
-				return fail(i, s.Control, s.Title, "the already-done check never completed: "+err.Error())
+				return fail(i, s.Control, s.Title, "the already-done check never completed: "+err.Error(), s.Detail)
 			} else if code == 0 {
 				o.report(s.Title + " is already in place — skipping")
-				res.Steps = append(res.Steps, StepResult{Control: s.Control, Title: s.Title, State: StepKept})
+				res.Steps = append(res.Steps, StepResult{Control: s.Control, Title: s.Title, State: StepKept, Detail: s.Detail})
 				continue
 			}
 		}
@@ -141,7 +144,7 @@ func Apply(ctx context.Context, r preflight.Runner, steps []plan.Step, o Options
 			fileKept, err := writeFile(ctx, r, f, o)
 			kept = kept && fileKept
 			if err != nil {
-				return fail(i, s.Control, s.Title, err.Error())
+				return fail(i, s.Control, s.Title, err.Error(), s.Detail)
 			}
 		}
 
@@ -151,7 +154,7 @@ func Apply(ctx context.Context, r preflight.Runner, steps []plan.Step, o Options
 		exec, notes := s.Exec, s.Notes
 		if s.Gate != "" {
 			if len(exec) < 2 {
-				return fail(i, s.Control, s.Title, "a gated step must end with its commit command")
+				return fail(i, s.Control, s.Title, "a gated step must end with its commit command", s.Detail)
 			}
 			// notes ride the whole exec or none of it; the slice
 			// narrows only when they do
@@ -162,12 +165,12 @@ func Apply(ctx context.Context, r preflight.Runner, steps []plan.Step, o Options
 			preKept, err := runAll(ctx, r, exec[:len(exec)-1], preNotes, o)
 			kept = kept && preKept
 			if err != nil {
-				return fail(i, s.Control, s.Title, err.Error())
+				return fail(i, s.Control, s.Title, err.Error(), s.Detail)
 			}
 			o.report("proving the mymo key on a second connection — your current access is untouched")
 			if err := o.Prover.ProveMymoKey(ctx); err != nil {
 				return fail(i, s.Control, s.Title,
-					"the gate refused — "+err.Error()+"; sshd was not reloaded and the operator's current access is untouched")
+					"the gate refused — "+err.Error()+"; sshd was not reloaded and the operator's current access is untouched", s.Detail)
 			}
 			res.GateProven = true
 			o.report("the new key is proven — sshd reloads next")
@@ -182,13 +185,13 @@ func Apply(ctx context.Context, r preflight.Runner, steps []plan.Step, o Options
 		execKept, err := runAll(ctx, r, exec, notes, o)
 		kept = kept && execKept
 		if err != nil {
-			return fail(i, s.Control, s.Title, err.Error())
+			return fail(i, s.Control, s.Title, err.Error(), s.Detail)
 		}
 		state := StepDone
 		if kept && (len(s.Files) > 0 || len(s.Exec) > 0) {
 			state = StepKept
 		}
-		res.Steps = append(res.Steps, StepResult{Control: s.Control, Title: s.Title, State: state})
+		res.Steps = append(res.Steps, StepResult{Control: s.Control, Title: s.Title, State: state, Detail: s.Detail})
 	}
 	return res
 }

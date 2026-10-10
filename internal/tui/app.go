@@ -85,6 +85,11 @@ type Model struct {
 	// all at once: the rows move, the verdict and the way forward
 	// stay pinned
 	pfScroll int
+
+	// arScroll walks the finished page's rows when the report
+	// cannot hold every control at the floor — the verdict and the
+	// way forward stay pinned
+	arScroll int
 	pfSnap   facts.Node
 	pfAudit  preflight.Audit
 
@@ -516,6 +521,16 @@ func (m Model) updateScreenKeys(msg tea.KeyPressMsg, str string) (tea.Model, tea
 		switch str {
 		case "q":
 			return m, tea.Quit
+		case "j", "down":
+			if max := m.arScrollMax(); m.arScroll < max {
+				m.arScroll++
+			}
+			return m, nil
+		case "k", "up":
+			if m.arScroll > 0 {
+				m.arScroll--
+			}
+			return m, nil
 		case "esc":
 			m.pop()
 			// the preflight review that led here is answered by the

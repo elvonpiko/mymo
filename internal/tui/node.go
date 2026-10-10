@@ -429,7 +429,7 @@ func factsPanel(n domain.Node, fields ...string) string {
 			} else if n.LastCheck.Error != "" {
 				rows = append(rows, [2]string{"last check", "failed " + facts.FormatAge(n.LastCheck.At)})
 			} else {
-				rows = append(rows, [2]string{"last check", "ok " + facts.FormatAge(n.LastCheck.At)})
+				rows = append(rows, [2]string{"last check", "OK " + facts.FormatAge(n.LastCheck.At)})
 			}
 		}
 	}

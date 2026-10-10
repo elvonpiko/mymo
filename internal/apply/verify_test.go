@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/elvonpiko/mymo/internal/baseline"
+	"github.com/elvonpiko/mymo/internal/preflight"
 )
 
 // hardenedPosture renders the effective sshd -T output the baseline
@@ -65,6 +66,9 @@ func TestVerifyPassesOnAHardenedNode(t *testing.T) {
 		if c.Group != "verify" {
 			t.Errorf("check %q group = %q", c.Title, c.Group)
 		}
+		if c.Title == "sshd posture" && c.Outcome != preflight.Pass {
+			t.Errorf("the hardened node's posture check = %s", c.Outcome)
+		}
 	}
 }
 
@@ -80,13 +84,20 @@ func TestVerifyFailsWhenThePostureLies(t *testing.T) {
 		t.Fatal("verify passed while password auth is still on")
 	}
 	found := false
+	postureRows := 0
 	for _, c := range checks {
+		if c.Title == "sshd posture" {
+			postureRows++
+		}
 		if strings.Contains(c.Detail, "PasswordAuthentication") {
 			found = true
 		}
 	}
 	if !found {
 		t.Error("no check named the lying directive")
+	}
+	if postureRows != 1 {
+		t.Errorf("got %d sshd posture rows, want exactly one — a lying posture beside an ok one is the report lying twice", postureRows)
 	}
 }
 

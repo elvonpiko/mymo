@@ -185,6 +185,7 @@ func (m Model) applyProgressReader() tea.Cmd {
 // view, not a toast.
 func (m Model) handleApplyDone(msg applyDoneMsg) (tea.Model, tea.Cmd) {
 	m.applyResult = msg.res
+	m.arScroll = 0
 
 	if msg.err != nil {
 		m.auditBusy = false
@@ -282,6 +283,9 @@ func (m Model) handleVerifyDone(msg verifyDoneMsg) (tea.Model, tea.Cmd) {
 	m.loading = loadingState{}
 	m.layout()
 	m.applyChecks = msg.checks
+	// a fresh report reads from its first row — a stale scroll
+	// would start the story in its middle
+	m.arScroll = 0
 	if !msg.ok {
 		m.reopenBootstrap(msg.node, "verify failed — preflight again to resume")
 		return m, m.notify("the baseline ran but did not verify — mymo will not call this node ready", toastErr)
@@ -363,80 +367,153 @@ func mymoTUIKeyPath(store interface{ Dir() string }, name string) string {
 	return filepath.Join(store.Dir(), "keys", name+".key")
 }
 
-// applyReportView renders the outcome: every step done, kept, failed,
-// or blocked — the failure's full reason, the gate's proof, the
-// verify rows, and the lifecycle's honest position.
+// applyReportView renders the outcome: one row per control —
+// live-verified (OK), applied (DONE), failed (FAILED, with its full
+// reason), never attempted (BLOCKED) — and the lifecycle's honest
+// position. The descriptions stay; the duplicate second list does
+// not: the live probes fold into the rows they prove. At the floor
+// the rows walk inside the card with j/k, whole rows only, and the
+// verdict with its way forward stays pinned.
 func (m Model) applyReportView() string {
-	var b strings.Builder
 	w := m.contentWidth - 8 // the card's frame eats 8 columns
+	head := m.arHead()
+
+	scrollable := m.arScrollMax() > 0
+	tail := m.arTail(w, scrollable)
+
+	inner := head
+	groups := m.arGroups(w)
+	window := m.arWindowRows(head, tail)
+	taken := 0
+	var b strings.Builder
+	for i := m.arScroll; i < len(groups) && taken+len(groups[i]) <= window; i++ {
+		if taken > 0 {
+			b.WriteString("\n")
+		}
+		for j, line := range groups[i] {
+			if j > 0 {
+				b.WriteString("\n")
+			}
+			b.WriteString(line)
+		}
+		taken += len(groups[i])
+	}
+	if taken > 0 {
+		inner += b.String() + "\n"
+	}
+	inner += tail
+	return m.wizardPanelFit(inner)
+}
+
+// arTail is the report's pinned verdict and its way forward — built
+// once, measured with the same string that renders.
+func (m Model) arTail(w int, scrollable bool) string {
+	tail := "\n"
+	switch {
+	case m.applyResult.Failed:
+		for _, line := range wrapDetail("the steps after the failure were never attempted — the operator's current access is untouched", w) {
+			tail += warnStyle.Render(line) + "\n"
+		}
+		// the resume is the design: fix the box's problem (often its
+		// own network or mirror), and setup picks up where it stopped
+		tail += faintStyle.Render("run setup again when the box is fixed — it resumes where it stopped") + "\n"
+	case len(m.applyChecks) > 0 && !everyCheckHeld(m.applyChecks):
+		// the apply finished; some live probe did not hold
+		tail += errStyle.Render("the baseline ran but did not verify — mymo will not call this node ready") + "\n"
+		tail += faintStyle.Render("fix what the rows above name, then check again") + "\n"
+	case len(m.applyChecks) > 0 && m.selNode.Bootstrap.State == domain.BootstrapReady:
+		tail += okStyle.Render("mymo security baseline applied and verified") + "\n"
+		tail += faintStyle.Render("promote to app host when ready: mymo node promote "+m.selNode.Name) + "\n"
+	default:
+		tail += faintStyle.Render("esc back — the report stays in the node's lifecycle record") + "\n"
+	}
+	if scrollable {
+		tail += faintStyle.Render("j/k scroll") + "\n"
+	}
+	return tail
+}
+
+// arHead is the report's title block, shared by view and measure.
+func (m Model) arHead() string {
 	verdict := "applied"
 	if m.applyResult.Failed {
 		verdict = "stopped at " + m.applyResult.FailedAt
 	}
-	b.WriteString(titleStyle.Render("Initial setup") + " " +
-		faintStyle.Render("\u00b7 the report \u00b7 "+m.selNode.Name+" \u00b7 "+verdict) + "\n\n")
+	return titleStyle.Render("Initial setup") + " " +
+		faintStyle.Render("\u00b7 the report \u00b7 "+m.selNode.Name+" \u00b7 "+verdict) + "\n\n"
+}
 
-	for _, s := range m.applyResult.Steps {
-		// the state word is the row's spine: uppercase, one width,
-		// so done and failure read as the same column. A step mymo
-		// found already in place is done too — the skipping was the
-		// loading page's story to tell, and the report states the
-		// same outcome for every step
-		state, style := "DONE", okStyle
-		switch s.State {
-		case apply.StepDone, apply.StepKept:
-		case apply.StepFailed:
-			state, style = "FAILED", errStyle
-		default:
-			state, style = "BLOCKED", faintStyle
+// arGroups wraps every control as its own block of lines: a row and
+// its descriptions belong together, and the window cuts only
+// between controls.
+func (m Model) arGroups(w int) [][]string {
+	rows := apply.BuildReport(m.applyResult, m.applyChecks)
+	groups := make([][]string, 0, len(rows))
+	for _, r := range rows {
+		style := okStyle
+		switch r.Status {
+		case "FAILED":
+			style = errStyle
+		case "BLOCKED":
+			style = faintStyle
 		}
-		b.WriteString("  " + style.Width(7).Render(state) + " " + textStyle.Render(s.Title) + "\n")
-		if s.State == apply.StepFailed {
-			for _, line := range wrapDetail(s.Note, w-9) {
-				b.WriteString(strings.Repeat(" ", 9) + subtextStyle.Render(line) + "\n")
+		g := []string{"  " + style.Width(7).Render(r.Status) + " " + textStyle.Render(r.Title)}
+		for _, d := range r.Detail {
+			if d == "" {
+				continue
+			}
+			for _, line := range wrapDetail(d, w-9) {
+				g = append(g, strings.Repeat(" ", 9)+subtextStyle.Render(line))
 			}
 		}
+		groups = append(groups, g)
 	}
-	// the gate's proof is not a step and never was: the loading card
-	// narrated it live ("proving the mymo key on a second
-	// connection"), and the sshd row below carries its outcome
-	if len(m.applyChecks) > 0 {
-		b.WriteString("\n")
-		for _, c := range m.applyChecks {
-			// the mark is padded to one width so every detail starts
-			// in the same column; wrapped details continue under it,
-			// never as new rows with the prefix repeated
-			mark := okStyle.Render("ok     ")
-			if c.Outcome != preflight.Pass {
-				mark = errStyle.Render("FAILED ")
-			}
-			for i, line := range wrapDetail(c.Detail, w-29) {
-				if i == 0 {
-					b.WriteString("  " + mark + " " + factsLabelStyle.Width(18).Render(c.Title) + " " +
-						subtextStyle.Render(line) + "\n")
-				} else {
-					b.WriteString(strings.Repeat(" ", 29) + subtextStyle.Render(line) + "\n")
-				}
-			}
-		}
-	}
+	return groups
+}
 
-	b.WriteString("\n")
-	switch {
-	case m.applyResult.Failed:
-		for _, line := range wrapDetail("the steps after the failure were never attempted — the operator's current access is untouched", w) {
-			b.WriteString(warnStyle.Render(line) + "\n")
-		}
-		// the resume is the design: fix the box's problem (often its
-		// own network or mirror), and setup picks up where it stopped
-		b.WriteString(faintStyle.Render("run setup again when the box is fixed — it resumes where it stopped") + "\n")
-	case len(m.applyChecks) > 0 && m.selNode.Bootstrap.State == domain.BootstrapReady:
-		b.WriteString(okStyle.Render("mymo security baseline applied and verified") + "\n")
-		b.WriteString(faintStyle.Render("promote to app host when ready: mymo node promote "+m.selNode.Name) + "\n")
-	default:
-		b.WriteString(faintStyle.Render("esc back — the report stays in the node's lifecycle record") + "\n")
+// arWindowRows is the row budget the report rows may fill: the card
+// minus its frame, the head, and the pinned tail.
+func (m Model) arWindowRows(head, tail string) int {
+	n := m.contentHeight - 2 - lipgloss.Height(head) - lipgloss.Height(tail) - 2
+	if n < 1 {
+		return 1
 	}
-	return m.wizardPanelFit(b.String())
+	return n
+}
+
+// arScrollMax is the last control the window can start from, counted
+// from the tail: controls are not the same height. Measured against
+// the scrollable tail — one row taller than the static one — so the
+// window can only be too small, never too large: a clipped verdict
+// is the dishonesty this walk exists to prevent.
+func (m Model) arScrollMax() int {
+	w := m.contentWidth - 8
+	head := m.arHead()
+	tail := m.arTail(w, true)
+	groups := m.arGroups(w)
+	window := m.arWindowRows(head, tail)
+	taken, last := 0, len(groups)-1
+	for i := len(groups) - 1; i >= 0; i-- {
+		if taken+len(groups[i]) > window {
+			break
+		}
+		taken += len(groups[i])
+		last = i
+	}
+	if last < 0 {
+		return 0
+	}
+	return last
+}
+
+// everyCheckHeld is the report's honest tally of the live probes.
+func everyCheckHeld(checks []preflight.Check) bool {
+	for _, c := range checks {
+		if c.Outcome != preflight.Pass {
+			return false
+		}
+	}
+	return true
 }
 
 // centeredPanel is the dialog pattern: centered on the stage.

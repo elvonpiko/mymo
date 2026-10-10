@@ -19,8 +19,20 @@ import "fmt"
 // SSHDropin is the sshd configuration mymo owns on an app host. mymo
 // never rewrites /etc/ssh/sshd_config — it writes a drop-in, which
 // Ubuntu 22.04+/Debian 12 load first through their Include line, and
-// removes it wholesale on rollback.
-const SSHDropin = "/etc/ssh/sshd_config.d/60-mymo.conf"
+// removes it wholesale on rollback. sshd reads its configuration
+// first-match-wins: whichever file sorts earliest in sshd_config.d
+// claims each directive, and a cloud image's 50-cloud-init.conf with
+// "PasswordAuthentication yes" beat a 60-mymo.conf "no" on a real
+// box — the posture mymo wrote was not the posture the box kept.
+// mymo's drop-in therefore sorts first in the directory: nothing can
+// claim a directive before it.
+const SSHDropin = "/etc/ssh/sshd_config.d/00-mymo.conf"
+
+// SSHRetiredDropin is the home an earlier baseline wrote before sshd's
+// first-match-wins was fully honored; the setup moves it to
+// SSHDropin and removes this one, and the check recognizes both as
+// mymo's own work.
+const SSHRetiredDropin = "/etc/ssh/sshd_config.d/60-mymo.conf"
 
 // SSHDirective is one pinned sshd setting.
 type SSHDirective struct {

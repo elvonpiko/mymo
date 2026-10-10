@@ -151,22 +151,22 @@ func runNodeApply(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		node.Bootstrap.Verdict = "failed at " + res.FailedAt
 		node.Bootstrap.At = time.Now()
 		_ = store.UpdateNode(node)
-		printApplyReport(stderr, res)
+		printSetupReport(stderr, res, nil)
 		fmt.Fprintln(stderr, "\nthe steps after the failure were never attempted;")
 		fmt.Fprintln(stderr, "the operator's current access is untouched.")
 		fmt.Fprintln(stderr, "run setup again when the box is fixed — it resumes where it stopped.")
 		return exitErr
 	}
-	printApplyReport(stdout, res)
-
 	fmt.Fprintln(stderr, "\nverifying the effective state...")
 	checks, verified := apply.Verify(ctx, client, opts, baseline.Version)
+
+	printSetupReport(stdout, res, checks)
 	if !verified {
 		node.Bootstrap.Verdict = "verify failed"
 		node.Bootstrap.At = time.Now()
 		_ = store.UpdateNode(node)
-		printVerifyChecks(stderr, checks)
 		fmt.Fprintln(stderr, "\nthe baseline ran but did not verify — mymo will not call this node ready.")
+		fmt.Fprintln(stderr, "fix what the rows above name, then check again.")
 		return exitErr
 	}
 
@@ -175,7 +175,6 @@ func runNodeApply(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		fmt.Fprintf(stderr, "mymo node apply: %v\n", err)
 		return exitErr
 	}
-	printVerifyChecks(stdout, checks)
 	fmt.Fprintf(stdout, "\nmymo security baseline %s applied and verified on %s.\n", baseline.Version, node.Name)
 	fmt.Fprintf(stdout, "the mymo key is kept at %s\n", keyPath)
 	fmt.Fprintf(stdout, "promote to app host when ready: mymo node promote %s\n", node.Name)
@@ -222,38 +221,19 @@ func mymoKeyPath(store *state.Store, name string) string {
 	return filepath.Join(store.Dir(), "keys", name+".key")
 }
 
-// printApplyReport shows each step's outcome: done, failed, or
-// blocked — with the failure's reason in full. A step mymo found
-// already in place reports done like any other: the skipping was
-// narrated live, and the report states outcomes, one word each.
-func printApplyReport(w io.Writer, res apply.Result) {
-	for _, s := range res.Steps {
-		state := "DONE"
-		switch s.State {
-		case apply.StepDone, apply.StepKept:
-		case apply.StepFailed:
-			state = "FAILED"
-		default:
-			state = "BLOCKED"
+// printSetupReport shows one row per control: live-verified (OK),
+// applied (DONE), failed (FAILED, with its full reason), never
+// attempted (BLOCKED) — with the descriptions kept. The live probes
+// fold into the rows they prove; no second list repeats the first
+// one's story in different words.
+func printSetupReport(w io.Writer, res apply.Result, checks []preflight.Check) {
+	for _, r := range apply.BuildReport(res, checks) {
+		fmt.Fprintf(w, "  %-7s %s\n", r.Status, r.Title)
+		for _, d := range r.Detail {
+			if d == "" {
+				continue
+			}
+			fmt.Fprintf(w, "         %s\n", d)
 		}
-		fmt.Fprintf(w, "  %-7s %s\n", state, s.Title)
-		if s.State == apply.StepFailed {
-			fmt.Fprintf(w, "         %s\n", s.Note)
-		}
-	}
-	// the gate's proof is narrated live during apply ("proving the
-	// mymo key on a second connection — your current access is
-	// untouched"); the sshd row below carries its outcome here
-}
-
-// printVerifyChecks renders the verification rows: what the system
-// now enforces, effective state, not config file claims.
-func printVerifyChecks(w io.Writer, checks []preflight.Check) {
-	for _, c := range checks {
-		mark := "OK"
-		if c.Outcome != preflight.Pass {
-			mark = "FAILED"
-		}
-		fmt.Fprintf(w, "  %-6s %-18s %s\n", mark, c.Title, c.Detail)
 	}
 }

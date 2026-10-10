@@ -301,8 +301,12 @@ func TestApplyVerifiesAndReachesReady(t *testing.T) {
 	}
 	out := ansiStrip(view(m))
 	for _, want := range []string{
-		"DONE",
-		"sshd posture", "applied and verified",
+		// the finished page is one list: steps the live probes
+		// covered read OK, the rest read DONE, and no second list
+		// repeats the story
+		"OK      sshd hardening",
+		"no root, no passwords",
+		"applied and verified",
 		"mymo node promote web-1",
 	} {
 		if !strings.Contains(out, want) {

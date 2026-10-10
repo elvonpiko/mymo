@@ -104,14 +104,14 @@ func runNodePreflight(ctx context.Context, args []string, stdout, stderr io.Writ
 func printPreflight(w io.Writer, name string, checks []preflight.Check, verdict preflight.Outcome) {
 	fmt.Fprintf(w, "preflight · %s · baseline %s\n\n", name, baseline.Version)
 	for _, c := range checks {
-		glyph := "ok"
+		glyph := "OK"
 		switch c.Outcome {
 		case preflight.Adopt:
-			glyph = "adopt"
+			glyph = "ADOPT"
 		case preflight.Decide:
-			glyph = "decide"
+			glyph = "DECIDE"
 		case preflight.Abort:
-			glyph = "abort"
+			glyph = "ABORT"
 		}
 		fmt.Fprintf(w, "  %-6s %-14s %s\n", glyph, c.Title, c.Detail)
 		if c.Fix != "" {

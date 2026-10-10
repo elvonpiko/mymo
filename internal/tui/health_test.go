@@ -302,7 +302,7 @@ func TestInspectShowsRecordAndFacts(t *testing.T) {
 	m = press(t, m, "down", "down", "down", "enter")
 	got := view(m)
 	for _, want := range []string{
-		"Stored record", "Discovered", "Ubuntu 24.04.5 LTS", "just now", "last check", "ok just now",
+		"Stored record", "Discovered", "Ubuntu 24.04.5 LTS", "just now", "last check", "OK just now",
 		"3.2 GiB/3.8 GiB avail", // the inspect record keeps memory
 	} {
 		if !strings.Contains(got, want) {

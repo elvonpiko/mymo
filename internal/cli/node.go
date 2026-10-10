@@ -161,7 +161,7 @@ func printNodeDetail(w io.Writer, n domain.Node) {
 	} else if n.LastCheck.Error != "" {
 		rows = append(rows, [2]string{"last check", "failed " + facts.FormatAge(n.LastCheck.At) + ": " + n.LastCheck.Error})
 	} else {
-		rows = append(rows, [2]string{"last check", "ok " + facts.FormatAge(n.LastCheck.At)})
+		rows = append(rows, [2]string{"last check", "OK " + facts.FormatAge(n.LastCheck.At)})
 	}
 	for _, r := range rows {
 		fmt.Fprintf(w, "%-11s %s\n", r[0]+":", r[1])

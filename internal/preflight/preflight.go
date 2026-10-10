@@ -97,6 +97,11 @@ type Audit struct {
 	// reported; the effective value is only proven at apply time with
 	// sshd -T, which needs root.
 	SSHDirectives map[string][]string
+	// SSHOurs holds the directives from mymo's current drop-in home;
+	// SSHOursOld from its retired home. Values there are mymo's own
+	// work: recognized, never treated as a foreign conflict.
+	SSHOurs    map[string][]string
+	SSHOursOld map[string][]string
 
 	Firewall string // "active", "inactive", "absent", "unknown"
 
@@ -144,15 +149,29 @@ func Scan(ctx context.Context, r Runner) (Audit, error) {
 	}
 
 	// SSH configuration: the main file plus any includes the
-	// distribution ships. Nonzero exits mean unreadable or absent —
-	// directives stay unknown, never guessed.
+	// distribution ships, with mymo's own drop-in homes read
+	// separately — a conflict between a foreign file and mymo's own
+	// work is not the operator's to resolve, and the audit must be
+	// able to tell whose is whose. Nonzero exits mean unreadable or
+	// absent; directives stay unknown, never guessed.
 	s.SSHDirectives = map[string][]string{}
-	for _, path := range []string{"/etc/ssh/sshd_config", "/etc/ssh/sshd_config.d/*.conf"} {
-		out, _, err := r.Run(ctx, "cat", path)
-		if err != nil {
-			return Audit{}, err
-		}
-		collectSSHDirectives(out, s.SSHDirectives)
+	s.SSHOurs = map[string][]string{}
+	s.SSHOursOld = map[string][]string{}
+	foreignSSH := "for f in /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf; do " +
+		"case \"$f\" in " + baseline.SSHDropin + "|" + baseline.SSHRetiredDropin + ") continue;; esac; " +
+		"cat \"$f\" 2>/dev/null || true; done"
+	out, _, err := r.Run(ctx, "sh", "-c", foreignSSH)
+	if err != nil {
+		return Audit{}, err
+	}
+	collectSSHDirectives(out, s.SSHDirectives)
+	// mymo's own homes: absent is fine — that is a box mymo has not
+	// hardened yet, and the plan says so in its own words
+	if out, _, err := r.Run(ctx, "cat", baseline.SSHDropin); err == nil {
+		collectSSHDirectives(out, s.SSHOurs)
+	}
+	if out, _, err := r.Run(ctx, "cat", baseline.SSHRetiredDropin); err == nil {
+		collectSSHDirectives(out, s.SSHOursOld)
 	}
 
 	// Firewall: ufw status needs root; without privilege mymo says
@@ -613,10 +632,25 @@ func Evaluate(f facts.Node, s Audit) []Check {
 		}
 	}
 
-	// --- sshd (informational; hardening is gated at apply) ---------
-	if pw := s.SSHDirectives["passwordauthentication"]; len(pw) == 1 && pw[0] == "yes" {
+	// --- sshd: mymo recognizes its own drop-in homes. A conflict
+	// among foreign files is the operator's to resolve; anything
+	// involving mymo's own work is mymo's to fix, and the setup
+	// fixes it deterministically (the drop-in sorts first, the
+	// retired name is removed)
+	pwForeign := s.SSHDirectives["passwordauthentication"]
+	switch {
+	case len(s.SSHOurs["passwordauthentication"]) > 0:
+		checks = append(checks, Check{"sshd", "sshd", Pass,
+			"mymo's own hardening drop-in is in place — it sorts first in sshd_config.d, so it holds the effective posture", ""})
+	case len(s.SSHOursOld["passwordauthentication"]) > 0:
+		note := "an earlier mymo hardening drop-in sits in its retired home — the setup moves it to the front of sshd_config.d"
+		if len(pwForeign) > 0 && pwForeign[0] == "yes" {
+			note += " (it is shadowed right now: password auth is effectively on)"
+		}
+		checks = append(checks, Check{"sshd", "sshd", Pass, note, ""})
+	case len(pwForeign) == 1 && pwForeign[0] == "yes":
 		checks = append(checks, Check{"sshd", "sshd", Pass, "password auth is on — hardened after key access is proven", ""})
-	} else if len(pw) > 1 {
+	case len(pwForeign) > 1:
 		checks = append(checks, Check{"sshd", "sshd", Decide, "conflicting PasswordAuthentication values in sshd configuration — resolve or let mymo verify with sshd -T at apply",
 			"sudo sshd -T | grep -i passwordauthentication shows the effective value — remove the stray override, then check again"})
 	}

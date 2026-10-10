@@ -43,20 +43,37 @@ func goodNode() facts.Node {
 	}
 }
 
+// sshForeignKey is the scan's one command for the main sshd_config
+// plus every drop-in that is not mymo's own home.
+var sshForeignKey = "sh -c for f in /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf; do " +
+	"case \"$f\" in " + baseline.SSHDropin + "|" + baseline.SSHRetiredDropin + ") continue;; esac; " +
+	"cat \"$f\" 2>/dev/null || true; done"
+
 func baseRunner() *fakeRunner {
 	return &fakeRunner{
 		codes: map[string]int{},
 		responses: map[string]string{
-			"id -u":                    "1000",
-			"sudo -n true":             "",
-			"cat /etc/ssh/sshd_config": "PasswordAuthentication yes\nPermitRootLogin prohibit-password\n",
-			"sudo -n ufw status":       "Status: inactive\n",
-			"sudo -n ss -tlnp":         "LISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:((\"sshd\",pid=800,fd=3))\n",
+			"id -u":              "1000",
+			"sudo -n true":       "",
+			sshForeignKey:        "PasswordAuthentication yes\nPermitRootLogin prohibit-password\n",
+			"sudo -n ufw status": "Status: inactive\n",
+			"sudo -n ss -tlnp":   "LISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:((\"sshd\",pid=800,fd=3))\n",
 			"sh -c command -v nginx apache2 httpd haproxy traefik 2>/dev/null":  "",
 			"sh -c dpkg -l docker-ce docker.io 2>/dev/null | grep \"^ii\"":      "",
 			"sh -c id mymo 2>/dev/null; test -d /var/lib/mymo && echo mymo-dir": "",
 		},
 	}
+}
+
+// findRow returns the sshd check, whatever its outcome.
+func findRow(t *testing.T, checks []Check) (Check, bool) {
+	t.Helper()
+	for _, c := range checks {
+		if c.Group == "sshd" || c.Title == "sshd" {
+			return c, true
+		}
+	}
+	return Check{}, false
 }
 
 func TestScanParsesTheDeepAudit(t *testing.T) {
@@ -546,5 +563,69 @@ func TestEveryStandingFindingNamesItsFix(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// mymo recognizes its own sshd drop-in homes: values there are its
+// own work, never a foreign conflict the operator has to resolve.
+// A box carrying the retired home — the shadowed earlier attempt —
+// reads as Pass with the truth about the shadow, and the setup
+// re-homes it to the front of sshd_config.d.
+func TestScanRecognizesItsOwnSSHDropinHomes(t *testing.T) {
+	pinned := "PasswordAuthentication no\n"
+	r := baseRunner()
+	r.responses["cat "+baseline.SSHRetiredDropin] = pinned
+	s, err := Scan(context.Background(), r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s.SSHOursOld["passwordauthentication"]; len(got) != 1 || got[0] != "no" {
+		t.Fatalf("retired home values = %v", got)
+	}
+	// foreign files still say yes: the shadow is the truth the row must name
+	checks := Evaluate(goodNode(), s)
+	row, rowOK := findRow(t, checks)
+	if !rowOK {
+		t.Fatal("no sshd row")
+	}
+	if row.Outcome != Pass {
+		t.Errorf("a mymo-owned drop-in conflict decided against the operator: %s", row.Outcome)
+	}
+	if !strings.Contains(row.Detail, "retired home") || !strings.Contains(row.Detail, "shadowed") {
+		t.Errorf("the row must say whose work it is and what state it is in: %s", row.Detail)
+	}
+
+	// the current home holds the posture by ordering, even against a
+	// foreign "yes"
+	r2 := baseRunner()
+	r2.responses["cat "+baseline.SSHDropin] = pinned
+	s2, err := Scan(context.Background(), r2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row2, ok2 := findRow(t, Evaluate(goodNode(), s2))
+	if !ok2 {
+		t.Fatal("no sshd row")
+	}
+	if row2.Outcome != Pass || !strings.Contains(row2.Detail, "sorts first") {
+		t.Errorf("the current home must read as holding the posture: %s / %s", row2.Outcome, row2.Detail)
+	}
+}
+
+// Two foreign files claiming the same directive is still the
+// operator's to resolve — the decision stays.
+func TestForeignSSHConflictStillDecides(t *testing.T) {
+	r := baseRunner()
+	r.responses[sshForeignKey] = "PasswordAuthentication yes\nPasswordAuthentication no\n"
+	s, err := Scan(context.Background(), r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, ok := findRow(t, Evaluate(goodNode(), s))
+	if !ok {
+		t.Fatal("no sshd row")
+	}
+	if row.Outcome != Decide || row.Fix == "" {
+		t.Errorf("a foreign conflict must stay a decision with its fix: %s / %q", row.Outcome, row.Fix)
 	}
 }

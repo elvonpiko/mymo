@@ -105,20 +105,21 @@ func TestNodePromoteMarksAndIsHonestAboutRepeats(t *testing.T) {
 	}
 }
 
-func TestPrintApplyReportTellsTheWholeStory(t *testing.T) {
+func TestPrintSetupReportTellsTheWholeStory(t *testing.T) {
 	var buf bytes.Buffer
 	res := apply.Result{
 		Steps: []apply.StepResult{
-			{Control: "update", Title: "system update", State: apply.StepDone},
-			{Control: "mymo-user", Title: "mymo admin user", State: apply.StepKept},
-			{Control: "sshd", Title: "sshd hardening", State: apply.StepFailed,
-				Note: "the gate refused: key rejected; sshd was not reloaded — the operator's current access is untouched"},
-			{Control: "docker", Title: "docker engine", State: apply.StepBlocked},
+			{Control: "update", Title: "system update", State: apply.StepDone, Detail: "refresh the box before anything lands"},
+			{Control: "mymo-user", Title: "mymo admin user", State: apply.StepKept, Detail: "create mymo user with its key and sudo rule"},
+			{Control: "ssh", Title: "sshd hardening", State: apply.StepFailed,
+				Note:   "the gate refused: key rejected; sshd was not reloaded — the operator's current access is untouched",
+				Detail: "no root ssh"},
+			{Control: "docker", Title: "docker engine", State: apply.StepBlocked, Detail: "install docker-ce"},
 		},
 		Failed:   true,
-		FailedAt: "ssh-hardening",
+		FailedAt: "ssh",
 	}
-	printApplyReport(&buf, res)
+	printSetupReport(&buf, res, nil)
 	out := buf.String()
 	for _, want := range []string{
 		"DONE    system update",
@@ -136,15 +137,31 @@ func TestPrintApplyReportTellsTheWholeStory(t *testing.T) {
 	}
 }
 
-func TestPrintVerifyChecksMarksFailures(t *testing.T) {
+// The finished page is one list: the live probes fold into the step
+// rows they prove, statuses are uppercase everywhere, and no second
+// section repeats the story in different words.
+func TestPrintSetupReportFoldsTheLiveProbes(t *testing.T) {
 	var buf bytes.Buffer
-	printVerifyChecks(&buf, []preflight.Check{
-		{Group: "verify", Title: "sshd posture", Outcome: preflight.Pass, Detail: "the hardened drop-in is live"},
-		{Group: "verify", Title: "firewall", Outcome: preflight.Abort, Detail: "ufw is inactive"},
-	})
+	res := apply.Result{Steps: []apply.StepResult{
+		{Control: "ssh-hardening", Title: "sshd hardening", State: apply.StepDone, Detail: "no root ssh"},
+		{Control: "sysctl", Title: "kernel hardening", State: apply.StepDone, Detail: "pin the tested sysctl floor via /etc/sysctl.d"},
+	}}
+	checks := []preflight.Check{
+		{Group: "verify", Title: "sshd posture", Outcome: preflight.Pass, Detail: "no root, no passwords — the live posture"},
+	}
+	printSetupReport(&buf, res, checks)
 	out := buf.String()
-	if !strings.Contains(out, "OK     sshd posture") || !strings.Contains(out, "FAILED firewall") {
-		t.Errorf("verify rows:\n%s", out)
+	if !strings.Contains(out, "OK      sshd hardening") {
+		t.Errorf("probed step should read OK:\n%s", out)
+	}
+	if !strings.Contains(out, "no root, no passwords — the live posture") {
+		t.Errorf("the live description belongs under its row:\n%s", out)
+	}
+	if !strings.Contains(out, "DONE    kernel hardening") {
+		t.Errorf("an unprobed step should read DONE:\n%s", out)
+	}
+	if strings.Contains(out, "sshd posture") {
+		t.Errorf("the probe's own title must not appear as a second row:\n%s", out)
 	}
 }
 

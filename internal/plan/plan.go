@@ -206,6 +206,11 @@ func sshStep(f facts.Node, dropin string) Step {
 			{Path: baseline.SSHDropin, Content: dropin, Mode: "0644", Owner: "root:root"},
 		},
 		Exec: [][]string{
+			// the earlier baseline wrote 60-mymo.conf, and sshd's
+			// first-match-wins let cloud-init's 50-*.conf shadow it
+			// on real boxes; the retired name is mymo's own, and a
+			// box that carries it must not carry two postures at once
+			{"rm", "-f", baseline.SSHRetiredDropin},
 			{"sshd", "-t"},
 			{"systemctl", "reload", "ssh"},
 		},
