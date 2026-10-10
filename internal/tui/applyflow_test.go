@@ -103,21 +103,28 @@ func drain(t *testing.T, m Model, msgs []tea.Msg) Model {
 // atPlanScreen drives a node through a cleared preflight into its
 // drafted plan, with the apply's runner and prover injected.
 func atPlanScreen(t *testing.T, runner preflight.Runner, prover apply.Prover) Model {
+	return atPlanScreenNamed(t, runner, prover, "web-1")
+}
+
+// atPlanScreenNamed drives the setup flow for any node name — the
+// name is the confirmation, so its letters must be typable no
+// matter what shortcuts they spell.
+func atPlanScreenNamed(t *testing.T, runner preflight.Runner, prover apply.Prover, name string) Model {
 	t.Helper()
 	s := readyStore(t)
-	seedNode(t, s, "web-1")
+	seedNode(t, s, name)
 	m := New(s)
 	m.applyRunner = runner
 	m.newProver = func(string) apply.Prover { return prover }
 	m = press(t, m, "n", "enter")
-	snap := richSnapshot("web-1")
+	snap := richSnapshot(name)
 	snap.Docker = ""
 	snap.Caddy = ""
-	m = observe(t, m, "web-1", snap)
+	m = observe(t, m, name, snap)
 	m = press(t, m, "p")
-	m = step(t, m, pfDoneMsg{node: "web-1", snap: snap, audit: cannedAudit()})
+	m = step(t, m, pfDoneMsg{node: name, snap: snap, audit: cannedAudit()})
 	m = press(t, m, "enter")
-	m = step(t, m, planMsg{node: "web-1", steps: testPlanSteps()})
+	m = step(t, m, planMsg{node: name, steps: testPlanSteps()})
 	if m.cur().kind != scNodePlan {
 		t.Fatalf("not on the plan screen: %v", m.cur().kind)
 	}
@@ -211,6 +218,30 @@ func TestApplyWantsTheExactName(t *testing.T) {
 	// the apply borrowed the live connection
 	if m.live || !m.livePaused || m.liveClient == nil {
 		t.Fatalf("apply did not pause sampling: live=%v paused=%v", m.live, m.livePaused)
+	}
+}
+
+// a node named from shortcut letters is the rule's proof: while
+// the input owns the keyboard, h types h and q types q — the name
+// confirms, nothing teleports and nothing quits
+func TestTypedNameOfShortcutLettersConfirms(t *testing.T) {
+	runner := &cannedApplyRunner{}
+	m := atPlanScreenNamed(t, runner, fakeTUIProver{}, "hq-1")
+
+	m = press(t, m, "h", "q", "-", "1")
+	m, msgs := drive(t, m, keyMsg("enter"))
+	m = drain(t, m, msgs)
+	if m.cur().kind != scNodeApplyReport {
+		t.Fatalf("a name of shortcut letters did not confirm: %v", m.cur().kind)
+	}
+	// the canned runner finished everything: the gate passed with
+	// shortcut letters in the name, and the node reached ready
+	n, err := m.store.GetNode("hq-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n.Bootstrap.State != domain.BootstrapReady {
+		t.Fatalf("bootstrap = %s, want ready", n.Bootstrap.State)
 	}
 }
 

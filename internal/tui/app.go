@@ -365,14 +365,25 @@ func withResume(next tea.Model, cmd tea.Cmd) (tea.Model, tea.Cmd) {
 }
 
 // formActive reports whether the embedded add-node form is receiving input.
+// inputActive reports whether a text input owns the keyboard right
+// now: huh forms, the fleet filter, and the plan page's typed-name
+// gate. While it is true, global shortcuts (h, ?) stand down and the
+// screen's own input handler receives every key — the convention
+// every terminal reader already knows from insert mode.
+func (m Model) inputActive() bool {
+	if m.formActive() || m.filterActive() {
+		return true
+	}
+	// the plan page is one input: the node's name, typed in full
+	return m.cur().kind == scNodePlan && !m.loading.active
+}
+
 func (m Model) formActive() bool {
 	return m.cur().kind == scAddNode && m.addNode.stage == anForm && m.addNode.form != nil
 }
 
 // updateKeys routes workspace key presses.
 func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	s := m.cur()
-
 	// Keys typed into the fleet filter belong to the filter.
 	if m.filterActive() && msg.String() != "ctrl+c" {
 		return m.forward(msg)
@@ -380,11 +391,18 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	str := msg.String()
 
+	// while an input owns the keyboard, global shortcuts stand down:
+	// every printable rune is text — "hrly" must type, never
+	// teleport. A future page with a typed-word gate adds its kind
+	// to inputActive and inherits the rule for free.
+	if m.inputActive() {
+		return m.updateScreenKeys(msg, str)
+	}
+
 	// h is home from anywhere: one fixed way back, on every page —
-	// forms own their keys, and a ceremony in flight is not left
-	// behind mid-act (esc and q still serve there)
-	if str == "h" && !m.formActive() && !m.loading.active && m.introDone &&
-		m.cur().kind != scHome {
+	// never while an input is live, and a ceremony in flight is not
+	// left behind mid-act (esc and q still serve there)
+	if str == "h" && !m.loading.active && m.introDone && m.cur().kind != scHome {
 		m.stopLive()
 		m.confirmRemove = false
 		m.stack = []screen{{kind: scHome}}
@@ -403,6 +421,15 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 
+	return m.updateScreenKeys(msg, str)
+}
+
+// updateScreenKeys routes a key to the current screen's own handler.
+// When an input owns the keyboard (inputActive), this route is the
+// only one a key takes — the screen decides what text, enter, esc,
+// and backspace mean.
+func (m Model) updateScreenKeys(msg tea.KeyPressMsg, str string) (tea.Model, tea.Cmd) {
+	s := m.cur()
 	switch s.kind {
 	case scHome:
 		return m.updateHomeKeys(msg)
@@ -484,6 +511,7 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
+// updateAppsKeys walks the applications list
 // updateAppsKeys walks the applications list and opens the selected
 // app's detail page. The record is the source — the pages are the
 // fleet's eyes; the CLI holds the hands.
@@ -985,9 +1013,10 @@ func (m Model) footerRow() string {
 		row = m.toast.view()
 	} else {
 		// the home hint rides every footer where h is live: never
-		// during forms, ceremonies, or on the home page itself
+		// while an input owns the keyboard, during ceremonies, or on
+		// the home page itself
 		km := help.KeyMap(m.keymap())
-		if !m.formActive() && !m.loading.active && m.introDone && m.cur().kind != scHome {
+		if !m.inputActive() && !m.loading.active && m.introDone && m.cur().kind != scHome {
 			km = keymapWithHome{inner: m.keymap()}
 		}
 		row = m.help.View(km)

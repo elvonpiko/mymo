@@ -155,28 +155,26 @@ func (k preflightKeymap) FullHelp() [][]key.Binding {
 }
 
 // Plan keymap: the plan changes nothing until its author applies it.
-// Plan keymap: the typed name is the confirmation; the footer says
-// so instead of advertising a key that no longer exists.
+// Plan keymap: the page is one input — every printable rune types
+// into the name, so the footer advertises only what leaves. The
+// page's own hint line ("type <name> in full to apply — anything
+// else aborts") carries the affordance.
 type planKeymap struct {
 	back key.Binding
-	help key.Binding
-	quit key.Binding
 }
 
 func newPlanKeymap() planKeymap {
 	return planKeymap{
 		back: key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
-		help: key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
-		quit: key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
 	}
 }
 
 func (k planKeymap) ShortHelp() []key.Binding {
-	return []key.Binding{k.back, k.help, k.quit}
+	return []key.Binding{k.back}
 }
 
 func (k planKeymap) FullHelp() [][]key.Binding {
-	return [][]key.Binding{{k.back}, {k.help, k.quit}}
+	return [][]key.Binding{{k.back}}
 }
 
 // Apply-report keymap: the report stays until walked away from.

@@ -46,3 +46,35 @@ func TestHomeKeyReturnsFromEverywhere(t *testing.T) {
 		t.Fatalf("home is broken after h: %v", m.cur().kind)
 	}
 }
+
+// while the plan page's input owns the keyboard, h is text — a node
+// name like "ts-hrly-srv-01" must type in full, never teleport home
+func TestHomeKeyStandsDownWhileTyping(t *testing.T) {
+	runner := &cannedApplyRunner{}
+	m := atPlanScreen(t, runner, fakeTUIProver{})
+
+	m = press(t, m, "t", "s", "-", "h")
+	if m.cur().kind != scNodePlan {
+		t.Fatalf("h teleported home from the input: %v", m.cur().kind)
+	}
+	if m.applyTyped != "ts-h" {
+		t.Fatalf("the input lost its runes: %q", m.applyTyped)
+	}
+	// ? and q are text here too, not help and quit
+	m = press(t, m, "r", "l", "y")
+	if m.helpOpen {
+		t.Fatal("? opened help from inside the input")
+	}
+	if m.applyTyped != "ts-hrly" {
+		t.Fatalf("the input lost its runes: %q", m.applyTyped)
+	}
+	// "ts-hrly" is seven runes; five backspaces leave "ts"
+	m = press(t, m, "backspace", "backspace", "backspace", "backspace", "backspace")
+	if m.applyTyped != "ts" {
+		t.Fatalf("backspace did not edit: %q", m.applyTyped)
+	}
+	m = press(t, m, "backspace", "backspace")
+	if m.applyTyped != "" {
+		t.Fatalf("the buffer did not empty: %q", m.applyTyped)
+	}
+}
