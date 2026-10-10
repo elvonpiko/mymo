@@ -401,3 +401,86 @@ func TestSudoPrefixesEveryCommand(t *testing.T) {
 		}
 	}
 }
+
+// A converged step is not re-run: its check is the end state, and a
+// resumed box that already paid for the step — the apt refresh, the
+// download — does not pay again. This is the resume contract: what a
+// previous apply finished stays finished, even when the box's
+// network is broken and the re-run would have tripped on it.
+func TestConvergedStepIsKeptNotReRun(t *testing.T) {
+	r := &fakeRunner{respond: func(argv []string) (string, int, error) {
+		if strings.Contains(strings.Join(argv, " "), "dpkg-query") {
+			return "install ok installed\n", 0, nil
+		}
+		return "", 0, nil
+	}}
+	steps := []plan.Step{{
+		Control: "unattended-upgrades", Title: "security updates",
+		Exec:  [][]string{{"apt-get", "update"}, {"apt-get", "install", "-y", "unattended-upgrades"}},
+		Check: []string{"sh", "-c", "dpkg-query -W -f='${Status}' unattended-upgrades"},
+	}}
+	res := Apply(context.Background(), r, steps, testOptions(r, &fakeProver{r: r}))
+	if res.Failed {
+		t.Fatalf("the converged step failed: %+v", res)
+	}
+	if len(res.Steps) != 1 || res.Steps[0].State != StepKept {
+		t.Fatalf("the converged step is not kept: %+v", res.Steps)
+	}
+	if strings.Contains(strings.Join(r.flat(), "\n"), "apt-get") {
+		t.Fatal("a converged step refreshed apt — the resume re-paid for finished work")
+	}
+}
+
+// A check that says the work stands means the work runs: the check
+// is the gate for skipping, nothing more.
+func TestUnconvergedStepRunsItsExec(t *testing.T) {
+	r := &fakeRunner{respond: func(argv []string) (string, int, error) {
+		if strings.Contains(strings.Join(argv, " "), "dpkg-query") {
+			return "", 1, nil
+		}
+		return "", 0, nil
+	}}
+	steps := []plan.Step{{
+		Control: "unattended-upgrades", Title: "security updates",
+		Exec:  [][]string{{"apt-get", "install", "-y", "unattended-upgrades"}},
+		Check: []string{"sh", "-c", "dpkg-query -W -f='${Status}' unattended-upgrades"},
+	}}
+	res := Apply(context.Background(), r, steps, testOptions(r, &fakeProver{r: r}))
+	if res.Failed || len(res.Steps) != 1 || res.Steps[0].State != StepDone {
+		t.Fatalf("the standing work did not run: %+v", res)
+	}
+	if !strings.Contains(strings.Join(r.flat(), "\n"), "apt-get install") {
+		t.Fatal("the exec was skipped though its check said the work stands")
+	}
+}
+
+// Failure notes name the reason: apt buries its errors under Hit:
+// progress lines, and the box's real complaint — the unreachable
+// repository — is never the first line. The note that reaches the
+// report is the line that says why.
+func TestFailureNotesNameTheReasonNotTheProgress(t *testing.T) {
+	r := &fakeRunner{respond: func(argv []string) (string, int, error) {
+		if strings.HasPrefix(strings.Join(argv, " "), "apt-get update") {
+			return "Hit:1 http://security.ubuntu.com/ubuntu noble-security InRelease\n" +
+				"Hit:2 http://nova.clouds.archive.ubuntu.com/ubuntu noble InRelease\n" +
+				"Err:3 https://download.docker.com/linux/ubuntu noble InRelease\n" +
+				"  Could not connect to download.docker.com.\n", 100, nil
+		}
+		return "", 0, nil
+	}}
+	steps := []plan.Step{{
+		Control: "unattended-upgrades", Title: "security updates",
+		Exec: [][]string{{"apt-get", "update"}},
+	}}
+	res := Apply(context.Background(), r, steps, testOptions(r, &fakeProver{r: r}))
+	if !res.Failed {
+		t.Fatal("the apt failure passed")
+	}
+	note := res.Steps[0].Note
+	if !strings.Contains(note, "Err:3") {
+		t.Errorf("the note hides the failing repository: %q", note)
+	}
+	if strings.Contains(note, "Hit:1") {
+		t.Errorf("the note leads with a success line: %q", note)
+	}
+}

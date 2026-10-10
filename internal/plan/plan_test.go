@@ -432,3 +432,28 @@ func TestMyMoUserStepSurvivesItsOwnResume(t *testing.T) {
 		t.Fatalf("useradd must never run unconditionally: %q", first)
 	}
 }
+
+// Every step whose work is to install something carries its own
+// convergence: the resume contract is that what a previous apply
+// finished stays finished, and the engine can only keep that
+// promise for steps that know how to say "already in place".
+func TestInstallStepsCarryTheirConvergence(t *testing.T) {
+	r := ubuntuRunner()
+	steps, err := Generate(context.Background(), r, cleanNode(), cleanSnapshot(), cleanAudit())
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	have := map[string][]string{}
+	for _, s := range steps {
+		have[s.Control] = s.Check
+	}
+	for _, control := range []string{"unattended-upgrades", "firewall", "docker", "caddy"} {
+		if len(have[control]) == 0 {
+			t.Errorf("step %q installs a package but cannot say when it is already in place", control)
+		}
+	}
+	// the firewall's converged state is active, not merely installed
+	if !strings.Contains(strings.Join(have["firewall"], " "), "Status: active") {
+		t.Errorf("the firewall converges on installed, not active: %q", strings.Join(have["firewall"], " "))
+	}
+}

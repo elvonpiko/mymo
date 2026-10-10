@@ -48,6 +48,21 @@ type Step struct {
 	Packages []string
 	Exec     [][]string
 	Gate     string
+	// Check is the step's end state, probed as one command: exit 0
+	// means the exec would be a no-op with a cost — an apt refresh,
+	// a download — that a resumed box may not be able to pay again,
+	// so the engine skips the exec and reports the step KEPT. A
+	// non-zero exit means the work stands: the exec runs as planned.
+	Check []string
+}
+
+// installedCheck is the converged probe for a step whose whole exec
+// exists to put one package in place: dpkg says install ok installed
+// or it does not. The quoting is dpkg's own format syntax — the
+// argument travels verbatim to the shell, which is the only
+// interpreter dpkg's ${Status} placeholder ever had.
+func installedCheck(pkg string) []string {
+	return []string{"sh", "-c", "dpkg-query -W -f='${Status}' " + pkg + " 2>/dev/null | grep -q 'install ok installed'"}
 }
 
 // BlockedError reports the decisions standing between a node and its
@@ -233,6 +248,9 @@ func updatesStep() Step {
 			{"apt-get", "update"},
 			{"apt-get", "install", "-y", "unattended-upgrades"},
 		},
+		// the step's whole work is the package: installed is
+		// converged, and a resume never refreshes apt for it again
+		Check: installedCheck("unattended-upgrades"),
 	}
 }
 
@@ -252,6 +270,9 @@ func firewallStep(a preflight.Audit) Step {
 		return step
 	}
 	step.Detail = "install ufw \u2014 deny incoming, limit ssh, open 80/443"
+	// the converged state is active, not merely installed: a step
+	// interrupted between install and enable re-runs to its end
+	step.Check = []string{"sh", "-c", "ufw status 2>/dev/null | grep -q 'Status: active'"}
 	step.Exec = [][]string{
 		{"apt-get", "update"},
 		{"apt-get", "install", "-y", "ufw"},
@@ -295,6 +316,10 @@ func dockerStep(f facts.Node, a preflight.Audit, id, codename, arch string) Step
 				Mode:    "0644", Owner: "root:root"},
 		},
 		Packages: baseline.DockerPackages,
+		// preflight adopts an installed docker as its own step; this
+		// check is the belt for a resume that finds the engine in
+		// place with the marker never written
+		Check: installedCheck("docker-ce"),
 		Exec: [][]string{
 			{"apt-get", "update"},
 			{"apt-get", "install", "-y", "ca-certificates", "curl"},
@@ -353,6 +378,7 @@ func caddyStep(f facts.Node, a preflight.Audit) Step {
 				Mode:    "0644", Owner: "root:root"},
 		},
 		Packages: []string{baseline.CaddyPackage},
+		Check:    installedCheck(baseline.CaddyPackage),
 		Exec: [][]string{
 			{"install", "-d", "/usr/share/keyrings"},
 			{"sh", "-c", "curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg"},

@@ -144,6 +144,26 @@ func runW(ctx context.Context, r Runner, o Options, argv ...string) (string, int
 	return r.Run(ctx, wrapped[0], wrapped[1:]...)
 }
 
+// reasonLine finds the line that says why a command failed: package
+// tools bury their errors under progress lines, so the first line is
+// often a success. The first line that names trouble is the honest
+// note; the first line remains the fallback.
+func reasonLine(out string) string {
+	for _, raw := range strings.Split(out, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		l := strings.ToLower(line)
+		if strings.HasPrefix(l, "e:") || strings.HasPrefix(l, "err:") || strings.HasPrefix(l, "w:") ||
+			strings.HasPrefix(l, "failed") || strings.Contains(l, "could not") ||
+			strings.Contains(l, "unable to") || strings.Contains(l, "timed out") {
+			return line
+		}
+	}
+	return firstLine(out)
+}
+
 // firstLine keeps failure notes to one row.
 func firstLine(s string) string {
 	if i := strings.IndexByte(s, '\n'); i >= 0 {
@@ -185,7 +205,7 @@ func Deploy(ctx context.Context, r Runner, app domain.App, o Options) Result {
 		return fail(net, "the network check never completed: "+err.Error(), "network")
 	} else if code != 0 {
 		if out, code, err := runW(ctx, r, o, "docker", "network", "create", NetworkName); err != nil || code != 0 {
-			return fail(net, fmt.Sprintf("creating %s failed (%d): %s", NetworkName, code, firstLine(out)), "network")
+			return fail(net, fmt.Sprintf("creating %s failed (%d): %s", NetworkName, code, reasonLine(out)), "network")
 		}
 		net.State, net.Note = StepDone, NetworkName+" created — the only path to managed containers"
 	} else {
@@ -200,7 +220,7 @@ func Deploy(ctx context.Context, r Runner, app domain.App, o Options) Result {
 		o.report("pulling " + app.Image)
 		out, code, err := runW(ctx, r, o, "docker", "pull", app.Image)
 		if err != nil || code != 0 {
-			return fail(pull, fmt.Sprintf("pull failed (%d): %s", code, firstLine(out)), "pull")
+			return fail(pull, fmt.Sprintf("pull failed (%d): %s", code, reasonLine(out)), "pull")
 		}
 		var ierr error
 		digest, ierr = imageDigest(ctx, r, o, app.Image)
@@ -229,7 +249,7 @@ func Deploy(ctx context.Context, r Runner, app domain.App, o Options) Result {
 		out, code, err := runW(ctx, r, o, "docker", "build", "-t", imageRef, dest)
 		if err != nil || code != 0 {
 			runW(ctx, r, o, "rm", "-rf", dest) // best effort; the build dir is scratch
-			return fail(build, fmt.Sprintf("build failed (%d): %s", code, firstLine(out)), "build")
+			return fail(build, fmt.Sprintf("build failed (%d): %s", code, reasonLine(out)), "build")
 		}
 		runW(ctx, r, o, "rm", "-rf", dest)
 		var ierr error
@@ -257,7 +277,7 @@ func Deploy(ctx context.Context, r Runner, app domain.App, o Options) Result {
 	// narrated, and the release starts fresh.
 	if _, code, err := runW(ctx, r, o, "docker", "inspect", container); err == nil && code == 0 {
 		if out, code, err := runW(ctx, r, o, "docker", "rm", "-f", container); err != nil || code != 0 {
-			return fail(stage, fmt.Sprintf("release r%d was interrupted mid-staging earlier and its leftover container %s could not be removed (%d): %s — remove it by hand, then deploy again", id, container, code, firstLine(out)), "stage")
+			return fail(stage, fmt.Sprintf("release r%d was interrupted mid-staging earlier and its leftover container %s could not be removed (%d): %s — remove it by hand, then deploy again", id, container, code, reasonLine(out)), "stage")
 		}
 		o.report("removed the interrupted r" + fmt.Sprint(id) + " staging container — it never became a release")
 	}
@@ -268,7 +288,7 @@ func Deploy(ctx context.Context, r Runner, app domain.App, o Options) Result {
 		"--restart", "unless-stopped",
 		imageRef}
 	if out, code, err := runW(ctx, r, o, runArgv...); err != nil || code != 0 {
-		return fail(stage, fmt.Sprintf("the container did not start (%d): %s", code, firstLine(out)), "stage")
+		return fail(stage, fmt.Sprintf("the container did not start (%d): %s", code, reasonLine(out)), "stage")
 	}
 	stage.State = StepDone
 	stage.Note = container + " is running on " + NetworkName + " — no port is published"
@@ -388,7 +408,7 @@ func Rollback(ctx context.Context, r Runner, app domain.App, o Options) Result {
 
 	start := step("rollback", "release r"+fmt.Sprint(target.ID))
 	if out, code, err := runW(ctx, r, o, "docker", "start", target.Container); err != nil || code != 0 {
-		return fail(start, fmt.Sprintf("r%d did not start again (%d): %s", target.ID, code, firstLine(out)), "rollback")
+		return fail(start, fmt.Sprintf("r%d did not start again (%d): %s", target.ID, code, reasonLine(out)), "rollback")
 	}
 	healthNote, hErr := probeHealth(ctx, r, o, app, target.Container)
 	if hErr != nil {
@@ -410,7 +430,7 @@ func Rollback(ctx context.Context, r Runner, app domain.App, o Options) Result {
 	if hasCurrent {
 		stop := step("rollback", "release r"+fmt.Sprint(current.ID))
 		if out, code, err := runW(ctx, r, o, "docker", "stop", current.Container); err != nil || code != 0 {
-			return fail(stop, fmt.Sprintf("r%d did not stop: %s", current.ID, firstLine(out)), "rollback")
+			return fail(stop, fmt.Sprintf("r%d did not stop: %s", current.ID, reasonLine(out)), "rollback")
 		}
 		stop.State, stop.Note = StepDone, current.Container+" stopped and kept"
 	}
@@ -441,7 +461,7 @@ func probeHealth(ctx context.Context, r Runner, o Options, app domain.App, conta
 			HealthImage, "wget", "-q", "-T", "2", "-O", "/dev/null", url); err == nil && code == 0 {
 			return app.Health + " answers on the network", nil
 		} else if attempt == o.HealthAttempts {
-			return "", fmt.Errorf("%s never answered (last attempt: %s)", url, firstLine(out))
+			return "", fmt.Errorf("%s never answered (last attempt: %s)", url, reasonLine(out))
 		}
 		select {
 		case <-ctx.Done():
@@ -456,7 +476,7 @@ func probeHealth(ctx context.Context, r Runner, o Options, app domain.App, conta
 func imageDigest(ctx context.Context, r Runner, o Options, ref string) (string, error) {
 	out, code, err := runW(ctx, r, o, "docker", "image", "inspect", "--format", "{{.Id}}", ref)
 	if err != nil || code != 0 {
-		return "", fmt.Errorf("could not resolve the digest of %s: %s", ref, firstLine(out))
+		return "", fmt.Errorf("could not resolve the digest of %s: %s", ref, reasonLine(out))
 	}
 	d := strings.TrimSpace(out)
 	if !strings.HasPrefix(d, "sha256:") {

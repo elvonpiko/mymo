@@ -122,7 +122,19 @@ func Apply(ctx context.Context, r preflight.Runner, steps []plan.Step, o Options
 			return fail(i, s.Control, s.Title, "the sshd gate requires a second-connection prover; none was provided")
 		}
 
-		// files first, exactly as the plan stated them
+		// a converged step is not re-run: the check is the step's
+		// end state, and a resume that already paid for it does not
+		// pay again — apt refreshes and downloads included
+		if len(s.Check) > 0 {
+			if _, code, err := runArgv(ctx, r, o.wrap(s.Check...)); err != nil {
+				return fail(i, s.Control, s.Title, "the already-done check never completed: "+err.Error())
+			} else if code == 0 {
+				o.report("kept · " + s.Title + " already in place")
+				res.Steps = append(res.Steps, StepResult{Control: s.Control, Title: s.Title, State: StepKept})
+				continue
+			}
+		}
+
 		// files first, exactly as the plan stated them
 		kept := true
 		for _, f := range s.Files {
@@ -208,11 +220,31 @@ func runAll(ctx context.Context, r preflight.Runner, exec [][]string, o Options)
 			}
 		}
 		if out, code, err := runArgv(ctx, r, o.wrap(argv...)); err != nil || code != 0 {
-			return kept, fmt.Errorf("%s failed (%d): %s", strings.Join(argv, " "), code, firstLine(out))
+			return kept, fmt.Errorf("%s failed (%d): %s", strings.Join(argv, " "), code, reasonLine(out))
 		}
 		kept = false
 	}
 	return kept, nil
+}
+
+// reasonLine finds the line that says why a command failed: apt
+// buries its errors under Hit:/Get: progress lines, so the output's
+// first line is often a success. The first line that names trouble
+// is the honest note; the first line remains the fallback.
+func reasonLine(out string) string {
+	for _, raw := range strings.Split(out, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		l := strings.ToLower(line)
+		if strings.HasPrefix(l, "e:") || strings.HasPrefix(l, "err:") || strings.HasPrefix(l, "w:") ||
+			strings.HasPrefix(l, "failed") || strings.Contains(l, "could not") ||
+			strings.Contains(l, "unable to") || strings.Contains(l, "timed out") {
+			return line
+		}
+	}
+	return firstLine(out)
 }
 
 // writeFile places one file: skipped when identical, backed up when
