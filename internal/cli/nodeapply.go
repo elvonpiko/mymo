@@ -222,15 +222,15 @@ func mymoKeyPath(store *state.Store, name string) string {
 	return filepath.Join(store.Dir(), "keys", name+".key")
 }
 
-// printApplyReport shows each step's outcome: done, kept, failed, or
-// blocked — with the failure's reason in full.
+// printApplyReport shows each step's outcome: done, failed, or
+// blocked — with the failure's reason in full. A step mymo found
+// already in place reports done like any other: the skipping was
+// narrated live, and the report states outcomes, one word each.
 func printApplyReport(w io.Writer, res apply.Result) {
 	for _, s := range res.Steps {
 		state := "DONE"
 		switch s.State {
-		case apply.StepDone:
-		case apply.StepKept:
-			state = "KEPT"
+		case apply.StepDone, apply.StepKept:
 		case apply.StepFailed:
 			state = "FAILED"
 		default:

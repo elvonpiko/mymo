@@ -47,13 +47,30 @@ type Step struct {
 	Files    []File
 	Packages []string
 	Exec     [][]string
-	Gate     string
+	// Notes rides beside Exec, one plain line per command: the
+	// loading page says what mymo is doing while the command runs.
+	// A step may leave Notes empty; the command's own name is then
+	// the narration.
+	Notes []string
+	Gate  string
 	// Check is the step's end state, probed as one command: exit 0
 	// means the exec would be a no-op with a cost — an apt refresh,
 	// a download — that a resumed box may not be able to pay again,
 	// so the engine skips the exec and reports the step KEPT. A
 	// non-zero exit means the work stands: the exec runs as planned.
 	Check []string
+}
+
+// repoFileWrite places one pinned repository line through the
+// command stream — not the guarded files, which all land before the
+// exec begins. The rule has teeth (ADR-0009): a repo file never
+// exists without its key, so the file is written here, after the
+// key. An existing file that differs is moved aside first; mymo
+// never silently overwrites what it did not write.
+func repoFileWrite(path, line string) []string {
+	return []string{"sh", "-c", fmt.Sprintf(
+		"printf '%%s\n' '%s' | cmp -s - %s || { mv %s %s.pre-mymo 2>/dev/null || true; printf '%%s\n' '%s' > %s; }",
+		line, path, path, path, line, path)}
 }
 
 // installedCheck is the converged probe for a step whose whole exec
@@ -119,13 +136,11 @@ func Generate(ctx context.Context, r preflight.Runner, n domain.Node, f facts.No
 		sysctlStep(),
 		updatesStep(),
 		firewallStep(a),
-	}
-	steps = append(steps, dockerSteps(f, a, id, codename, arch)...)
-	steps = append(steps,
+		dockerStep(f, a, id, codename, arch),
 		daemonStep(f, a),
 		caddyStep(f, a),
 		stateStep(),
-	)
+	}
 	return steps, nil
 }
 
@@ -298,62 +313,58 @@ func dockerAdoptable(f facts.Node, a preflight.Audit) bool {
 	return a.DockerPkg == "docker-ce" || f.Docker != ""
 }
 
-// dockerSteps keeps one rule with teeth: a repo file never exists
-// without its key. An attempt that lands the file first poisons
-// every later apt refresh — apt refuses to update past a repository
-// it cannot verify — and the failure looks like the box's network.
-// The key step runs before the file step, and the key step starts
-// by moving an interrupted attempt's keyless repo file aside.
-func dockerSteps(f facts.Node, a preflight.Audit, id, codename, arch string) []Step {
+// dockerStep installs the engine from docker's official
+// repository, in the order the rule demands (ADR-0009): the signing
+// key lands before the repo file exists, because apt refuses to
+// refresh past a repository it cannot verify — and a keyless repo
+// file left by an interrupted attempt poisons every later refresh,
+// reading like the box's broken network. The loading page narrates
+// each command, so one step is one story on the screen.
+func dockerStep(f facts.Node, a preflight.Audit, id, codename, arch string) Step {
 	if dockerAdoptable(f, a) {
-		return []Step{{
+		return Step{
 			Control: "docker",
 			Title:   "docker \u2014 adopt",
 			Detail:  "adopt the installed docker; nothing reinstalls",
 			Exec:    [][]string{{"systemctl", "enable", "docker"}},
-		}}
+		}
 	}
 	repo := fmt.Sprintf("https://download.docker.com/linux/%s", id)
-	key := []Step{{
-		Control: "docker-repo",
-		Title:   "docker repo key",
-		Detail:  "fetch docker's signing key; the repo file follows",
-		// the key is the convergence: it is fetched last, so a
-		// readable key means the tools before it are in place too
-		Check: []string{"sh", "-c", "test -r /etc/apt/keyrings/docker.asc"},
+	line := fmt.Sprintf("deb [arch=%s signed-by=/etc/apt/keyrings/docker.asc] %s %s stable", arch, repo, codename)
+	return Step{
+		Control:  "docker",
+		Title:    "docker engine",
+		Detail:   "install docker-ce + plugins from docker's repo",
+		Packages: baseline.DockerPackages,
+		// the belt for a resume that finds the engine in place with
+		// the marker never written
+		Check: installedCheck("docker-ce"),
 		Exec: [][]string{
 			// an interrupted attempt may have left its repo file
-			// behind without this key — apt cannot refresh past
-			// it, so it is moved aside before anything touches apt.
-			// The engine step writes a fresh one once the key is
-			// proven; the moved copy is inert to apt.
+			// behind without the key — moved aside before anything
+			// touches apt; inert to apt either way
 			{"sh", "-c", "test -r /etc/apt/keyrings/docker.asc || mv /etc/apt/sources.list.d/docker.list /etc/apt/sources.list.d/docker.list.interrupted 2>/dev/null || true"},
 			{"apt-get", "update"},
 			{"apt-get", "install", "-y", "ca-certificates", "curl"},
 			{"install", "-m", "0755", "-d", "/etc/apt/keyrings"},
 			{"curl", "-fsSL", repo + "/gpg", "-o", "/etc/apt/keyrings/docker.asc"},
 			{"chmod", "a+r", "/etc/apt/keyrings/docker.asc"},
-		},
-	}, {
-		Control: "docker",
-		Title:   "docker engine",
-		Detail:  "install docker-ce + plugins from docker's repo",
-		Files: []File{
-			{Path: "/etc/apt/sources.list.d/docker.list",
-				Content: fmt.Sprintf("deb [arch=%s signed-by=/etc/apt/keyrings/docker.asc] %s %s stable\n", arch, repo, codename),
-				Mode:    "0644", Owner: "root:root"},
-		},
-		Packages: baseline.DockerPackages,
-		// preflight adopts an installed docker as its own step; this
-		// check is the belt for a resume that finds the engine in
-		// place with the marker never written
-		Check: installedCheck("docker-ce"),
-		Exec: [][]string{
+			repoFileWrite("/etc/apt/sources.list.d/docker.list", line),
 			{"apt-get", "update"},
 			append([]string{"apt-get", "install", "-y"}, baseline.DockerPackages...),
 		},
-	}}
-	return key
+		Notes: []string{
+			"moving any keyless leftover repo file aside",
+			"refreshing apt before anything lands",
+			"installing ca-certificates + curl",
+			"making the keyring directory",
+			"fetching docker's signing key",
+			"making the key readable",
+			"adding docker's repository",
+			"refreshing apt with docker's repo",
+			"installing docker-ce + plugins",
+		},
+	}
 }
 
 func daemonStep(f facts.Node, a preflight.Audit) Step {
@@ -393,22 +404,39 @@ func caddyStep(f facts.Node, a preflight.Audit) Step {
 		}
 	}
 	return Step{
-		Control: "caddy",
-		Title:   "caddy",
-		Detail:  "install caddy from the official cloudsmith repo",
-		Files: []File{
-			{Path: "/etc/apt/sources.list.d/caddy-stable.list",
-				Content: "deb [signed-by=/usr/share/keyrings/caddy-stable-archive-keyring.gpg] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any main\n",
-				Mode:    "0644", Owner: "root:root"},
-		},
+		Control:  "caddy",
+		Title:    "caddy",
+		Detail:   "install caddy from its official cloudsmith repo",
 		Packages: []string{baseline.CaddyPackage},
 		Check:    installedCheck(baseline.CaddyPackage),
+		// caddy's official install recipe: the repo's prerequisite
+		// packages, the signing key dearmored into the system
+		// keyring, then the repo file, then the install. The key
+		// lands before the file (ADR-0009) and --yes lets the
+		// dearmor overwrite an earlier attempt's keyring, so a
+		// resume runs the recipe again to the same end.
 		Exec: [][]string{
-			{"install", "-d", "/usr/share/keyrings"},
-			{"sh", "-c", "curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg"},
+			{"sh", "-c", "test -r /usr/share/keyrings/caddy-stable-archive-keyring.gpg || mv /etc/apt/sources.list.d/caddy-stable.list /etc/apt/sources.list.d/caddy-stable.list.interrupted 2>/dev/null || true"},
 			{"apt-get", "update"},
-			{"apt-get", "install", "-y", "caddy"},
-			{"systemctl", "enable", "--now", "caddy"},
+			{"apt-get", "install", "-y", "debian-keyring", "debian-archive-keyring", "apt-transport-https", "ca-certificates", "curl", "gpg"},
+			{"install", "-d", "/usr/share/keyrings"},
+			{"sh", "-c", "curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --batch --yes --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg"},
+			repoFileWrite("/etc/apt/sources.list.d/caddy-stable.list",
+				"deb [signed-by=/usr/share/keyrings/caddy-stable-archive-keyring.gpg] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any main"),
+			{"apt-get", "update"},
+			{"apt-get", "install", "-y", baseline.CaddyPackage},
+			{"systemctl", "enable", "--now", baseline.CaddyPackage},
+		},
+		Notes: []string{
+			"moving any keyless leftover repo file aside",
+			"refreshing apt before anything lands",
+			"installing the repo's prerequisite packages",
+			"making the keyring directory",
+			"fetching caddy's signing key",
+			"adding caddy's repository",
+			"refreshing apt with caddy's repo",
+			"installing caddy",
+			"enabling caddy",
 		},
 	}
 }

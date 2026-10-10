@@ -122,7 +122,7 @@ func TestPrintApplyReportTellsTheWholeStory(t *testing.T) {
 	out := buf.String()
 	for _, want := range []string{
 		"DONE    system update",
-		"KEPT    mymo admin user",
+		"DONE    mymo admin user",
 		"FAILED  sshd hardening",
 		"the gate refused",
 		"BLOCKED docker engine",

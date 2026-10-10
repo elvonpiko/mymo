@@ -65,7 +65,7 @@ func TestGenerateCleanUbuntuPlan(t *testing.T) {
 
 	want := []string{
 		"mymo-user", "ssh-hardening", "sysctl", "unattended-upgrades",
-		"firewall", "docker-repo", "docker", "docker-daemon", "caddy", "state-dir",
+		"firewall", "docker", "docker-daemon", "caddy", "state-dir",
 	}
 	if len(steps) != len(want) {
 		t.Fatalf("plan has %d steps, want %d", len(steps), len(want))
@@ -136,9 +136,17 @@ func TestGenerateCleanUbuntuPlan(t *testing.T) {
 			docker = s
 		}
 	}
-	if !strings.Contains(docker.Files[0].Content, "https://download.docker.com/linux/ubuntu noble stable") ||
-		!strings.Contains(docker.Files[0].Content, "arch=amd64") {
-		t.Errorf("docker source list wrong: %q", docker.Files[0].Content)
+	// the repo line is pinned in the command that writes it —
+	// docker's own repo, this architecture, this codename
+	var repoLine string
+	for _, argv := range docker.Exec {
+		if j := strings.Join(argv, " "); strings.Contains(j, "sources.list.d/docker.list") && strings.Contains(j, "printf") {
+			repoLine = j
+		}
+	}
+	if !strings.Contains(repoLine, "https://download.docker.com/linux/ubuntu noble stable") ||
+		!strings.Contains(repoLine, "arch=amd64") {
+		t.Errorf("docker source list wrong: %q", repoLine)
 	}
 	var install []string
 	for _, argv := range docker.Exec {
@@ -180,8 +188,16 @@ func TestGenerateCleanUbuntuPlan(t *testing.T) {
 			caddy = s
 		}
 	}
-	if !strings.Contains(caddy.Files[0].Content, "https://dl.cloudsmith.io/public/caddy/stable/deb/debian any main") {
-		t.Errorf("caddy source list wrong: %q", caddy.Files[0].Content)
+	// the repo line is pinned in the command that writes it —
+	// cloudsmith's own stable repo, this keyring's signature
+	var caddyLine string
+	for _, argv := range caddy.Exec {
+		if j := strings.Join(argv, " "); strings.Contains(j, "sources.list.d/caddy-stable.list") && strings.Contains(j, "printf") {
+			caddyLine = j
+		}
+	}
+	if !strings.Contains(caddyLine, "https://dl.cloudsmith.io/public/caddy/stable/deb/debian any main") {
+		t.Errorf("caddy source list wrong: %q", caddyLine)
 	}
 
 	// the marker names every control
@@ -442,31 +458,96 @@ func TestMyMoUserStepSurvivesItsOwnResume(t *testing.T) {
 // keyless repo file aside. A repo file without its key poisons
 // every later apt refresh — apt refuses to update past a repository
 // it cannot verify — and the failure looks like the box's network.
+// Every narrated step's notes ride beside its commands, one line
+// each: the loading page tells the story while mymo works.
+func TestNotesRideBesideTheirCommands(t *testing.T) {
+	r := ubuntuRunner()
+	steps, err := Generate(context.Background(), r, cleanNode(), cleanSnapshot(), cleanAudit())
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	for _, s := range steps {
+		if len(s.Notes) == 0 {
+			continue
+		}
+		if len(s.Notes) != len(s.Exec) {
+			t.Errorf("step %q has %d notes for %d commands", s.Control, len(s.Notes), len(s.Exec))
+		}
+		for _, n := range s.Notes {
+			if n == "" {
+				t.Errorf("step %q has an empty note", s.Control)
+			}
+		}
+	}
+}
+
 func TestARepoFileNeverExistsWithoutItsKey(t *testing.T) {
 	r := ubuntuRunner()
 	steps, err := Generate(context.Background(), r, cleanNode(), cleanSnapshot(), cleanAudit())
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
-	keyAt, fileAt := -1, -1
-	for i, s := range steps {
-		if s.Control == "docker-repo" {
-			keyAt = i
+	for _, s := range steps {
+		// the repo steps carry no guarded files: those all land
+		// before the exec begins, and a repo file must land only
+		// after its key
+		if s.Control == "docker" || s.Control == "caddy" {
+			for _, f := range s.Files {
+				if strings.Contains(f.Path, "sources.list.d") {
+					t.Errorf("%s still writes its repo file as a guarded file, before its key: %s", s.Control, f.Path)
+				}
+			}
+		}
+		if s.Control == "docker" {
 			if !strings.Contains(strings.Join(s.Exec[0], " "), "mv /etc/apt/sources.list.d/docker.list") {
-				t.Errorf("the key step does not unpoison a keyless repo file first:\n%s", strings.Join(s.Exec[0], " "))
+				t.Errorf("the docker step does not unpoison a keyless repo file first:\n%s", strings.Join(s.Exec[0], " "))
+			}
+			keyAt, fileAt := -1, -1
+			for i, argv := range s.Exec {
+				j := strings.Join(argv, " ")
+				if strings.Contains(j, "/gpg -o /etc/apt/keyrings/docker.asc") {
+					keyAt = i
+				}
+				if strings.Contains(j, "sources.list.d/docker.list") && i > 0 {
+					if fileAt < 0 {
+						fileAt = i
+					}
+				}
+			}
+			if keyAt < 0 || fileAt < 0 || fileAt < keyAt {
+				t.Errorf("the repo file (cmd %d) does not follow its key (cmd %d)", fileAt, keyAt)
 			}
 		}
-		for _, f := range s.Files {
-			if f.Path == "/etc/apt/sources.list.d/docker.list" {
-				fileAt = i
+		if s.Control == "caddy" {
+			if !strings.Contains(strings.Join(s.Exec[0], " "), "mv /etc/apt/sources.list.d/caddy-stable.list") {
+				t.Errorf("the caddy step does not unpoison a keyless repo file first:\n%s", strings.Join(s.Exec[0], " "))
+			}
+			keyAt, fileAt := -1, -1
+			for i, argv := range s.Exec {
+				j := strings.Join(argv, " ")
+				if strings.Contains(j, "gpg.key") && strings.Contains(j, "dearmor") {
+					keyAt = i
+				}
+				if strings.Contains(j, "sources.list.d/caddy-stable.list") && i > 0 {
+					if fileAt < 0 {
+						fileAt = i
+					}
+				}
+			}
+			if keyAt < 0 || fileAt < 0 || fileAt < keyAt {
+				t.Errorf("the caddy repo file (cmd %d) does not follow its key (cmd %d)", fileAt, keyAt)
+			}
+			// the official recipe's prerequisite packages ride along
+			found := false
+			for _, argv := range s.Exec {
+				if strings.Join(argv, " ") == "apt-get install -y debian-keyring debian-archive-keyring apt-transport-https ca-certificates curl gpg" {
+					found = true
+				}
+			}
+			if !found {
+				t.Error("the caddy step skips the official recipe's prerequisite packages")
 			}
 		}
-	}
-	if keyAt < 0 || fileAt < 0 {
-		t.Fatalf("plan lost the docker key or repo file: keyAt=%d fileAt=%d", keyAt, fileAt)
-	}
-	if fileAt <= keyAt {
-		t.Errorf("the repo file (step %d) does not follow its key (step %d)", fileAt, keyAt)
 	}
 }
 
@@ -480,7 +561,7 @@ func TestInstallStepsCarryTheirConvergence(t *testing.T) {
 	for _, s := range steps {
 		have[s.Control] = s.Check
 	}
-	for _, control := range []string{"unattended-upgrades", "firewall", "docker-repo", "docker", "caddy"} {
+	for _, control := range []string{"unattended-upgrades", "firewall", "docker", "caddy"} {
 		if len(have[control]) == 0 {
 			t.Errorf("step %q installs a package but cannot say when it is already in place", control)
 		}

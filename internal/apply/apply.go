@@ -129,7 +129,7 @@ func Apply(ctx context.Context, r preflight.Runner, steps []plan.Step, o Options
 			if _, code, err := runArgv(ctx, r, o.wrap(s.Check...)); err != nil {
 				return fail(i, s.Control, s.Title, "the already-done check never completed: "+err.Error())
 			} else if code == 0 {
-				o.report("kept · " + s.Title + " already in place")
+				o.report(s.Title + " is already in place — skipping")
 				res.Steps = append(res.Steps, StepResult{Control: s.Control, Title: s.Title, State: StepKept})
 				continue
 			}
@@ -148,12 +148,18 @@ func Apply(ctx context.Context, r preflight.Runner, steps []plan.Step, o Options
 		// a gated step runs everything but its last command, proves
 		// the new key on a second connection, and only then commits:
 		// the last command is the one that can close the old door
-		exec := s.Exec
+		exec, notes := s.Exec, s.Notes
 		if s.Gate != "" {
 			if len(exec) < 2 {
 				return fail(i, s.Control, s.Title, "a gated step must end with its commit command")
 			}
-			preKept, err := runAll(ctx, r, exec[:len(exec)-1], o)
+			// notes ride the whole exec or none of it; the slice
+			// narrows only when they do
+			preNotes := []string{}
+			if len(notes) == len(exec) {
+				preNotes = notes[:len(notes)-1]
+			}
+			preKept, err := runAll(ctx, r, exec[:len(exec)-1], preNotes, o)
 			kept = kept && preKept
 			if err != nil {
 				return fail(i, s.Control, s.Title, err.Error())
@@ -166,9 +172,14 @@ func Apply(ctx context.Context, r preflight.Runner, steps []plan.Step, o Options
 			res.GateProven = true
 			o.report("the new key is proven — sshd reloads next")
 			exec = exec[len(exec)-1:]
+			if len(notes) == len(exec)+1 {
+				notes = notes[len(notes)-1:]
+			} else {
+				notes = []string{}
+			}
 		}
 
-		execKept, err := runAll(ctx, r, exec, o)
+		execKept, err := runAll(ctx, r, exec, notes, o)
 		kept = kept && execKept
 		if err != nil {
 			return fail(i, s.Control, s.Title, err.Error())
@@ -201,9 +212,14 @@ func (o Options) report(line string) {
 // runAll executes each command; the first failure is the run's. It
 // reports whether every command was a no-op, so a step can honestly
 // say it was kept when the node already had the intended state.
-func runAll(ctx context.Context, r preflight.Runner, exec [][]string, o Options) (bool, error) {
+// The notes ride beside the commands: one plain line each, so the
+// loading page says what mymo is doing while the command runs.
+func runAll(ctx context.Context, r preflight.Runner, exec [][]string, notes []string, o Options) (bool, error) {
 	kept := true
-	for _, raw := range exec {
+	for i, raw := range exec {
+		if i < len(notes) && notes[i] != "" {
+			o.report(notes[i])
+		}
 		// the plan's placeholders — the public key, the apply
 		// timestamp — are substituted here, never persisted in the
 		// plan itself
@@ -215,7 +231,7 @@ func runAll(ctx context.Context, r preflight.Runner, exec [][]string, o Options)
 		// user is kept as-is, and the step continues
 		if argv[0] == "useradd" {
 			if out, code, _ := runArgv(ctx, r, o.wrap("id", argv[len(argv)-1])); code == 0 && out != "" {
-				o.report("kept · " + argv[len(argv)-1] + " already exists")
+				o.report("the mymo user already exists — keeping it as-is")
 				continue
 			}
 		}

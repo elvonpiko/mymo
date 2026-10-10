@@ -378,12 +378,13 @@ func (m Model) applyReportView() string {
 
 	for _, s := range m.applyResult.Steps {
 		// the state word is the row's spine: uppercase, one width,
-		// so done and failure read as the same column
+		// so done and failure read as the same column. A step mymo
+		// found already in place is done too — the skipping was the
+		// loading page's story to tell, and the report states the
+		// same outcome for every step
 		state, style := "DONE", okStyle
 		switch s.State {
-		case apply.StepDone:
-		case apply.StepKept:
-			state, style = "KEPT", faintStyle
+		case apply.StepDone, apply.StepKept:
 		case apply.StepFailed:
 			state, style = "FAILED", errStyle
 		default:
