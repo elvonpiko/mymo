@@ -205,7 +205,6 @@ func TestGenerateCleanUbuntuPlan(t *testing.T) {
 		"install -d /etc/caddy/mymo",
 		"/etc/caddy/mymo/Placeholder.caddy",
 		"printf 'import mymo/*.caddy\n' >> /etc/caddy/Caddyfile",
-		"systemctl reload caddy",
 		// the cloudsmith repo is moved aside wherever it came from:
 		// while it stands it 402s every apt on the box
 		"mv /etc/apt/sources.list.d/caddy-stable.list /etc/apt/sources.list.d/caddy-stable.list.pre-mymo",
@@ -216,6 +215,21 @@ func TestGenerateCleanUbuntuPlan(t *testing.T) {
 	}
 	if strings.Contains(caddyExec, "dl.cloudsmith.io/public") {
 		t.Errorf("the caddy step still talks to the cloudsmith repository:\n%s", caddyExec)
+	}
+	// the config exists before the service starts: a caddy pointed
+	// at a Caddyfile that is not there dies on arrival
+	importAt, startAt := -1, -1
+	for i, argv := range caddy.Exec {
+		j := strings.Join(argv, " ")
+		if strings.Contains(j, ">> /etc/caddy/Caddyfile") {
+			importAt = i
+		}
+		if strings.Contains(j, "enable --now caddy") {
+			startAt = i
+		}
+	}
+	if importAt < 0 || startAt < 0 || importAt > startAt {
+		t.Errorf("the Caddyfile (cmd %d) is not in place before caddy starts (cmd %d)", importAt, startAt)
 	}
 	// the official systemd unit, byte for byte
 	if len(caddy.Files) != 1 || caddy.Files[0].Path != "/etc/systemd/system/caddy.service" ||

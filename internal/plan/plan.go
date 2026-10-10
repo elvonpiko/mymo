@@ -470,12 +470,17 @@ func caddyStep(f facts.Node, a preflight.Audit) Step {
 			{"curl", "-fsSL", url, "-o", "/tmp/caddy.tar.gz"},
 			{"sh", "-c", "echo '" + asset.SHA512 + "  /tmp/caddy.tar.gz' | sha512sum -c -"},
 			{"sh", "-c", "tar -xzf /tmp/caddy.tar.gz -C /tmp caddy && install -m 0755 /tmp/caddy /usr/bin/caddy && rm -f /tmp/caddy /tmp/caddy.tar.gz"},
-			{"systemctl", "daemon-reload"},
-			{"systemctl", "enable", "--now", "caddy"},
+			// the config the unit points at exists before the service
+			// starts: a caddy without its Caddyfile dies on arrival,
+			// and there is nothing to reload into a dead unit. the
+			// trailing reload belongs to the adopt variant alone,
+			// where a live service may still hold the config it was
+			// found with
 			{"install", "-d", "/etc/caddy/mymo"},
 			{"sh", "-c", "test -f /etc/caddy/mymo/Placeholder.caddy || printf '# mymo routes land here as apps deploy\n' > /etc/caddy/mymo/Placeholder.caddy"},
 			{"sh", "-c", "grep -q '" + baseline.CaddyImport + "' /etc/caddy/Caddyfile 2>/dev/null || printf '" + baseline.CaddyImport + "\n' >> /etc/caddy/Caddyfile"},
-			{"systemctl", "reload", "caddy"},
+			{"systemctl", "daemon-reload"},
+			{"systemctl", "enable", "--now", "caddy"},
 		},
 		Notes: []string{
 			"moving the cloudsmith repo aside \u2014 it breaks apt",
@@ -486,12 +491,11 @@ func caddyStep(f facts.Node, a preflight.Audit) Step {
 			"downloading caddy " + baseline.CaddyVersion + " for " + f.Arch,
 			"verifying the release checksum",
 			"installing the caddy binary to /usr/bin",
-			"loading caddy's systemd unit",
-			"enabling caddy",
 			"making mymo's route directory",
 			"planting the routes placeholder",
 			"adding mymo's import to the Caddyfile",
-			"reloading caddy with mymo's import",
+			"loading caddy's systemd unit",
+			"starting caddy with its config in place",
 		},
 	}
 }
