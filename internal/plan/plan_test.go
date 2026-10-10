@@ -199,6 +199,25 @@ func TestGenerateCleanUbuntuPlan(t *testing.T) {
 	if !strings.Contains(caddyLine, "https://dl.cloudsmith.io/public/caddy/stable/deb/debian any main") {
 		t.Errorf("caddy source list wrong: %q", caddyLine)
 	}
+	// the setup plants mymo's marker so the box is recognizable as
+	// mymo's own from the first setup onward: the route directory,
+	// its placeholder, the import line, the reload
+	var all strings.Builder
+	for _, argv := range caddy.Exec {
+		all.WriteString(strings.Join(argv, " ") + "\n")
+	}
+	caddyExec := all.String()
+	for _, want := range []string{
+		"install -d /etc/caddy/mymo",
+		"/etc/caddy/mymo/Placeholder.caddy",
+		"grep -q 'import mymo/*.caddy' /etc/caddy/Caddyfile",
+		"printf 'import mymo/*.caddy\n' >> /etc/caddy/Caddyfile",
+		"systemctl reload caddy",
+	} {
+		if !strings.Contains(caddyExec, want) {
+			t.Errorf("the caddy setup misses its marker (%s):\n%s", want, caddyExec)
+		}
+	}
 
 	// the marker names every control
 	var state Step

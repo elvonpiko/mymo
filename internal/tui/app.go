@@ -81,8 +81,12 @@ type Model struct {
 	// flow refreshes them
 	pfChecks  []preflight.Check
 	pfVerdict preflight.Outcome
-	pfSnap    facts.Node
-	pfAudit   preflight.Audit
+	// pfScroll walks the check rows when the card cannot hold them
+	// all at once: the rows move, the verdict and the way forward
+	// stay pinned
+	pfScroll int
+	pfSnap   facts.Node
+	pfAudit  preflight.Audit
 
 	// the generated plan awaiting confirmation
 	planSteps []plan.Step
@@ -462,6 +466,22 @@ func (m Model) updateScreenKeys(msg tea.KeyPressMsg, str string) (tea.Model, tea
 				return m, nil
 			}
 			return m, nil
+		}
+		// when the findings outnumber the card, the rows walk under
+		// the pinned verdict — nothing honest is ever clipped away
+		if _, rows := m.pfRowsText(); rows > 0 {
+			switch msg.String() {
+			case "j", "down":
+				if m.pfScroll < m.pfScrollMax(rows) {
+					m.pfScroll++
+				}
+				return m, nil
+			case "k", "up":
+				if m.pfScroll > 0 {
+					m.pfScroll--
+				}
+				return m, nil
+			}
 		}
 		if str == "enter" {
 			return m.runPlan()

@@ -426,6 +426,13 @@ func caddyStep(f facts.Node, a preflight.Audit) Step {
 			{"apt-get", "update"},
 			{"apt-get", "install", "-y", baseline.CaddyPackage},
 			{"systemctl", "enable", "--now", baseline.CaddyPackage},
+			// the import line is mymo's marker in caddy's config: it
+			// is what preflight later recognizes as its own, and the
+			// placeholder keeps the import valid until apps arrive
+			{"install", "-d", "/etc/caddy/mymo"},
+			{"sh", "-c", "test -f /etc/caddy/mymo/Placeholder.caddy || printf '# mymo routes land here as apps deploy\n' > /etc/caddy/mymo/Placeholder.caddy"},
+			{"sh", "-c", "grep -q '" + baseline.CaddyImport + "' /etc/caddy/Caddyfile || printf '" + baseline.CaddyImport + "\n' >> /etc/caddy/Caddyfile"},
+			{"systemctl", "reload", baseline.CaddyPackage},
 		},
 		Notes: []string{
 			"moving any keyless leftover repo file aside",
@@ -437,6 +444,10 @@ func caddyStep(f facts.Node, a preflight.Audit) Step {
 			"refreshing apt with caddy's repo",
 			"installing caddy",
 			"enabling caddy",
+			"making mymo's route directory",
+			"planting the routes placeholder",
+			"adding mymo's import to the Caddyfile",
+			"reloading caddy with mymo's import",
 		},
 	}
 }

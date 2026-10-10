@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"path"
 	"strings"
+
+	"github.com/elvonpiko/mymo/internal/baseline"
 )
 
 // The Caddy wiring deploy owns:
@@ -20,10 +22,11 @@ import (
 // fails the previous content is restored and the reload never runs,
 // so the old route keeps serving.
 const (
-	caddyFile     = "/etc/caddy/Caddyfile"
-	caddyRouteDir = "/etc/caddy/mymo"
-	importLine    = "import mymo/*.caddy"
+	caddyFile  = "/etc/caddy/Caddyfile"
+	importLine = baseline.CaddyImport
 )
+
+const caddyRouteDir = "/etc/caddy/mymo"
 
 // renderRoute draws the one site block mymo owns for an app. The
 // comment is part of the contract: mymo overwrites what it owns.

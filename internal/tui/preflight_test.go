@@ -96,7 +96,7 @@ func TestPreflightDecideShowsBlockedPath(t *testing.T) {
 	m = step(t, m, pfDoneMsg{node: "web-1", snap: snap, audit: audit})
 
 	out := view(m)
-	for _, want := range []string{"80 nginx", "443 free", "only proxy", "a few findings need your call"} {
+	for _, want := range []string{"80 nginx", "443 free", "only proxy", "each names its fix", "fix · stop or disable whatever holds the ports"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("decide verdict missing %q\n%s", want, out)
 		}
@@ -412,5 +412,50 @@ func TestAbortVerdictToastsTheTruth(t *testing.T) {
 	lines := strings.Split(view(m), "\n")
 	if strings.Contains(lines[len(lines)-2], "enter plan") {
 		t.Errorf("footer offers planning past an abort: %q", lines[len(lines)-2])
+	}
+}
+
+// A card that cannot hold every finding walks them with j/k instead
+// of clipping: the verdict and the way forward stay pinned, and a
+// finding is never cut in half.
+func TestOverflowingCheckScrollsInsteadOfClipping(t *testing.T) {
+	s := readyStore(t)
+	seedNode(t, s, "web-1")
+	m := press(t, New(s), "n", "enter")
+	snap := richSnapshot("web-1")
+	m = observe(t, m, "web-1", snap)
+
+	m = press(t, m, "p")
+	audit := cannedAudit()
+	// enough held ports and proxies to make the card taller than
+	// the floor: the rows must walk, the verdict must stay
+	audit.Listeners = map[int]string{80: "nginx", 443: "nginx"}
+	audit.Proxies = []string{"nginx", "haproxy", "traefik"}
+	audit.DockerPkg = "docker-ce"
+	audit.DockerDaemonCfg = `{"log-driver":"syslog"}`
+	snap.Docker = ""
+	m = step(t, m, pfDoneMsg{node: "web-1", snap: snap, audit: audit})
+
+	out := view(m)
+	for _, want := range []string{"each names its fix", "j/k scroll", "fix · move it aside"} {
+		if !strings.Contains(ansiStrip(out), want) {
+			t.Errorf("the pinned verdict went missing (%q):\n%s", want, ansiStrip(out))
+		}
+	}
+
+	// j walks: the first finding leaves, the last may enter
+	before := ansiStrip(view(m))
+	m = press(t, m, "j")
+	after := ansiStrip(view(m))
+	if before == after {
+		t.Fatal("j did not walk the findings")
+	}
+	if strings.Contains(after, "platform       Ubuntu") {
+		t.Error("j left the first finding on screen:\n" + after)
+	}
+	// k walks back to the start
+	m = press(t, m, "k")
+	if back := ansiStrip(view(m)); back != before {
+		t.Errorf("k did not return to the first finding:\n%s", back)
 	}
 }

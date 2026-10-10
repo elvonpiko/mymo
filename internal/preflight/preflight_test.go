@@ -450,3 +450,101 @@ func TestScanWithRefusedPrivilegeNeverFingersTheBox(t *testing.T) {
 		t.Fatal("a refused privilege must abort before any mymo-state verdict")
 	}
 }
+
+// mymo recognizes its own work by its exact bytes: a daemon policy
+// that matches mymo's own is not a foreign configuration, and the
+// box is never asked to review what mymo itself wrote. This is the
+// bug a resumed setup met in the wild — mymo installed docker,
+// failed later, and then refused to recognize its own daemon.json.
+func TestMymoRecognizesItsOwnDaemonPolicy(t *testing.T) {
+	f := goodNode()
+	f.Docker = "27.3.1"
+	s := Audit{UID: 0, Firewall: "absent", Listeners: map[int]string{},
+		DockerPkg: "docker-ce", DockerDaemonOurs: true}
+	checks := Evaluate(f, s)
+	for _, c := range checks {
+		if c.Group != "docker" {
+			continue
+		}
+		if c.Outcome != Adopt {
+			t.Fatalf("mymo's own daemon policy is not adoptable: %+v", c)
+		}
+		if !strings.Contains(c.Detail, "mymo's own daemon policy") {
+			t.Errorf("the adoption does not say whose policy it is: %q", c.Detail)
+		}
+	}
+}
+
+// The scan itself decides ours from foreign: only a daemon.json that
+// differs from mymo's policy is reported as needing review, and only
+// a Caddyfile without mymo's import line is.
+func TestScanRecognizesItsOwnConfigs(t *testing.T) {
+	r := &fakeRunner{responses: map[string]string{}}
+	r.responses[`sh -c test -f /etc/docker/daemon.json && cat /etc/docker/daemon.json`] = baseline.DockerDaemonConfig + "\n"
+	r.responses[`sh -c test -f /etc/caddy/Caddyfile && cat /etc/caddy/Caddyfile`] = "example.com {\n\timport mymo/*.caddy\n}\n"
+	a, err := Scan(context.Background(), r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !a.DockerDaemonOurs || a.DockerDaemonCfg != "" {
+		t.Errorf("mymo's own policy read as foreign: ours=%v cfg=%q", a.DockerDaemonOurs, a.DockerDaemonCfg)
+	}
+	if !a.CaddyOurs || a.CaddyConfig != "" {
+		t.Errorf("mymo's own Caddyfile read as foreign: ours=%v cfg=%q", a.CaddyOurs, a.CaddyConfig)
+	}
+
+	r.responses[`sh -c test -f /etc/docker/daemon.json && cat /etc/docker/daemon.json`] = `{"log-driver":"syslog"}`
+	r.responses[`sh -c test -f /etc/caddy/Caddyfile && cat /etc/caddy/Caddyfile`] = "example.com {\n\treverse_proxy x:1\n}\n"
+	a, err = Scan(context.Background(), r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.DockerDaemonOurs || a.DockerDaemonCfg == "" {
+		t.Errorf("a foreign policy read as ours: %+v", a)
+	}
+	if a.CaddyOurs || a.CaddyConfig == "" {
+		t.Errorf("a foreign Caddyfile read as ours: %+v", a)
+	}
+}
+
+// Every finding that stands between a box and the plan names its
+// way out: no "resolve it and check again" without saying what to
+// do on the box. Decisions and refusals carry fixes; passes and
+// adoptions do not need them.
+func TestEveryStandingFindingNamesItsFix(t *testing.T) {
+	f := goodNode()
+	cases := []struct {
+		name string
+		s    Audit
+		f    facts.Node
+	}{
+		{"foreign daemon policy", Audit{UID: 0, Sudo: true, Firewall: "absent", Listeners: map[int]string{}, DockerPkg: "docker-ce",
+			DockerDaemonCfg: `{"log-driver":"syslog"}`, SSHDirectives: map[string][]string{"passwordauthentication": {"yes"}}}, f},
+		{"distribution docker", Audit{UID: 0, Sudo: true, Firewall: "absent", Listeners: map[int]string{},
+			DockerPkg: "docker.io", SSHDirectives: map[string][]string{"passwordauthentication": {"yes"}}}, f},
+		{"foreign caddyfile", Audit{UID: 0, Sudo: true, Firewall: "absent", Listeners: map[int]string{},
+			SSHDirectives: map[string][]string{"passwordauthentication": {"yes"}}}, func() facts.Node { n := f; n.Caddy = "v2.8.4"; return n }()},
+		{"held ports and proxies", Audit{UID: 0, Sudo: true, Firewall: "absent", Listeners: map[int]string{80: "nginx"},
+			Proxies: []string{"nginx"}, SSHDirectives: map[string][]string{"passwordauthentication": {"yes"}}}, f},
+		{"no privilege", Audit{UID: 1000, Sudo: false, Firewall: "absent", Listeners: map[int]string{},
+			SSHDirectives: map[string][]string{"passwordauthentication": {"yes"}}}, f},
+		{"thin memory", Audit{UID: 0, Sudo: true, Firewall: "absent", Listeners: map[int]string{},
+			SSHDirectives: map[string][]string{"passwordauthentication": {"yes"}}}, func() facts.Node { n := f; n.MemTotal = 512 << 20; return n }()},
+		{"unseen firewall", Audit{UID: 1000, Sudo: true, Firewall: "unknown", Listeners: map[int]string{},
+			SSHDirectives: map[string][]string{"passwordauthentication": {"yes"}}}, f},
+		{"intruder user", Audit{UID: 0, Sudo: true, Firewall: "absent", Listeners: map[int]string{}, MymoUserUsed: true,
+			SSHDirectives: map[string][]string{"passwordauthentication": {"yes"}}}, f},
+		{"conflicting sshd", Audit{UID: 0, Sudo: true, Firewall: "absent", Listeners: map[int]string{},
+			SSHDirectives: map[string][]string{"passwordauthentication": {"yes", "no"}}}, f},
+	}
+	for _, tc := range cases {
+		for _, c := range Evaluate(tc.f, tc.s) {
+			switch c.Outcome {
+			case Decide, Abort:
+				if c.Fix == "" {
+					t.Errorf("%s: %q (%s) stands without its fix", tc.name, c.Title, c.Detail)
+				}
+			}
+		}
+	}
+}

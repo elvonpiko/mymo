@@ -193,6 +193,11 @@ const DockerDaemonConfig = `{
   "live-restore": true
 }`
 
+// CaddyImport is the one line mymo adds to /etc/caddy/Caddyfile:
+// its marker for recognizing its own caddy, in preflight and at
+// deploy alike.
+const CaddyImport = "import mymo/*.caddy"
+
 // CaddyRepo and CaddyPackage: Caddy comes from its official Cloudsmith
 // repository — the only reverse proxy mymo supports, installed the
 // way the Caddy project documents, never from a distribution fork.

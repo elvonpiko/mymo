@@ -12,7 +12,8 @@ import (
 func TestPrintPreflightRendersVerdicts(t *testing.T) {
 	checks := []preflight.Check{
 		{Group: "platform", Title: "platform", Outcome: preflight.Pass, Detail: "Ubuntu 24.04.5 LTS · x86_64 · systemd — supported"},
-		{Group: "ports", Title: "ports", Outcome: preflight.Decide, Detail: "80 nginx, 443 free — Caddy is mymo's only proxy"},
+		{Group: "ports", Title: "ports", Outcome: preflight.Decide, Detail: "80 nginx, 443 free — Caddy is mymo's only proxy",
+			Fix: "stop or disable whatever holds the ports above (systemctl stop/disable), or use a different host — then check again"},
 		{Group: "docker", Title: "docker", Outcome: preflight.Adopt, Detail: "official docker-ce — mymo can adopt and manage it"},
 	}
 	var buf bytes.Buffer
@@ -21,9 +22,9 @@ func TestPrintPreflightRendersVerdicts(t *testing.T) {
 	for _, want := range []string{
 		"preflight · web-1 · baseline 0.1",
 		"ok     platform", "Ubuntu 24.04.5 LTS",
-		"decide ports", "80 nginx",
+		"decide ports", "80 nginx", "fix · stop or disable whatever holds the ports",
 		"adopt  docker", "adopt and manage it",
-		"verdict: decide", "your call is required",
+		"verdict: decide", "follow the fixes above, then check again",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q\n%s", want, out)

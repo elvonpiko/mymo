@@ -114,6 +114,9 @@ func printPreflight(w io.Writer, name string, checks []preflight.Check, verdict 
 			glyph = "abort"
 		}
 		fmt.Fprintf(w, "  %-6s %-14s %s\n", glyph, c.Title, c.Detail)
+		if c.Fix != "" {
+			fmt.Fprintf(w, "  %-6s %-14s fix \u00b7 %s\n", "", "", c.Fix)
+		}
 	}
 	fmt.Fprintf(w, "\nverdict: %s", verdict)
 	switch verdict {
@@ -122,7 +125,7 @@ func printPreflight(w io.Writer, name string, checks []preflight.Check, verdict 
 	case preflight.Adopt:
 		fmt.Fprintln(w, " — existing components can be adopted; the plan says exactly what changes")
 	case preflight.Decide:
-		fmt.Fprintln(w, " — your call is required before anything is planned")
+		fmt.Fprintln(w, " — follow the fixes above, then check again")
 	default:
 		fmt.Fprintln(w, " — this node cannot be prepared as an app host")
 	}

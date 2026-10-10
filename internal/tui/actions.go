@@ -235,6 +235,23 @@ func (m Model) handlePreflightDone(msg pfDoneMsg) (tea.Model, tea.Cmd) {
 	verdict := preflight.Verdict(checks)
 	m.pfChecks = checks
 	m.pfVerdict = verdict
+	// a fresh check opens where its story points: passing rows read
+	// from the top, but when findings stand between the box and the
+	// plan the page opens on the first of them — the passing rows
+	// are walked up to, never waited through
+	m.pfScroll = 0
+	if verdict == preflight.Decide || verdict == preflight.Abort {
+		groups := m.pfGroups()
+		for i, c := range checks {
+			if c.Outcome == preflight.Decide || c.Outcome == preflight.Abort {
+				m.pfScroll = i
+				break
+			}
+		}
+		if max := m.pfScrollMax(len(groups)); m.pfScroll > max {
+			m.pfScroll = max
+		}
+	}
 	m.pfSnap = msg.snap
 	m.pfAudit = msg.audit
 

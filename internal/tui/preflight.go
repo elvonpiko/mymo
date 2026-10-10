@@ -11,28 +11,127 @@ import (
 
 // preflightView renders the audit as the first page of initial
 // setup: one row per finding, the verdict as a sentence, and an
-// honest note that this page changes nothing, ever.
+// honest note that this page changes nothing, ever. When the
+// findings outnumber the card, the rows walk under the verdict with
+// j/k — the verdict and the way forward are pinned, because a page
+// that clips its own conclusion is a page that lies.
 func (m Model) preflightView() string {
-	w := m.contentWidth - 8 // the card's frame eats 8 columns
-	inner := titleStyle.Render("Initial setup") + " " +
+	head := titleStyle.Render("Initial setup") + " " +
 		faintStyle.Render("\u00b7 the check \u00b7 baseline "+baseline.Version) + "\n\n"
 
-	for _, c := range m.pfChecks {
-		inner += m.pfRow(c, w-17)
-	}
+	rows, rowCount := m.pfRowsText()
+
+	scrollable := rowCount > 0 && m.pfScrollMax(rowCount) > 0
 
 	// every verdict sentence fits one line at the floor — wrapPlain
 	// is for plain text, and the verdict carries its color
-	inner += "\n" + pfVerdictLine(m.pfVerdict) + "\n"
+	tail := "\n" + pfVerdictLine(m.pfVerdict) + "\n"
 	switch m.pfVerdict {
 	case preflight.Pass, preflight.Adopt:
-		inner += "\n" + faintStyle.Render("read-only — nothing on the box changes \u00b7 enter to see the plan")
+		tail += "\n" + faintStyle.Render("read-only — nothing on the box changes \u00b7 enter to see the plan")
 	case preflight.Decide:
-		inner += "\n" + faintStyle.Render("read-only \u00b7 the findings above need your call — resolve them, then check again")
+		if scrollable {
+			tail += "\n" + faintStyle.Render("read-only \u00b7 follow the fixes above \u00b7 j/k scroll")
+		} else {
+			tail += "\n" + faintStyle.Render("read-only \u00b7 follow the fixes above, then check again")
+		}
 	default:
-		inner += "\n" + faintStyle.Render("read-only \u00b7 this box cannot become a mymo node as it stands")
+		if scrollable {
+			tail += "\n" + faintStyle.Render("read-only \u00b7 the fixes above say what would have to change \u00b7 j/k scroll")
+		} else {
+			tail += "\n" + faintStyle.Render("read-only \u00b7 this box cannot become a mymo node as it stands — the fixes above say what would have to change")
+		}
 	}
+
+	inner := head
+	if scrollable {
+		// the card holds its shape and the finding keeps its whole
+		// story: the window never cuts a row in half, so what the
+		// eye reads is what there is
+		groups := m.pfGroups()
+		window := m.pfWindowRows()
+		taken := 0
+		var b strings.Builder
+		for i := m.pfScroll; i < len(groups) && taken+len(groups[i]) <= window; i++ {
+			if taken > 0 {
+				b.WriteString("\n")
+			}
+			for j, line := range groups[i] {
+				if j > 0 {
+					b.WriteString("\n")
+				}
+				b.WriteString(line)
+			}
+			taken += len(groups[i])
+		}
+		if taken > 0 {
+			inner += b.String() + "\n"
+		}
+	} else {
+		inner += rows
+	}
+	inner += tail
 	return m.wizardPanelFit(inner)
+}
+
+// pfGroups wraps every finding as its own block of lines: a row and
+// its fix belong together, and the window cuts only between them.
+func (m Model) pfGroups() [][]string {
+	w := m.contentWidth - 8
+	groups := make([][]string, 0, len(m.pfChecks))
+	for _, c := range m.pfChecks {
+		row := strings.TrimSuffix(m.pfRow(c, w-17), "\n")
+		groups = append(groups, strings.Split(row, "\n"))
+	}
+	return groups
+}
+
+// pfRowsText builds the findings as the block that can walk, with
+// the row count the keys need.
+func (m Model) pfRowsText() (string, int) {
+	var b strings.Builder
+	for _, g := range m.pfGroups() {
+		for i, line := range g {
+			if i > 0 {
+				b.WriteString("\n")
+			}
+			b.WriteString(line)
+		}
+		b.WriteString("\n")
+	}
+	return b.String(), len(m.pfGroups())
+}
+
+// pfWindowRows is how many lines the findings may occupy.
+func (m Model) pfWindowRows() int {
+	head := titleStyle.Render("Initial setup") + " " +
+		faintStyle.Render("\u00b7 the check \u00b7 baseline "+baseline.Version) + "\n\n"
+	window := m.contentHeight - 2 - lipgloss.Height(head) - 2 - 2
+	if window < 1 {
+		window = 1
+	}
+	return window
+}
+
+// pfScrollMax is the last finding the window can start from:
+// counted from the tail, because findings are not the same height
+// and the last window is what the end of the list really looks
+// like.
+func (m Model) pfScrollMax(rowCount int) int {
+	groups := m.pfGroups()
+	window := m.pfWindowRows()
+	taken, last := 0, len(groups)-1
+	for i := len(groups) - 1; i >= 0; i-- {
+		if taken+len(groups[i]) > window {
+			break
+		}
+		taken += len(groups[i])
+		last = i
+	}
+	if last < 0 {
+		return 0
+	}
+	return last
 }
 
 // pfRow renders one check: verdict glyph, title, and detail, wrapping
@@ -63,6 +162,17 @@ func (m Model) pfRow(c preflight.Check, detailW int) string {
 		}
 		b.WriteString(textStyle.Render(line))
 	}
+	// the fix says what to do on the box so mymo can take it from
+	// there — never a vague "resolve it", always the exact move
+	if c.Fix != "" {
+		b.WriteString("\n" + strings.Repeat(" ", indent))
+		for i, line := range wrapPlain("fix \u00b7 "+c.Fix, detailW) {
+			if i > 0 {
+				b.WriteString("\n" + strings.Repeat(" ", indent))
+			}
+			b.WriteString(subtextStyle.Render(line))
+		}
+	}
 	b.WriteString("\n")
 	return b.String()
 }
@@ -75,7 +185,7 @@ func pfVerdictLine(v preflight.Outcome) string {
 	case preflight.Adopt:
 		style, word = adoptStyle, "mymo recognizes its own work here — the plan keeps what exists"
 	case preflight.Decide:
-		style, word = warnStyle, "a few findings need your call before anything is planned"
+		style, word = warnStyle, "a few findings stand between this box and the plan — each names its fix"
 	case preflight.Abort:
 		style, word = errStyle, "this box cannot become a mymo node as it stands"
 	}

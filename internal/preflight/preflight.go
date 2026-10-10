@@ -63,20 +63,31 @@ type Check struct {
 	Title   string
 	Outcome Outcome
 	Detail  string
+	// Fix is the explicit way out of a finding that stands between
+	// the box and the plan: what to do, on the box, to let mymo
+	// take it from there. Empty when the outcome needs nothing.
+	Fix string
 }
 
 // Audit is the deep read-only scan result. Zero values mean unknown,
 // never "absent" — preflight names what it could not see.
 type Audit struct {
-	// DockerDaemonCfg is the existing /etc/docker/daemon.json when
-	// docker is present: a foreign policy mymo will not overwrite
-	// without review.
+	// DockerDaemonCfg is a foreign /etc/docker/daemon.json: a policy
+	// that is not mymo's own bytes, which mymo will not overwrite
+	// without review. A file that matches mymo's policy exactly is
+	// not foreign — DockerDaemonOurs says so.
 	DockerDaemonCfg string
+	// DockerDaemonOurs reports a daemon.json that is exactly mymo's
+	// own policy — written by a previous apply or aligned by hand.
+	DockerDaemonOurs bool
 
-	// CaddyConfig is the existing /etc/caddy/Caddyfile when caddy is
-	// present: mymo manages caddy's configuration when apps arrive,
-	// so an existing one is a decision, never an overwrite.
+	// CaddyConfig is a foreign /etc/caddy/Caddyfile — one without
+	// mymo's import line. A Caddyfile that carries the import is
+	// mymo's own to manage; CaddyOurs says so.
 	CaddyConfig string
+	// CaddyOurs reports a Caddyfile that already imports mymo's
+	// routes: mymo's marker for its own caddy.
+	CaddyOurs bool
 
 	UID  int
 	Sudo bool // passwordless sudo confirmed
@@ -210,14 +221,28 @@ func Scan(ctx context.Context, r Runner) (Audit, error) {
 	if out, _, err := r.Run(ctx, "sh", "-c",
 		"test -f /etc/docker/daemon.json && cat /etc/docker/daemon.json"); err != nil {
 		return Audit{}, err
-	} else {
-		s.DockerDaemonCfg = strings.TrimSpace(out)
+	} else if content := strings.TrimSpace(out); content != "" {
+		// mymo's own policy is recognized by its exact bytes: what
+		// mymo wrote — or what a person aligned to it — is not a
+		// foreign policy, and the box is never asked to review
+		// mymo's own work
+		if content == strings.TrimSpace(baseline.DockerDaemonConfig) {
+			s.DockerDaemonOurs = true
+		} else {
+			s.DockerDaemonCfg = content
+		}
 	}
 	if out, _, err := r.Run(ctx, "sh", "-c",
 		"test -f /etc/caddy/Caddyfile && cat /etc/caddy/Caddyfile"); err != nil {
 		return Audit{}, err
-	} else {
-		s.CaddyConfig = strings.TrimSpace(out)
+	} else if content := strings.TrimSpace(out); content != "" {
+		// the import line is mymo's marker in someone else's file
+		// format: a Caddyfile that carries it is mymo's own caddy
+		if strings.Contains(content, baseline.CaddyImport) {
+			s.CaddyOurs = true
+		} else {
+			s.CaddyConfig = content
+		}
 	}
 
 	// Existing mymo state from a previous or interrupted bootstrap.
@@ -405,92 +430,102 @@ func Evaluate(f facts.Node, s Audit) []Check {
 	// and services run here — and the first failure answers it.
 	switch {
 	case f.OS == "" && f.Arch == "":
-		checks = append(checks, Check{"platform", "platform", Abort, "unknown — observe the node first"})
+		checks = append(checks, Check{"platform", "platform", Abort, "unknown — observe the node first", "open the node once (mymo node open, or ssh) so facts can be read, then check again"})
 	case f.OS == "":
-		checks = append(checks, Check{"platform", "platform", Abort, "os unknown — observe the node first"})
+		checks = append(checks, Check{"platform", "platform", Abort, "os unknown — observe the node first", "open the node once so facts can be read, then check again"})
 	case !baseline.MatchesOS(f.OS):
-		checks = append(checks, Check{"platform", "platform", Abort, f.OS + " — baseline " + baseline.Version + " supports " + baseline.SupportedOSShort})
+		checks = append(checks, Check{"platform", "platform", Abort, f.OS + " — baseline " + baseline.Version + " supports " + baseline.SupportedOSShort, "rebuild the box on a supported release: " + baseline.SupportedOSShort})
 	case f.Arch == "":
-		checks = append(checks, Check{"platform", "platform", Abort, "architecture unknown — observe the node first"})
+		checks = append(checks, Check{"platform", "platform", Abort, "architecture unknown — observe the node first", "open the node once so facts can be read, then check again"})
 	case !baseline.ArchSupported(f.Arch):
-		checks = append(checks, Check{"platform", "platform", Abort, f.Arch + " — no official Docker or Caddy packages"})
+		checks = append(checks, Check{"platform", "platform", Abort, f.Arch + " — no official Docker or Caddy packages", "use a box on an architecture with official packages (amd64, arm64, armhf)"})
 	case !f.Systemd:
-		checks = append(checks, Check{"platform", "platform", Abort, f.OS + " · " + f.Arch + " — but no systemd; the baseline manages services through it"})
+		checks = append(checks, Check{"platform", "platform", Abort, f.OS + " · " + f.Arch + " — but no systemd; the baseline manages services through it", "use a box with systemd — the baseline starts and supervises services through it"})
 	default:
-		checks = append(checks, Check{"platform", "platform", Pass, f.OS + " · " + f.Arch + " · systemd"})
+		checks = append(checks, Check{"platform", "platform", Pass, f.OS + " · " + f.Arch + " · systemd", ""})
 	}
 
 	// --- privilege ------------------------------------------------
 	switch {
 	case s.UID == 0:
-		checks = append(checks, Check{"privilege", "privilege", Pass, "connected as root"})
+		checks = append(checks, Check{"privilege", "privilege", Pass, "connected as root", ""})
 	case s.Sudo:
-		checks = append(checks, Check{"privilege", "privilege", Pass, "passwordless sudo as " + f.User})
+		checks = append(checks, Check{"privilege", "privilege", Pass, "passwordless sudo as " + f.User, ""})
 	default:
-		checks = append(checks, Check{"privilege", "privilege", Abort, "neither root nor passwordless sudo — the baseline needs privilege to install and harden"})
+		checks = append(checks, Check{"privilege", "privilege", Abort, "neither root nor passwordless sudo — the baseline needs privilege to install and harden", "give this login passwordless sudo (visudo: " + f.User + " ALL=(ALL) NOPASSWD:ALL) or connect as root, then check again"})
 	}
 
 	// --- capacity -------------------------------------------------
 	switch {
 	case f.DiskTotal == 0:
-		checks = append(checks, Check{"disk", "disk headroom", Abort, "root filesystem size unknown — observe the node first"})
+		checks = append(checks, Check{"disk", "disk headroom", Abort, "root filesystem size unknown — observe the node first", "open the node once so facts can be read, then check again"})
 	case f.DiskFree >= baseline.MinDiskFree:
-		checks = append(checks, Check{"disk", "disk headroom", Pass, facts.FormatBytes(f.DiskFree) + " free of " + facts.FormatBytes(f.DiskTotal) + " — needs " + facts.FormatBytes(baseline.MinDiskFree)})
+		checks = append(checks, Check{"disk", "disk headroom", Pass, facts.FormatBytes(f.DiskFree) + " free of " + facts.FormatBytes(f.DiskTotal) + " — needs " + facts.FormatBytes(baseline.MinDiskFree), ""})
 	default:
-		checks = append(checks, Check{"disk", "disk headroom", Abort, "only " + facts.FormatBytes(f.DiskFree) + " free — needs " + facts.FormatBytes(baseline.MinDiskFree) + " for the baseline's installs"})
+		checks = append(checks, Check{"disk", "disk headroom", Abort, "only " + facts.FormatBytes(f.DiskFree) + " free — needs " + facts.FormatBytes(baseline.MinDiskFree) + " for the baseline's installs", "grow the disk and its filesystem (your provider's resize, then growpart + resize2fs), then check again"})
 	}
 
 	switch {
 	case f.MemTotal >= baseline.MinMemory:
-		checks = append(checks, Check{"memory", "memory", Pass, facts.FormatBytes(f.MemTotal) + " total"})
+		checks = append(checks, Check{"memory", "memory", Pass, facts.FormatBytes(f.MemTotal) + " total", ""})
 	case f.MemTotal == 0:
-		checks = append(checks, Check{"memory", "memory", Abort, "unknown — observe the node first"})
+		checks = append(checks, Check{"memory", "memory", Abort, "unknown — observe the node first", "open the node once so facts can be read, then check again"})
 	default:
-		checks = append(checks, Check{"memory", "memory", Decide, "only " + facts.FormatBytes(f.MemTotal) + " total — headroom for applications is thin"})
+		checks = append(checks, Check{"memory", "memory", Decide, "only " + facts.FormatBytes(f.MemTotal) + " total — headroom for applications is thin", "resize to more memory, or carry on — mymo will set the box up, but apps will be tight"})
 	}
 
 	// --- what the baseline installs -------------------------------
 	switch s.Firewall {
 	case "active":
-		checks = append(checks, Check{"firewall", "firewall", Pass, "ufw is active — existing rules are kept; the baseline only adds its own"})
+		checks = append(checks, Check{"firewall", "firewall", Pass, "ufw is active — existing rules are kept; the baseline only adds its own", ""})
 	case "inactive":
-		checks = append(checks, Check{"firewall", "firewall", Pass, "ufw is installed but inactive — the baseline enables it with its policy"})
+		checks = append(checks, Check{"firewall", "firewall", Pass, "ufw is installed but inactive — the baseline enables it with its policy", ""})
 	case "absent":
-		checks = append(checks, Check{"firewall", "firewall", Pass, "ufw not installed — the baseline installs and enables it"})
+		checks = append(checks, Check{"firewall", "firewall", Pass, "ufw not installed — the baseline installs and enables it", ""})
 	default:
-		checks = append(checks, Check{"firewall", "firewall", Decide, "firewall state unknown without root — the baseline will refuse to touch a firewall it cannot see"})
+		checks = append(checks, Check{"firewall", "firewall", Decide, "firewall state unknown without root — the baseline will refuse to touch a firewall it cannot see", "rerun the check with a login that can sudo (or as root) — mymo will not touch a firewall it cannot see"})
 	}
 
 	switch s.DockerPkg {
 	case "":
 		if s.DockerDaemonCfg != "" {
-			checks = append(checks, Check{"docker", "docker", Decide, "docker is present with its own daemon configuration — mymo applies its own policy; yours is not overwritten without review"})
+			checks = append(checks, Check{"docker", "docker", Decide, "docker is present with its own daemon configuration — mymo applies its own policy; yours is not overwritten without review",
+				"move it aside: sudo mv /etc/docker/daemon.json /etc/docker/daemon.json.pre-mymo — then check again"})
 		} else if f.Docker != "" {
-			checks = append(checks, Check{"docker", "docker", Adopt, "docker " + facts.DockerVersion(f.Docker) + " present but not from dpkg — mymo can adopt and manage it"})
+			checks = append(checks, Check{"docker", "docker", Adopt, "docker " + facts.DockerVersion(f.Docker) + " present but not from dpkg — mymo can adopt and manage it", ""})
 		} else {
-			checks = append(checks, Check{"docker", "docker", Pass, "not installed — the baseline installs docker-ce from the official repository"})
+			checks = append(checks, Check{"docker", "docker", Pass, "not installed — the baseline installs docker-ce from the official repository", ""})
 		}
 	case "docker-ce":
 		if s.DockerDaemonCfg != "" {
-			checks = append(checks, Check{"docker", "docker", Decide, "docker-ce present with its own daemon configuration — mymo applies its own policy; yours is not overwritten without review"})
+			checks = append(checks, Check{"docker", "docker", Decide, "docker-ce present with its own daemon configuration — mymo applies its own policy; yours is not overwritten without review",
+				"move it aside: sudo mv /etc/docker/daemon.json /etc/docker/daemon.json.pre-mymo — then check again"})
+			break
+		}
+		if s.DockerDaemonOurs {
+			checks = append(checks, Check{"docker", "docker", Adopt, "official docker-ce " + facts.DockerVersion(f.Docker) + " with mymo's own daemon policy — kept as-is", ""})
 			break
 		}
 		detail := "official docker-ce " + facts.DockerVersion(f.Docker) + " — mymo can adopt and manage it"
 		if s.Containers > 0 {
 			detail += ", " + strconv.Itoa(s.Containers) + " container(s) running"
 		}
-		checks = append(checks, Check{"docker", "docker", Adopt, detail})
+		checks = append(checks, Check{"docker", "docker", Adopt, detail, ""})
 	case "docker.io":
-		checks = append(checks, Check{"docker", "docker", Decide, "distribution docker.io — only you can replace it"})
+		checks = append(checks, Check{"docker", "docker", Decide, "distribution docker.io — only you can replace it",
+			"sudo apt-get remove -y docker.io — images and containers are not touched; the baseline installs docker-ce, then check again"})
 	}
 
 	switch {
 	case f.Caddy != "" && s.CaddyConfig != "":
-		checks = append(checks, Check{"caddy", "caddy", Decide, "caddy present with an existing Caddyfile — mymo manages caddy's configuration; adopting yours needs your review"})
+		checks = append(checks, Check{"caddy", "caddy", Decide, "caddy present with an existing Caddyfile — mymo manages caddy's configuration; adopting yours needs your review",
+			"move it aside: sudo mv /etc/caddy/Caddyfile /etc/caddy/Caddyfile.pre-mymo — its sites stop serving; then check again"})
+	case f.Caddy != "" && s.CaddyOurs:
+		checks = append(checks, Check{"caddy", "caddy", Adopt, "caddy " + firstToken(f.Caddy) + " — its Caddyfile already imports mymo's routes", ""})
 	case f.Caddy != "":
-		checks = append(checks, Check{"caddy", "caddy", Adopt, "caddy " + firstToken(f.Caddy) + " present — mymo can adopt and manage it"})
+		checks = append(checks, Check{"caddy", "caddy", Adopt, "caddy " + firstToken(f.Caddy) + " present — mymo can adopt and manage it", ""})
 	default:
-		checks = append(checks, Check{"caddy", "caddy", Pass, "not installed — the baseline installs it"})
+		checks = append(checks, Check{"caddy", "caddy", Pass, "not installed — the baseline installs it", ""})
 	}
 
 	// --- conflicts: Caddy's ports as one verdict ------------------
@@ -530,11 +565,16 @@ func Evaluate(f facts.Node, s Audit) []Check {
 		default:
 			detail += " — Caddy is mymo's only proxy; free the ports or use a different host"
 		}
-		checks = append(checks, Check{"ports", "ports", outcome, detail})
+		fix := ""
+		if outcome == Decide {
+			fix = "stop or disable whatever holds the ports above (systemctl stop/disable), or use a different host — then check again"
+		}
+		checks = append(checks, Check{"ports", "ports", outcome, detail, fix})
 	}
 
 	if len(s.Proxies) > 0 {
-		checks = append(checks, Check{"proxy", "other proxies", Decide, "installed: " + strings.Join(s.Proxies, ", ") + " — mymo manages Caddy only"})
+		checks = append(checks, Check{"proxy", "other proxies", Decide, "installed: " + strings.Join(s.Proxies, ", ") + " — mymo manages Caddy only",
+			"remove the proxies listed above (sudo apt-get remove -y " + strings.Join(s.Proxies, " ") + "), or use a different host — then check again"})
 	}
 
 	// --- existing mymo state --------------------------------------
@@ -547,16 +587,18 @@ func Evaluate(f facts.Node, s Audit) []Check {
 		switch {
 		case marked && fingerprint && rec.Baseline == baseline.Version:
 			checks = append(checks, Check{"mymo", "mymo state", Adopt,
-				"mymo's own record, baseline " + rec.Baseline + " applied — steps keep what exists"})
+				"mymo's own record, baseline " + rec.Baseline + " applied — steps keep what exists", ""})
 		case marked && fingerprint:
 			checks = append(checks, Check{"mymo", "mymo state", Decide,
-				"baseline " + rec.Baseline + " is recorded; " + baseline.Version + " would supersede it — upgrades are explicit, never silent"})
+				"baseline " + rec.Baseline + " is recorded; " + baseline.Version + " would supersede it — upgrades are explicit, never silent",
+				"keep the mymo that recorded this baseline, or remove the node from mymo (mymo node remove) and set it up fresh"})
 		case marked:
 			checks = append(checks, Check{"mymo", "mymo state", Decide,
-				"the marker is mine but the sudoers rule is not — the box's rules were edited; mymo refuses to guess who did what"})
+				"the marker is mine but the sudoers rule is not — the box's rules were edited; mymo refuses to guess who did what",
+				"restore the rule: " + baseline.MymoSudoersRule + " in /etc/sudoers.d/" + baseline.MymoUser + " — or find who rewrote it, then check again"})
 		case fingerprint:
 			checks = append(checks, Check{"mymo", "mymo state", Adopt,
-				"an interrupted mymo bootstrap — apply resumes where it stopped, keeping what exists"})
+				"an interrupted mymo bootstrap — apply resumes where it stopped, keeping what exists", ""})
 		default:
 			what := make([]string, 0, 2)
 			if s.MymoUserUsed {
@@ -566,15 +608,17 @@ func Evaluate(f facts.Node, s Audit) []Check {
 				what = append(what, "state dir "+baseline.StateDir+" exists without a marker")
 			}
 			checks = append(checks, Check{"mymo", "mymo state", Decide,
-				strings.Join(what, "; ") + " — mymo never leaves its user without its rule, so this was written by something else; decide before mymo touches the box"})
+				strings.Join(what, "; ") + " — mymo never leaves its user without its rule, so this was written by something else; decide before mymo touches the box",
+				"if nothing depends on it: sudo deluser " + baseline.MymoUser + "; sudo rm -rf " + baseline.StateDir + " — then check again"})
 		}
 	}
 
 	// --- sshd (informational; hardening is gated at apply) ---------
 	if pw := s.SSHDirectives["passwordauthentication"]; len(pw) == 1 && pw[0] == "yes" {
-		checks = append(checks, Check{"sshd", "sshd", Pass, "password auth is on — hardened after key access is proven"})
+		checks = append(checks, Check{"sshd", "sshd", Pass, "password auth is on — hardened after key access is proven", ""})
 	} else if len(pw) > 1 {
-		checks = append(checks, Check{"sshd", "sshd", Decide, "conflicting PasswordAuthentication values in sshd configuration — resolve or let mymo verify with sshd -T at apply"})
+		checks = append(checks, Check{"sshd", "sshd", Decide, "conflicting PasswordAuthentication values in sshd configuration — resolve or let mymo verify with sshd -T at apply",
+			"sudo sshd -T | grep -i passwordauthentication shows the effective value — remove the stray override, then check again"})
 	}
 
 	return checks
