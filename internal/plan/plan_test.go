@@ -65,7 +65,7 @@ func TestGenerateCleanUbuntuPlan(t *testing.T) {
 
 	want := []string{
 		"mymo-user", "ssh-hardening", "sysctl", "unattended-upgrades",
-		"firewall", "docker", "docker-daemon", "caddy", "state-dir",
+		"firewall", "docker-repo", "docker", "docker-daemon", "caddy", "state-dir",
 	}
 	if len(steps) != len(want) {
 		t.Fatalf("plan has %d steps, want %d", len(steps), len(want))
@@ -437,6 +437,39 @@ func TestMyMoUserStepSurvivesItsOwnResume(t *testing.T) {
 // convergence: the resume contract is that what a previous apply
 // finished stays finished, and the engine can only keep that
 // promise for steps that know how to say "already in place".
+// The docker repo file is written only by the engine step, which
+// runs after the key step; the key step starts by moving a
+// keyless repo file aside. A repo file without its key poisons
+// every later apt refresh — apt refuses to update past a repository
+// it cannot verify — and the failure looks like the box's network.
+func TestARepoFileNeverExistsWithoutItsKey(t *testing.T) {
+	r := ubuntuRunner()
+	steps, err := Generate(context.Background(), r, cleanNode(), cleanSnapshot(), cleanAudit())
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	keyAt, fileAt := -1, -1
+	for i, s := range steps {
+		if s.Control == "docker-repo" {
+			keyAt = i
+			if !strings.Contains(strings.Join(s.Exec[0], " "), "mv /etc/apt/sources.list.d/docker.list") {
+				t.Errorf("the key step does not unpoison a keyless repo file first:\n%s", strings.Join(s.Exec[0], " "))
+			}
+		}
+		for _, f := range s.Files {
+			if f.Path == "/etc/apt/sources.list.d/docker.list" {
+				fileAt = i
+			}
+		}
+	}
+	if keyAt < 0 || fileAt < 0 {
+		t.Fatalf("plan lost the docker key or repo file: keyAt=%d fileAt=%d", keyAt, fileAt)
+	}
+	if fileAt <= keyAt {
+		t.Errorf("the repo file (step %d) does not follow its key (step %d)", fileAt, keyAt)
+	}
+}
+
 func TestInstallStepsCarryTheirConvergence(t *testing.T) {
 	r := ubuntuRunner()
 	steps, err := Generate(context.Background(), r, cleanNode(), cleanSnapshot(), cleanAudit())
@@ -447,7 +480,7 @@ func TestInstallStepsCarryTheirConvergence(t *testing.T) {
 	for _, s := range steps {
 		have[s.Control] = s.Check
 	}
-	for _, control := range []string{"unattended-upgrades", "firewall", "docker", "caddy"} {
+	for _, control := range []string{"unattended-upgrades", "firewall", "docker-repo", "docker", "caddy"} {
 		if len(have[control]) == 0 {
 			t.Errorf("step %q installs a package but cannot say when it is already in place", control)
 		}

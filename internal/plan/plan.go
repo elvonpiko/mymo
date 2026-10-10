@@ -119,11 +119,13 @@ func Generate(ctx context.Context, r preflight.Runner, n domain.Node, f facts.No
 		sysctlStep(),
 		updatesStep(),
 		firewallStep(a),
-		dockerStep(f, a, id, codename, arch),
+	}
+	steps = append(steps, dockerSteps(f, a, id, codename, arch)...)
+	steps = append(steps,
 		daemonStep(f, a),
 		caddyStep(f, a),
 		stateStep(),
-	}
+	)
 	return steps, nil
 }
 
@@ -296,17 +298,43 @@ func dockerAdoptable(f facts.Node, a preflight.Audit) bool {
 	return a.DockerPkg == "docker-ce" || f.Docker != ""
 }
 
-func dockerStep(f facts.Node, a preflight.Audit, id, codename, arch string) Step {
+// dockerSteps keeps one rule with teeth: a repo file never exists
+// without its key. An attempt that lands the file first poisons
+// every later apt refresh — apt refuses to update past a repository
+// it cannot verify — and the failure looks like the box's network.
+// The key step runs before the file step, and the key step starts
+// by moving an interrupted attempt's keyless repo file aside.
+func dockerSteps(f facts.Node, a preflight.Audit, id, codename, arch string) []Step {
 	if dockerAdoptable(f, a) {
-		return Step{
+		return []Step{{
 			Control: "docker",
 			Title:   "docker \u2014 adopt",
 			Detail:  "adopt the installed docker; nothing reinstalls",
 			Exec:    [][]string{{"systemctl", "enable", "docker"}},
-		}
+		}}
 	}
 	repo := fmt.Sprintf("https://download.docker.com/linux/%s", id)
-	return Step{
+	key := []Step{{
+		Control: "docker-repo",
+		Title:   "docker repo key",
+		Detail:  "fetch docker's signing key; the repo file follows",
+		// the key is the convergence: it is fetched last, so a
+		// readable key means the tools before it are in place too
+		Check: []string{"sh", "-c", "test -r /etc/apt/keyrings/docker.asc"},
+		Exec: [][]string{
+			// an interrupted attempt may have left its repo file
+			// behind without this key — apt cannot refresh past
+			// it, so it is moved aside before anything touches apt.
+			// The engine step writes a fresh one once the key is
+			// proven; the moved copy is inert to apt.
+			{"sh", "-c", "test -r /etc/apt/keyrings/docker.asc || mv /etc/apt/sources.list.d/docker.list /etc/apt/sources.list.d/docker.list.interrupted 2>/dev/null || true"},
+			{"apt-get", "update"},
+			{"apt-get", "install", "-y", "ca-certificates", "curl"},
+			{"install", "-m", "0755", "-d", "/etc/apt/keyrings"},
+			{"curl", "-fsSL", repo + "/gpg", "-o", "/etc/apt/keyrings/docker.asc"},
+			{"chmod", "a+r", "/etc/apt/keyrings/docker.asc"},
+		},
+	}, {
 		Control: "docker",
 		Title:   "docker engine",
 		Detail:  "install docker-ce + plugins from docker's repo",
@@ -322,14 +350,10 @@ func dockerStep(f facts.Node, a preflight.Audit, id, codename, arch string) Step
 		Check: installedCheck("docker-ce"),
 		Exec: [][]string{
 			{"apt-get", "update"},
-			{"apt-get", "install", "-y", "ca-certificates", "curl"},
-			{"install", "-m", "0755", "-d", "/etc/apt/keyrings"},
-			{"curl", "-fsSL", repo + "/gpg", "-o", "/etc/apt/keyrings/docker.asc"},
-			{"chmod", "a+r", "/etc/apt/keyrings/docker.asc"},
-			{"apt-get", "update"},
 			append([]string{"apt-get", "install", "-y"}, baseline.DockerPackages...),
 		},
-	}
+	}}
+	return key
 }
 
 func daemonStep(f facts.Node, a preflight.Audit) Step {
