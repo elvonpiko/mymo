@@ -153,7 +153,8 @@ func runNodeApply(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		_ = store.UpdateNode(node)
 		printApplyReport(stderr, res)
 		fmt.Fprintln(stderr, "\nthe steps after the failure were never attempted;")
-		fmt.Fprintln(stderr, "the operator's current access is untouched; re-run when resolved.")
+		fmt.Fprintln(stderr, "the operator's current access is untouched.")
+		fmt.Fprintln(stderr, "run setup again when the box is fixed — it resumes where it stopped.")
 		return exitErr
 	}
 	printApplyReport(stdout, res)

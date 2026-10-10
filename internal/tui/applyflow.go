@@ -426,6 +426,9 @@ func (m Model) applyReportView() string {
 		for _, line := range wrapDetail("the steps after the failure were never attempted — the operator's current access is untouched", w) {
 			b.WriteString(warnStyle.Render(line) + "\n")
 		}
+		// the resume is the design: fix the box's problem (often its
+		// own network or mirror), and setup picks up where it stopped
+		b.WriteString(faintStyle.Render("run setup again when the box is fixed — it resumes where it stopped") + "\n")
 	case len(m.applyChecks) > 0 && m.selNode.Bootstrap.State == domain.BootstrapReady:
 		b.WriteString(okStyle.Render("mymo security baseline applied and verified") + "\n")
 		b.WriteString(faintStyle.Render("promote to app host when ready: mymo node promote "+m.selNode.Name) + "\n")

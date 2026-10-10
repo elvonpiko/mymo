@@ -49,9 +49,13 @@ type Model struct {
 
 	helpOpen      bool
 	confirmRemove bool
-	selNode       domain.Node
-	loadErr       error
-	toast         *toast
+	// nodeCheckErr holds why the latest probe failed while the
+	// node's page is open — non-empty renders the unreachable page
+	// instead of a dashboard that would read as live
+	nodeCheckErr string
+	selNode      domain.Node
+	loadErr      error
+	toast        *toast
 
 	// loading describes the running loading ceremony — mymo's
 	// chromeless splash with a spinner. Entering a node observes it:
@@ -434,10 +438,18 @@ func (m Model) updateScreenKeys(msg tea.KeyPressMsg, str string) (tea.Model, tea
 	case scHome:
 		return m.updateHomeKeys(msg)
 	case scFleet:
+		// the removal gate opens from the list too: same dialog,
+		// same keys, same goodbye
+		if m.confirmRemove {
+			return m.updateRemoveConfirm(str)
+		}
 		return m.updateFleetKeys(msg)
 	case scNode:
 		if m.confirmRemove {
 			return m.updateRemoveConfirm(str)
+		}
+		if m.nodeCheckErr != "" {
+			return m.updateUnreachKeys(msg)
 		}
 		return m.updateNodeKeys(msg)
 	case scNodePreflight:
@@ -629,6 +641,14 @@ func (m Model) updateFleetKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 		return m, nil
+	case "R":
+		// the same removal gate the node page offers, opened from
+		// the list: y forgets the box, esc keeps it
+		if item, ok := m.fleet.SelectedItem().(fleetItem); ok {
+			m.selNode = item.node
+			m.confirmRemove = true
+		}
+		return m, nil
 	}
 	return m.forward(msg)
 }
@@ -706,7 +726,11 @@ func (m Model) updateRemoveConfirm(str string) (tea.Model, tea.Cmd) {
 			return m, m.notify("the node was removed but a trust entry stayed: "+shorten(err.Error(), 30), toastErr)
 		}
 		m.confirmRemove = false
-		m.pop()
+		// the gate opened on the node's page: leave the gone box. From
+		// the fleet the refreshed list is the answer; stay on it.
+		if m.cur().kind == scNode {
+			m.pop()
+		}
 		m.reloadFleet()
 		return m, m.notify("removed "+name+" — mymo forgot it; the box was not touched", toastOK)
 	case "esc", "n", "N":
@@ -743,6 +767,7 @@ func (m Model) runAction(a actionItem) (tea.Model, tea.Cmd) {
 func (m *Model) openNode(n domain.Node) tea.Cmd {
 	m.stopLive()
 	m.selNode = n
+	m.nodeCheckErr = ""
 	m.actions = newActionsList(n)
 	// the rebuilt list must be sized to the window, not its default
 	m.actions.SetSize(m.contentWidth, len(actionDefs(n))+1)
@@ -869,13 +894,19 @@ func (m Model) workspaceView() string {
 		case scHome:
 			content = m.homeView()
 		case scFleet:
-			content = m.fleetView()
+			if m.confirmRemove {
+				content = m.removeConfirmView()
+			} else {
+				content = m.fleetView()
+			}
 		case scNode:
 			switch {
 			case m.loading.active:
 				content = m.loadingView()
 			case m.confirmRemove:
 				content = m.removeConfirmView()
+			case m.nodeCheckErr != "":
+				content = m.unreachableView()
 			default:
 				content = m.nodeView()
 			}
@@ -1043,6 +1074,9 @@ func (m Model) keymap() help.KeyMap {
 	case scHome:
 		return newHomeKeymap()
 	case scFleet:
+		if m.confirmRemove {
+			return newConfirmKeymap()
+		}
 		return newFleetKeymap()
 	case scNode:
 		if m.loading.active {
@@ -1050,6 +1084,9 @@ func (m Model) keymap() help.KeyMap {
 		}
 		if m.confirmRemove {
 			return newConfirmKeymap()
+		}
+		if m.nodeCheckErr != "" {
+			return newUnreachKeymap()
 		}
 		km := newNodeKeymap()
 		km.setup.SetEnabled(!nodeIsManaged(m.selNode))

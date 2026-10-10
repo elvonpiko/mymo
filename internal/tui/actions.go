@@ -130,13 +130,17 @@ func (m Model) handleCheckDone(msg checkDoneMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// The page is showing: its own state change is the feedback, so no
-	// toast. Failure lands in the card; success turns the card live.
+	// toast. Failure takes the whole page — a box that did not
+	// answer gets the unreachable state, never a dashboard that
+	// would read as live; success turns the card live.
 	m.selNode = n
 	if msg.err != nil {
 		m.live = false
 		m.liveErr = shorten(msg.err.Error(), 30)
+		m.nodeCheckErr = msg.err.Error()
 		return m, nil
 	}
+	m.nodeCheckErr = ""
 	m.live = true
 	m.livePaused = false
 	m.liveSeq++

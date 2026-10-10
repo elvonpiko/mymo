@@ -92,6 +92,15 @@ var (
 // brandIcon is mymo's mark: a small skyline of three full-block stems —
 // mauve, teal, green, one per palette accent, standing for the fleet
 // mymo keeps in view — linked by lavender half-block steps.
+// brandIconErr is the mark in alarm: the same skyline, one red —
+// used when a box did not answer, so the state reads before any
+// word does.
+func brandIconErr() string {
+	stem := lipgloss.NewStyle().Foreground(lipgloss.Color(colRed)).Render("█")
+	step := lipgloss.NewStyle().Foreground(lipgloss.Color(colRed)).Render("▀")
+	return stem + " " + step + " " + stem + " " + step + stem
+}
+
 func brandIcon() string {
 	stem := func(c string) string {
 		return lipgloss.NewStyle().Foreground(lipgloss.Color(c)).Render("█")

@@ -188,14 +188,27 @@ func TestObservePageAfterFailedFirstCheck(t *testing.T) {
 	if n.LastCheck.Error == "" {
 		t.Fatal("failure not recorded in LastCheck")
 	}
-	got := view(m)
-	for _, want := range []string{"first check failed", "connection refused", "re-enter to retry"} {
+	// a box that did not answer gets its own page: the words say
+	// what happened, the raw reason rides below, and a stale
+	// dashboard never reads as live
+	got := ansiStrip(view(m))
+	for _, want := range []string{
+		"did not answer", "connection refused",
+		"nothing ran — the box was not touched",
+		"r try again",
+	} {
 		if !strings.Contains(got, want) {
-			t.Errorf("failed-first-check page missing %q:\n%s", want, got)
+			t.Errorf("unreachable page missing %q:\n%s", want, got)
 		}
 	}
 	if m.live || m.liveClient != nil {
 		t.Fatal("failed probe must not leave a live session")
+	}
+
+	// r runs the probe again: the ceremony fronts the wait
+	m = press(t, m, "r")
+	if !m.loading.active || m.loading.node != "web-1" {
+		t.Fatalf("r did not start a retry: loading=%+v", m.loading)
 	}
 }
 
@@ -216,21 +229,22 @@ func TestFailedCheckKeepsFactsAndStopsLive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// the last good snapshot must survive a failed attempt
+	// the last good snapshot must survive a failed attempt — in the
+	// record, which the unreachable page points at
 	if n.Facts.OS != "Ubuntu 24.04.5 LTS" || n.Facts.Docker == "" {
 		t.Fatalf("facts clobbered by failed check: %+v", n.Facts)
 	}
 	got := view(m)
-	if !strings.Contains(got, "Ubuntu 24.04.5 LTS") {
-		t.Errorf("failed-check page lost its facts:\n%s", got)
+	if !strings.Contains(got, "did not answer") {
+		t.Errorf("the failure did not take the page:\n%s", got)
 	}
-	if !strings.Contains(got, "last check failed") {
-		t.Errorf("failed-check page missing the failure:\n%s", got)
+	// the page says when the box was last alive and where the
+	// record lives
+	if !strings.Contains(got, "mymo last saw it") || !strings.Contains(got, "i inspect record") {
+		t.Errorf("unreachable page lost the record pointer:\n%s", got)
 	}
-	// the live card degrades honestly, marking the last known memory
-	// as a snapshot instead of pretending to be live
-	if !strings.Contains(got, "stopped") || !strings.Contains(got, "(snapshot)") {
-		t.Errorf("stopped live card not shown:\n%s", got)
+	if !strings.Contains(got, "nothing ran — the box was not touched") {
+		t.Errorf("the page forgot its reassurance:\n%s", got)
 	}
 }
 

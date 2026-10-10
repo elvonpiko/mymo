@@ -148,15 +148,12 @@ func (m Model) loadingView() string {
 func (m Model) systemCard(n domain.Node) string {
 	var inner string
 	switch {
-	case n.Facts.CollectedAt.IsZero() && n.LastCheck.At.IsZero():
+	case n.Facts.CollectedAt.IsZero():
+		// a failed check takes the whole page (the unreachable
+		// state), so an empty card only means: not observed yet
 		inner = faintStyle.Render("no snapshot yet") + "\n" +
 			textStyle.Render("entering a node observes it — leave and") + "\n" +
 			textStyle.Render("re-enter to try again")
-		inner = padLines(inner, m.cardW())
-	case n.Facts.CollectedAt.IsZero():
-		// checked before, never successfully
-		inner = errStyle.Render("first check failed: ") + subtextStyle.Render(shorten(n.LastCheck.Error, 44)) + "\n" +
-			faintStyle.Render("esc, then re-enter to retry")
 		inner = padLines(inner, m.cardW())
 	default:
 		rows := systemRows(n)

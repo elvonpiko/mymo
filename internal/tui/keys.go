@@ -66,6 +66,7 @@ type fleetKeymap struct {
 	navigate key.Binding
 	open     key.Binding
 	add      key.Binding
+	remove   key.Binding
 	back     key.Binding
 	filter   key.Binding
 	settings key.Binding
@@ -80,6 +81,7 @@ func newFleetKeymap() fleetKeymap {
 		navigate: key.NewBinding(key.WithKeys("up", "down"), key.WithHelp("↑↓", "navigate")),
 		open:     key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open")),
 		add:      key.NewBinding(key.WithKeys("N"), key.WithHelp("N", "add node")),
+		remove:   key.NewBinding(key.WithKeys("R"), key.WithHelp("R", "remove")),
 		back:     key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "home")),
 		filter:   key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter")),
 		settings: key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "settings")),
@@ -93,7 +95,7 @@ func newFleetKeymap() fleetKeymap {
 // ShortHelp keeps only the page's distinctive keys; arrows are
 // universal list knowledge and the rest waits behind ?.
 func (k fleetKeymap) ShortHelp() []key.Binding {
-	return []key.Binding{k.open, k.add, k.filter, k.help, k.quit}
+	return []key.Binding{k.open, k.add, k.remove, k.filter, k.help, k.quit}
 }
 
 func (k fleetKeymap) FullHelp() [][]key.Binding {
