@@ -277,6 +277,83 @@ func (k appsKeymap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{{k.up, k.down, k.enter}, {k.back, k.help, k.quit}}
 }
 
+// appDetailKeymap: the verbs are the page's list — j/k walks them,
+// enter runs one; the record above folds honestly when long.
+type appDetailKeymap struct {
+	up   key.Binding
+	down key.Binding
+	open key.Binding
+	back key.Binding
+	help key.Binding
+	quit key.Binding
+}
+
+func newAppDetailKeymap() appDetailKeymap {
+	return appDetailKeymap{
+		up:   key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
+		down: key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
+		open: key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "run")),
+		back: key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
+		help: key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
+		quit: key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
+	}
+}
+
+func (k appDetailKeymap) ShortHelp() []key.Binding {
+	return []key.Binding{k.up, k.down, k.open, k.back, k.help, k.quit}
+}
+
+func (k appDetailKeymap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{{k.up, k.down, k.open}, {k.back, k.help, k.quit}}
+}
+
+// appLogsKeymap: one scrollable target — the tail — and the way out.
+type appLogsKeymap struct {
+	scrollUp   key.Binding
+	scrollDown key.Binding
+	back       key.Binding
+	help       key.Binding
+	quit       key.Binding
+}
+
+func newAppLogsKeymap() appLogsKeymap {
+	return appLogsKeymap{
+		scrollUp:   key.NewBinding(key.WithKeys("k", "up"), key.WithHelp("k/↑", "scroll up")),
+		scrollDown: key.NewBinding(key.WithKeys("j", "down"), key.WithHelp("j/↓", "scroll down")),
+		back:       key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
+		help:       key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
+		quit:       key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
+	}
+}
+
+func (k appLogsKeymap) ShortHelp() []key.Binding {
+	return []key.Binding{k.scrollUp, k.scrollDown, k.back, k.help, k.quit}
+}
+
+func (k appLogsKeymap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{{k.scrollUp, k.scrollDown}, {k.back, k.help, k.quit}}
+}
+
+// appRollbackKeymap: the input owns the keyboard — the name typed
+// in full is the confirmation.
+type appRollbackKeymap struct {
+	back key.Binding
+}
+
+func newAppRollbackKeymap() appRollbackKeymap {
+	return appRollbackKeymap{
+		back: key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "abort")),
+	}
+}
+
+func (k appRollbackKeymap) ShortHelp() []key.Binding {
+	return []key.Binding{k.back}
+}
+
+func (k appRollbackKeymap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{{k.back}}
+}
+
 func newSimpleKeymap() simpleKeymap {
 	return simpleKeymap{
 		back: key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),

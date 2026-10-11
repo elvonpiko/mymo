@@ -16,7 +16,7 @@ import (
 	"github.com/elvonpiko/mymo/internal/facts"
 )
 
-// actionID identifies an observe-page action.
+// actionID identifies an observe-page or application verb.
 type actionID int
 
 const (
@@ -25,6 +25,11 @@ const (
 	actInspect
 	actRemove
 	actSetup
+	actAppStatus
+	actAppLogs
+	actAppRestart
+	actAppRollback
+	actAppShell
 )
 
 // nodeIsManaged reports whether the baseline has been applied and

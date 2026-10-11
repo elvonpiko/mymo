@@ -105,6 +105,15 @@ type Model struct {
 	// the apply flow: the typed confirmation, the engine's report,
 	// the verify rows, and the injectable pieces tests replace —
 	// the runner and the second-connection prover.
+	appActions  list.Model       // the app detail page's operations
+	loadingApp  string           // the app an in-flight operation belongs to
+	rbTyped     string           // the typed-name gate for a rollback
+	appProgress chan string      // the rollback engine's live progress pump
+	appRunner   preflight.Runner // nil: a fresh dial for app operations
+	appLive     appLiveState     // the last live probe's answer
+	appLogs     []string         // the last fetched log tail
+	logsScroll  int              // walks the logs window
+
 	applyTyped    string
 	applyResult   apply.Result
 	applyChecks   []preflight.Check
@@ -324,6 +333,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.loading.detail = msg.line
 		}
 		return m, m.netProgressReader()
+
+	case appStatusDoneMsg:
+		return m.handleAppStatusDone(msg)
+	case appRollbackDoneMsg:
+		return m.handleAppRollbackDone(msg)
+	case appProgressMsg:
+		return m.handleAppProgress(msg)
+	case appDrainedMsg:
+		return m, nil
+	case appLogsDoneMsg:
+		return m.handleAppLogsDone(msg)
+	case appRestartDoneMsg:
+		return m.handleAppRestartDone(msg)
 
 	case applyProgressMsg:
 		if m.loading.active && m.cur().kind == scNodeApplyReport && msg.line != "" {
@@ -555,7 +577,11 @@ func (m Model) updateScreenKeys(msg tea.KeyPressMsg, str string) (tea.Model, tea
 	case scApps, scNodeApps:
 		return m.updateAppsKeys(s, str)
 	case scAppDetail:
-		return m.updateSimpleKeys(s.kind, str)
+		return m.updateAppDetailKeys(s, str)
+	case scAppLogs:
+		return m.updateAppLogsKeys(str)
+	case scAppRollback:
+		return m.updateAppRollbackKeys(s, str)
 	default:
 		return m.updateSimpleKeys(s.kind, str)
 	}
@@ -586,7 +612,7 @@ func (m Model) updateAppsKeys(s screen, str string) (tea.Model, tea.Cmd) {
 	case "enter":
 		if m.appCursor < len(apps) {
 			picked := apps[m.appCursor]
-			m.push(screen{kind: scAppDetail, node: picked.Node, app: picked.Name})
+			m.openApp(picked)
 			return m, nil
 		}
 	}
@@ -976,6 +1002,10 @@ func (m Model) workspaceView() string {
 			content = m.allAppsView()
 		case scAppDetail:
 			content = m.appDetailView(s)
+		case scAppLogs:
+			content = m.appLogsView(s)
+		case scAppRollback:
+			content = m.rollbackView(s)
 		case scDeploy:
 			content = m.deployView()
 		case scSettings:
@@ -1162,7 +1192,11 @@ func (m Model) keymap() help.KeyMap {
 	case scApps, scNodeApps:
 		return newAppsKeymap()
 	case scAppDetail:
-		return newSimpleKeymap()
+		return newAppDetailKeymap()
+	case scAppLogs:
+		return newAppLogsKeymap()
+	case scAppRollback:
+		return newAppRollbackKeymap()
 	default:
 		return newSimpleKeymap()
 	}

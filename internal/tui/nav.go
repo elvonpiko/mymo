@@ -12,7 +12,9 @@ const (
 	scNodePreflight                     // a node's app-host preflight verdicts
 	scNodePlan                          // a node's generated baseline plan
 	scNodeApplyReport                   // the apply's report and verification rows
-	scAppDetail                         // one application: its releases and exposure
+	scAppDetail                         // one application: its record and its verbs
+	scAppLogs                           // one application's fetched log tail
+	scAppRollback                       // the typed-name gate before a rollback
 	scApps                              // applications across the fleet
 	scDeploy                            // deploy workflow entry point
 	scSettings                          // settings and about
@@ -64,6 +66,10 @@ func (m *Model) crumbs() []string {
 			parts = append(parts, "applications")
 		case scAppDetail:
 			parts = append(parts, s.app)
+		case scAppLogs:
+			parts = append(parts, "logs")
+		case scAppRollback:
+			parts = append(parts, "rollback")
 		case scNodeInspect:
 			parts = append(parts, "inspect")
 		case scNodePreflight:

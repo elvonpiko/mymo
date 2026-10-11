@@ -82,8 +82,12 @@ func TestAppsEnterOpensTheDetail(t *testing.T) {
 			t.Errorf("detail page missing %q:\n%s", want, out)
 		}
 	}
-	if !strings.Contains(out, "operate with: mymo app status|logs|restart|rollback api") {
-		t.Errorf("detail page missing the operate hint:\n%s", out)
+	// the page is operational now: the verbs are on it, not
+	// behind a CLI hint — rollback appears because r1 is kept
+	for _, verb := range []string{"OPERATIONS", "Live status", "Logs", "Restart", "Rollback", "Shell"} {
+		if !strings.Contains(out, verb) {
+			t.Errorf("detail page missing the %q verb:\n%s", verb, out)
+		}
 	}
 
 	// esc returns to the list

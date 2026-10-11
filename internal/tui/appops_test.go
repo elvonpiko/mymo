@@ -1,0 +1,378 @@
+package tui
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"testing"
+
+	tea "charm.land/bubbletea/v2"
+
+	"github.com/elvonpiko/mymo/internal/baseline"
+	"github.com/elvonpiko/mymo/internal/domain"
+)
+
+// cannedAppRunner answers the application verbs' commands: the
+// privilege probe, the container status, the log tail, restart.
+type cannedAppRunner struct {
+	calls   []string
+	running bool
+	logs    string
+	failCmd string
+}
+
+func (r *cannedAppRunner) Run(_ context.Context, name string, args ...string) (string, int, error) {
+	joined := strings.Join(append([]string{name}, args...), " ")
+	r.calls = append(r.calls, joined)
+	switch {
+	case joined == "id -u":
+		return "0\n", 0, nil // root: no sudo prefix anywhere
+	case name == r.failCmd:
+		return "boom\n", 1, fmt.Errorf("exit 1")
+	case strings.HasPrefix(joined, "docker ps"):
+		if r.running {
+			return "mymo-api-r2\n", 0, nil
+		}
+		return "\n", 0, nil
+	case strings.HasPrefix(joined, "docker logs"):
+		return r.logs, 0, nil
+	case strings.HasPrefix(joined, "docker restart"):
+		return "mymo-api-r2\n", 0, nil
+	}
+	return "", 0, nil
+}
+
+// The verbs on the detail page run the CLI's exact commands: the
+// status probe asks docker for the active container, and the
+// page's live row states the answer.
+func TestAppLiveStatusLandsOnThePage(t *testing.T) {
+	s := readyStore(t)
+	seedNode(t, s, "web-1")
+	seedApp(t, s, sampleApp("api", "web-1"))
+	runner := &cannedAppRunner{running: true}
+	m := New(s)
+	m.appRunner = runner
+	m = press(t, m, "a")
+	m = press(t, m, "enter") // the api app is the only row
+
+	m, msgs := drive(t, m, tea.KeyPressMsg{Code: tea.KeyEnter}) // the first verb: Live status
+	m = drain(t, m, msgs)
+
+	out := ansiStrip(view(m))
+	if !strings.Contains(out, "running right now") {
+		t.Errorf("the live row should state the container is running:\n%s", out)
+	}
+	// the probe is read-only and exactly the CLI's question
+	saw := false
+	for _, c := range runner.calls {
+		if strings.HasPrefix(c, "docker ps --filter name=mymo-api-r2 --filter status=running") {
+			saw = true
+		}
+	}
+	if !saw {
+		t.Errorf("the probe never asked docker for the container: %v", runner.calls)
+	}
+}
+
+// A container that is not running says so in the error color —
+// status is a question about reality, and reality gets to say no.
+func TestAppLiveStatusSaysNotRunning(t *testing.T) {
+	s := readyStore(t)
+	seedNode(t, s, "web-1")
+	seedApp(t, s, sampleApp("api", "web-1"))
+	m := New(s)
+	m.appRunner = &cannedAppRunner{running: false}
+	m = press(t, m, "a")
+	m = press(t, m, "enter")
+	m, msgs := drive(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = drain(t, m, msgs)
+
+	out := ansiStrip(view(m))
+	if !strings.Contains(out, "NOT running") {
+		t.Errorf("a stopped container should say so:\n%s", out)
+	}
+}
+
+// Logs land in their own page — the title says whose tail it is,
+// the way out is pinned, and j walks the lines.
+func TestAppLogsOpenInTheirOwnPage(t *testing.T) {
+	s := readyStore(t)
+	seedNode(t, s, "web-1")
+	seedApp(t, s, sampleApp("api", "web-1"))
+	var b strings.Builder
+	for i := 0; i < 40; i++ {
+		fmt.Fprintf(&b, "2026-07-%02d line %d of the tail\n", i+1, i)
+	}
+	m := New(s)
+	m.appRunner = &cannedAppRunner{logs: b.String()}
+	m = press(t, m, "a")
+	m = press(t, m, "enter")
+	m = press(t, m, "j") // walk to Logs
+	m, msgs := drive(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = drain(t, m, msgs)
+
+	if m.cur().kind != scAppLogs {
+		t.Fatalf("the logs did not open their page: %d", m.cur().kind)
+	}
+	out := ansiStrip(view(m))
+	for _, want := range []string{"Logs", "api", "line 39 of the tail", "esc back", "j/k scroll"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the logs page is missing %q:\n%s", want, out)
+		}
+	}
+	// the window opens at the tail — the newest lines are the ones
+	// on screen, the oldest are one j away
+	if strings.Contains(out, "line 0 of the tail") {
+		t.Errorf("the window opened at the head, not the tail:\n%s", out)
+	}
+	if !strings.Contains(out, "line 26 of the tail") {
+		t.Errorf("the tail window should hold the newest lines:\n%s", out)
+	}
+	m = press(t, m, "k")
+	out = ansiStrip(view(m))
+	if strings.Contains(out, "line 39 of the tail") && strings.Contains(out, "line 20 of the tail") {
+		t.Errorf("k should walk the window up:\n%s", out)
+	}
+
+	// esc returns to the app's page
+	m = press(t, m, "esc")
+	if m.cur().kind != scAppDetail {
+		t.Errorf("esc did not return to the app's page: %d", m.cur().kind)
+	}
+}
+
+// Restart runs docker restart on the active release and toasts the
+// outcome; a refusal toasts the failure with its reason.
+func TestAppRestartTellsTheOutcome(t *testing.T) {
+	s := readyStore(t)
+	n := seedNode(t, s, "web-1")
+	n.Bootstrap = domain.Bootstrap{State: domain.BootstrapReady, Baseline: baseline.Version, Verdict: "ready"}
+	if err := s.UpdateNode(n); err != nil {
+		t.Fatal(err)
+	}
+	seedApp(t, s, sampleApp("api", "web-1"))
+	m := New(s)
+	m.appRunner = &cannedAppRunner{}
+	m = press(t, m, "a")
+	m = press(t, m, "enter")
+	m = press(t, m, "j", "j") // walk to Restart
+	m, msgs := drive(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = drain(t, m, msgs)
+
+	if !strings.Contains(m.toast.text, "restarted") {
+		t.Errorf("a clean restart should toast its outcome: %q", m.toast.text)
+	}
+	saw := false
+	for _, c := range m.appRunner.(*cannedAppRunner).calls {
+		if strings.HasPrefix(c, "docker restart mymo-api-r2") {
+			saw = true
+		}
+	}
+	if !saw {
+		t.Errorf("restart never ran docker restart: %v", m.appRunner.(*cannedAppRunner).calls)
+	}
+}
+
+// mymo only operates on a node it has verified: the mutating verbs
+// refuse on a node that is not READY, before any command runs.
+func TestAppVerbsRefuseOnUnverifiedNode(t *testing.T) {
+	s := readyStore(t)
+	seedNode(t, s, "web-1")
+	seedApp(t, s, sampleApp("api", "web-1"))
+	runner := &cannedAppRunner{}
+	m := New(s)
+	m.appRunner = runner
+	m = press(t, m, "a")
+	m = press(t, m, "enter")
+	m = press(t, m, "j", "j") // Restart
+	m = press(t, m, "enter")
+
+	if strings.Contains(m.toast.text, "restarted") {
+		t.Errorf("restart ran on an unverified node: %q", m.toast.text)
+	}
+	if !strings.Contains(m.toast.text, "mymo only operates on a node it has verified") {
+		t.Errorf("the refusal should name the rule: %q", m.toast.text)
+	}
+	if len(runner.calls) != 0 {
+		t.Errorf("the refusal should run nothing: %v", runner.calls)
+	}
+}
+
+// An app with nothing live has nothing to operate: the card says so
+// instead of offering verbs that cannot work.
+func TestAppWithoutActiveReleaseIsHonest(t *testing.T) {
+	s := readyStore(t)
+	seedNode(t, s, "web-1")
+	app := sampleApp("api", "web-1")
+	app.Releases = nil
+	seedApp(t, s, app)
+
+	m := press(t, New(s), "a")
+	m = press(t, m, "enter")
+	out := ansiStrip(view(m))
+	if !strings.Contains(out, "no releases yet") {
+		t.Errorf("the record should say nothing was deployed:\n%s", out)
+	}
+	if !strings.Contains(out, "nothing to operate") {
+		t.Errorf("the verbs card should say why it is empty:\n%s", out)
+	}
+}
+
+// A long release history folds behind a line that says how many
+// folded and where the whole truth lives — never a silent clip.
+func TestAppRecordFoldsLongHistoriesHonestly(t *testing.T) {
+	s := readyStore(t)
+	seedNode(t, s, "web-1")
+	app := sampleApp("api", "web-1")
+	app.Releases = app.Releases[:1]
+	for i := 2; i <= 9; i++ {
+		st := domain.ReleaseRetired
+		if i == 9 {
+			st = domain.ReleaseActive
+		}
+		app.Releases = append(app.Releases, domain.Release{
+			ID: i, State: st, Container: fmt.Sprintf("mymo-api-r%d", i),
+			Digest: fmt.Sprintf("sha256:%012d", i), Health: "ok",
+		})
+	}
+	seedApp(t, s, app)
+
+	m := New(s)
+	m = press(t, m, "a")
+	m = press(t, m, "enter")
+	out := ansiStrip(view(m))
+	if !strings.Contains(out, "folded — mymo app status api lists every one") {
+		t.Errorf("the fold should state itself and where the whole truth lives:\n%s", out)
+	}
+	if !strings.Contains(out, "r9") || !strings.Contains(out, "r8") {
+		t.Errorf("the active and recent releases should stay:\n%s", out)
+	}
+	if strings.Contains(out, "r2") {
+		t.Errorf("a folded release should not render:\n%s", out)
+	}
+}
+
+// The typed name is the gate: a wrong name runs nothing and clears
+// the buffer; the exact name runs the engine, writes the record,
+// and states which release is live again.
+func TestAppRollbackWantsTheExactName(t *testing.T) {
+	s := readyStore(t)
+	n := seedNode(t, s, "web-1")
+	n.Bootstrap = domain.Bootstrap{State: domain.BootstrapReady, Baseline: baseline.Version, Verdict: "ready"}
+	if err := s.UpdateNode(n); err != nil {
+		t.Fatal(err)
+	}
+	seedApp(t, s, sampleApp("api", "web-1"))
+	m := New(s)
+	m.appRunner = &cannedAppRunner{}
+	m = press(t, m, "a")
+	m = press(t, m, "enter")
+	m = press(t, m, "j", "j", "j") // walk to Rollback
+	m = press(t, m, "enter")
+	if m.cur().kind != scAppRollback {
+		t.Fatalf("the rollback gate did not open: %d", m.cur().kind)
+	}
+	out := ansiStrip(view(m))
+	for _, want := range []string{"Rollback", "release 2", "release 1", "type api in full"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the gate is missing %q:\n%s", want, out)
+		}
+	}
+
+	// a wrong name refuses and clears the buffer
+	m = press(t, m, "a", "x")
+	m = press(t, m, "enter")
+	if !strings.Contains(m.toast.text, "does not match api") {
+		t.Errorf("a wrong name should refuse: %q", m.toast.text)
+	}
+	if m.rbTyped != "" {
+		t.Errorf("a refused name should clear the buffer: %q", m.rbTyped)
+	}
+	app, err := s.GetApp("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := app.ActiveRelease(); got.ID != 2 {
+		t.Errorf("a refused name changed the record: r%d is active", got.ID)
+	}
+
+	// the exact name runs the engine
+	m = press(t, m, "a", "p", "i")
+	m, msgs := drive(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = drain(t, m, msgs)
+	if !strings.Contains(m.toast.text, "release 1 is live again") {
+		t.Errorf("a clean rollback should state its outcome: %q", m.toast.text)
+	}
+	if m.cur().kind != scAppDetail {
+		t.Errorf("the gate should exit back to the app page: %d", m.cur().kind)
+	}
+	app, err = s.GetApp("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := app.ActiveRelease(); got.ID != 1 {
+		t.Errorf("the record should say r1 is live again: r%d", got.ID)
+	}
+	retired := false
+	for _, r := range app.Releases {
+		if r.ID == 2 && r.State == domain.ReleaseRetired {
+			retired = true
+		}
+	}
+	if !retired {
+		t.Errorf("the rolled-back release should be kept for rollback, not discarded")
+	}
+}
+
+// Rollback refuses on a node mymo has not verified, before the gate
+// or any command.
+func TestAppRollbackRefusesUnverifiedNodes(t *testing.T) {
+	s := readyStore(t)
+	seedNode(t, s, "web-1")
+	seedApp(t, s, sampleApp("api", "web-1"))
+	runner := &cannedAppRunner{}
+	m := New(s)
+	m.appRunner = runner
+	m = press(t, m, "a")
+	m = press(t, m, "enter")
+	m = press(t, m, "j", "j", "j")
+	m = press(t, m, "enter")
+	if m.cur().kind == scAppRollback {
+		t.Errorf("the gate opened on an unverified node")
+	}
+	if !strings.Contains(m.toast.text, "mymo only operates on a node it has verified") {
+		t.Errorf("the refusal should name the rule: %q", m.toast.text)
+	}
+	if len(runner.calls) != 0 {
+		t.Errorf("the refusal should run nothing: %v", runner.calls)
+	}
+}
+
+// esc aborts the gate without a trace — no command, no record.
+func TestAppRollbackEscAborts(t *testing.T) {
+	s := readyStore(t)
+	n := seedNode(t, s, "web-1")
+	n.Bootstrap = domain.Bootstrap{State: domain.BootstrapReady, Baseline: baseline.Version, Verdict: "ready"}
+	if err := s.UpdateNode(n); err != nil {
+		t.Fatal(err)
+	}
+	seedApp(t, s, sampleApp("api", "web-1"))
+	m := New(s)
+	m.appRunner = &cannedAppRunner{}
+	m = press(t, m, "a")
+	m = press(t, m, "enter")
+	m = press(t, m, "j", "j", "j")
+	m = press(t, m, "enter")
+	m = press(t, m, "a", "p") // half a name, then out
+	m = press(t, m, "esc")
+	if m.cur().kind != scAppDetail {
+		t.Errorf("esc did not leave the gate: %d", m.cur().kind)
+	}
+	app, err := s.GetApp("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := app.ActiveRelease(); got.ID != 2 {
+		t.Errorf("an aborted rollback changed the record: r%d", got.ID)
+	}
+}

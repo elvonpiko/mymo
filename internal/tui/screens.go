@@ -7,7 +7,6 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/elvonpiko/mymo/internal/domain"
-	"github.com/elvonpiko/mymo/internal/facts"
 	"github.com/elvonpiko/mymo/internal/state"
 	"github.com/elvonpiko/mymo/internal/version"
 )
@@ -61,77 +60,6 @@ func (m Model) appsPage(apps []domain.App, emptyLine, emptyHint string) string {
 	inner := strings.Join(rows, "\n")
 	// the canvas opens with air, like every page
 	return fitHeight("\n"+titledCard("Applications", padLines(inner, m.cardW())), m.contentHeight)
-}
-
-// appDetailView renders one application's truth: what it is, how it
-// is exposed, and every release it has had — the active one live,
-// the retired one kept, the failed one honest about why.
-func (m Model) appDetailView(s screen) string {
-	var app *domain.App
-	for i := range m.apps {
-		if m.apps[i].Name == s.app && m.apps[i].Node == s.node {
-			app = &m.apps[i]
-		}
-	}
-	if app == nil {
-		return m.infoView("Application",
-			[]string{s.app + " is not in the record — it may have been removed."},
-			"[esc] back")
-	}
-
-	artifact := app.Image
-	if app.Type == domain.SourceDockerfile {
-		artifact = "Dockerfile in " + app.Dockerfile
-	}
-	expose := "internal only · " + fmt.Sprint(app.Port)
-	exposeStyle := subtextStyle
-	if app.Domain != "" {
-		expose = "https://" + app.Domain + " · port " + fmt.Sprint(app.Port)
-		exposeStyle = textStyle
-	}
-	health := "not declared — a running container is all mymo can vouch for"
-	if app.Health != "" {
-		health = app.Health
-	}
-
-	inner := titleStyle.Render(app.Name) + faintStyle.Render(" · "+app.Node) + "\n\n" +
-		factsLabelStyle.Width(10).Render("type") + textStyle.Render(string(app.Type)+" · "+artifact) + "\n" +
-		factsLabelStyle.Width(10).Render("exposure") + exposeStyle.Render(expose) + "\n" +
-		factsLabelStyle.Width(10).Render("health") + subtextStyle.Render(shorten(health, 58)) + "\n\n"
-
-	if len(app.Releases) == 0 {
-		inner += faintStyle.Render("no releases yet — nothing has been deployed")
-	} else {
-		inner += factsLabelStyle.Width(10).Render("releases") + "\n"
-		for _, r := range app.Releases {
-			state, stateStyle := "active", okStyle
-			switch r.State {
-			case domain.ReleaseRetired:
-				state, stateStyle = "kept", subtextStyle
-			case domain.ReleaseFailed:
-				state, stateStyle = "failed", errStyle
-			}
-			digest := shortAppDigest(r.Digest)
-			age := "unknown when"
-			if !r.DeployedAt.IsZero() {
-				age = facts.FormatAge(r.DeployedAt)
-			}
-			line := stateStyle.Width(7).Render(state) + dimStyle.Width(17).Render(digest)
-			if r.Health != "" {
-				if r.State == domain.ReleaseFailed {
-					line += subtextStyle.Render(shorten(r.Health, 34))
-				} else {
-					line += subtextStyle.Render(shorten(r.Health, 14))
-				}
-			}
-			line += " " + faintStyle.Render(age)
-			inner += factsLabelStyle.Width(10).Render("r"+fmt.Sprint(r.ID)) + line + "\n"
-		}
-	}
-	inner += "\n" + faintStyle.Render("operate with: mymo app status|logs|restart|rollback "+app.Name)
-	// a work page rides the stage like the apply report: padded to
-	// the stage width so the block centers with uniform gutters
-	return fitHeight(padLines(inner, m.stageW), m.contentHeight)
 }
 
 // shortAppDigest keeps a row honest without overflowing it.
