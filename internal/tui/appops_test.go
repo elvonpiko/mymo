@@ -454,6 +454,7 @@ func TestDeployFlowWalksTheWholePath(t *testing.T) {
 		t.Fatalf("the flow did not open at the path stage: %d/%d", m.cur().kind, m.dpStage)
 	}
 	m.dpPathText = dir
+	m.dpLoadWalk()
 	m = press(t, m, "enter")
 
 	// a new app picks its node from the verified hosts
@@ -467,12 +468,13 @@ func TestDeployFlowWalksTheWholePath(t *testing.T) {
 	m = press(t, m, "enter")
 
 	// the confirm card states the domain promise — it is what gets
-	// confirmed
+	// confirmed — and the one manual step: DNS points at the box
 	if m.dpStage != dpConfirm {
 		t.Fatalf("the gate did not arm: %d (%s)", m.dpStage, m.dpErr)
 	}
 	out = ansiStrip(view(m))
-	for _, want := range []string{"web → web-1", "https://web.example.com through caddy", "type web in full"} {
+	for _, want := range []string{"web → web-1", "https://web.example.com through caddy",
+		"point web.example.com at this box first", "type web in full"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the confirm card is missing %q:\n%s", want, out)
 		}
@@ -487,7 +489,8 @@ func TestDeployFlowWalksTheWholePath(t *testing.T) {
 		t.Fatalf("the engine did not land its report: %d (%s)", m.dpStage, m.dpDoneErr)
 	}
 	out = ansiStrip(view(m))
-	for _, want := range []string{"DONE", "KEPT", "is live on web-1", "https://web.example.com", "enter opens the app"} {
+	for _, want := range []string{"DONE", "KEPT", "is live on web-1", "https://web.example.com",
+		"tls is issued once the name resolves to this box", "enter opens the app"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the report is missing %q:\n%s", want, out)
 		}
@@ -524,6 +527,7 @@ func TestDeployFlowRefusesATakenDomain(t *testing.T) {
 	m.appRunner = &deployCannedRunner{}
 	m = press(t, m, "d")
 	m.dpPathText = dir
+	m.dpLoadWalk()
 	m = press(t, m, "enter")
 	m = press(t, m, "enter") // pick web-1
 
@@ -543,6 +547,8 @@ func TestDeployFlowShowsTheDraftHonestly(t *testing.T) {
 
 	m := press(t, New(s), "d")
 	m.dpPathText = dir
+	m.dpLoadWalk()
+	m.dpLoadWalk()
 	m = press(t, m, "enter")
 
 	out := ansiStrip(view(m))
@@ -564,6 +570,8 @@ func TestDeployFlowNeedsAVerifiedHost(t *testing.T) {
 
 	m := press(t, New(s), "d")
 	m.dpPathText = dir
+	m.dpLoadWalk()
+	m.dpLoadWalk()
 	m = press(t, m, "enter")
 
 	if !strings.Contains(m.dpErr, "no verified app host") {
@@ -586,6 +594,7 @@ func TestDeployFlowExistingAppSkipsThePick(t *testing.T) {
 	m.appRunner = &deployCannedRunner{}
 	m = press(t, m, "d")
 	m.dpPathText = dir
+	m.dpLoadWalk()
 	m = press(t, m, "enter")
 
 	if m.dpStage != dpConfirm {
@@ -594,5 +603,59 @@ func TestDeployFlowExistingAppSkipsThePick(t *testing.T) {
 	out := ansiStrip(view(m))
 	if !strings.Contains(out, "release 2 · kept") {
 		t.Errorf("the card should say what is current:\n%s", out)
+	}
+}
+
+// The walker finds the project instead of asking for it to be
+// typed: the markers say what lives where, enter on a marked
+// directory selects it, and a plain one descends.
+func TestDeployWalkerFindsTheProject(t *testing.T) {
+	s := readyStore(t)
+	readyWebNode(t, s)
+	tmp := writeProject(t, map[string]string{
+		"root/manifested/mymo.yaml": deployManifest,
+		"root/dockered/Dockerfile":  "FROM alpine\n",
+		"root/emptydir/keep":        "",
+	})
+	root := filepath.Join(tmp, "root")
+	m := press(t, New(s), "d")
+	m.dpPathText = root
+	m.dpLoadWalk()
+
+	// every directory is marked with what a deploy would find
+	out := ansiStrip(view(m))
+	for _, want := range []string{
+		"this directory", "mymo.yaml",
+		"manifested", "dockered", "emptydir",
+		"Dockerfile — draft",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the walker is missing %q:\n%s", want, out)
+		}
+	}
+
+	// enter on a plain directory descends; u climbs back
+	m = press(t, m, "j", "j", "j") // emptydir: after this-directory, .., dockered
+	m = press(t, m, "enter")
+	if m.dpPathText != filepath.Join(root, "emptydir") {
+		t.Fatalf("enter did not descend: %s", m.dpPathText)
+	}
+	m = press(t, m, "u")
+	if m.dpPathText != root {
+		t.Fatalf("u did not climb: %s", m.dpPathText)
+	}
+
+	// enter on a manifest-marked directory selects it as the project
+	m = press(t, m, "j") // .. after this-directory
+	// walk to "manifested": entries are this-directory, .., dockered,
+	// emptydir, manifested (sorted)
+	m = press(t, m, "j", "j", "j", "j")
+	if e := m.dpWalkEntries[m.dpWalkCursor].name; e != "manifested" {
+		t.Fatalf("the cursor is not on manifested: %q", e)
+	}
+	m, msgs := drive(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = drain(t, m, msgs)
+	if m.dpStage != dpPick {
+		t.Fatalf("a marked directory should become the project: %d (%s)", m.dpStage, m.dpErr)
 	}
 }

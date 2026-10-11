@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -47,8 +48,9 @@ type deployDoneMsg struct {
 	existing bool
 }
 
-// openDeploy starts the flow at the project directory, prefilled
-// with where mymo was run from — the same default the CLI uses.
+// openDeploy starts the flow at the project walker, opened where
+// mymo was run from — the same default the CLI uses, but walked,
+// not typed.
 func (m *Model) openDeploy() {
 	m.dpStage = dpPath
 	m.dpTyped = ""
@@ -64,6 +66,7 @@ func (m *Model) openDeploy() {
 		cwd = ""
 	}
 	m.dpPathText = cwd
+	m.dpLoadWalk()
 	m.dpNodeCursor = 0
 	m.push(screen{kind: scDeploy})
 }
@@ -106,25 +109,135 @@ func (m Model) updateDeployKeys(str string) (tea.Model, tea.Cmd) {
 	return m.updateSimpleKeys(scDeploy, str)
 }
 
-// updateDeployPathKeys: the input owns the keyboard; enter runs
-// discovery on the typed directory, esc leaves without a trace.
+// walkEntry is one row of the project walker: a directory, and
+// what a deploy would find inside it. The walker is not a file
+// manager — directories only, one column, the markers doing the
+// finding: recognition instead of recall, and no path typo can
+// survive it.
+type walkEntry struct {
+	name       string
+	this, up   bool // the current directory, and the way out
+	manifest   bool
+	dockerfile bool
+}
+
+// dpLoadWalk reads the walker's directory and marks every entry
+// with what a deploy would find there. Hidden directories are not
+// projects; symlinks are not descended.
+func (m *Model) dpLoadWalk() {
+	dir := m.dpPathText
+	m.dpWalkErr = ""
+	entries := []walkEntry{{name: "this directory", this: true}}
+	if p := filepath.Dir(dir); p != dir {
+		entries = append(entries, walkEntry{name: "..", up: true})
+	}
+	des, err := os.ReadDir(dir)
+	if err != nil {
+		m.dpWalkErr = shorten(err.Error(), 60)
+		m.dpWalkEntries = entries
+		m.dpWalkCursor, m.dpWalkScroll = 0, 0
+		return
+	}
+	names := make([]string, 0, len(des))
+	for _, de := range des {
+		if !de.IsDir() || strings.HasPrefix(de.Name(), ".") {
+			continue
+		}
+		names = append(names, de.Name())
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		e := walkEntry{name: name}
+		sub := filepath.Join(dir, name)
+		if _, err := os.Stat(filepath.Join(sub, manifest.FileName)); err == nil {
+			e.manifest = true
+		} else if _, err := os.Stat(filepath.Join(sub, "Dockerfile")); err == nil {
+			e.dockerfile = true
+		}
+		entries = append(entries, e)
+	}
+	m.dpWalkEntries = entries
+	m.dpWalkCursor, m.dpWalkScroll = 0, 0
+}
+
+// dpWalkWindowRows is the rows the walker's list holds.
+func (m Model) dpWalkWindowRows(scrollable bool) int {
+	n := m.contentHeight - 8
+	if scrollable {
+		n--
+	}
+	if n < 1 {
+		return 1
+	}
+	return n
+}
+
+// updateDeployPathKeys: the walker's keyboard — j/k walks, enter
+// opens (a marked directory is the project; a plain one descends),
+// u climbs, esc leaves without a trace.
 func (m Model) updateDeployPathKeys(str string) (tea.Model, tea.Cmd) {
 	switch str {
 	case "esc":
 		m.pop()
 		return m, nil
+	case "up", "k":
+		if m.dpWalkCursor > 0 {
+			m.dpWalkCursor--
+			m.dpWalkFollow()
+		}
+		return m, nil
+	case "down", "j":
+		if m.dpWalkCursor < len(m.dpWalkEntries)-1 {
+			m.dpWalkCursor++
+			m.dpWalkFollow()
+		}
+		return m, nil
+	case "u", "backspace":
+		return m.dpWalkClimb()
 	case "enter":
-		return m.discoverProject()
-	case "backspace":
-		if n := utf8.RuneCountInString(m.dpPathText); n > 0 {
-			m.dpPathText = string([]rune(m.dpPathText)[:n-1])
+		if m.dpWalkCursor >= len(m.dpWalkEntries) {
+			return m, nil
 		}
-		return m, nil
-	default:
-		if utf8.RuneCountInString(str) == 1 {
-			m.dpPathText += str
+		e := m.dpWalkEntries[m.dpWalkCursor]
+		switch {
+		case e.this:
+			// the current directory is the project: discovery
+			// answers — manifest, draft, or the honest refusal
+			return m.discoverProject()
+		case e.up:
+			return m.dpWalkClimb()
+		case e.manifest:
+			m.dpPathText = filepath.Join(m.dpPathText, e.name)
+			return m.discoverProject()
+		default:
+			m.dpPathText = filepath.Join(m.dpPathText, e.name)
+			m.dpLoadWalk()
+			return m, nil
 		}
-		return m, nil
+	}
+	return m, nil
+}
+
+// dpWalkClimb goes one directory up; the root has no up.
+func (m Model) dpWalkClimb() (tea.Model, tea.Cmd) {
+	p := filepath.Dir(m.dpPathText)
+	if p != m.dpPathText {
+		m.dpPathText = p
+		m.dpLoadWalk()
+	}
+	return m, nil
+}
+
+// dpWalkFollow keeps the cursor inside the window: rows never jump
+// arbitrarily, the list follows the walk.
+func (m *Model) dpWalkFollow() {
+	scrollable := len(m.dpWalkEntries) > m.dpWalkWindowRows(false)
+	w := m.dpWalkWindowRows(scrollable)
+	if m.dpWalkCursor < m.dpWalkScroll {
+		m.dpWalkScroll = m.dpWalkCursor
+	}
+	if m.dpWalkCursor >= m.dpWalkScroll+w {
+		m.dpWalkScroll = m.dpWalkCursor - w + 1
 	}
 }
 
@@ -448,39 +561,88 @@ func (m Model) deployFlowView() string {
 	return m.deployPathView()
 }
 
-// deployPathView: the project directory, typed, with mymo's honest
-// refusals — a draft to finish, or no source at all.
+// deployPathView: the project walker — where you are, and the
+// directories around you marked with what a deploy would find.
+// A draft or a refusal replaces the rows until walked away from.
 func (m Model) deployPathView() string {
-	inner := titleStyle.Render("Deploy") + " " +
-		faintStyle.Render("· the project directory holds the truth") + "\n\n" +
-		subtextStyle.Render("every deployment reads mymo.yaml — or drafts one for a bare Dockerfile") + "\n\n"
+	w := m.stageW
 
+	// a draft to finish, or a refusal, takes the stage until the
+	// walk moves on
 	if m.dpFound == "Dockerfile" && m.dpDraft != "" {
-		inner += warnStyle.Render("this project has a Dockerfile but no mymo.yaml, and mymo does not guess") + "\n\n" +
+		inner := "\n" + titleStyle.Render("Deploy") + " " +
+			faintStyle.Render("· the project directory holds the truth") + "\n\n" +
+			warnStyle.Render("this project has a Dockerfile but no mymo.yaml, and mymo does not guess") + "\n\n" +
 			subtextStyle.Render("write this draft to mymo.yaml, finish it, and come back:") + "\n\n" +
-			textStyle.Render(strings.ReplaceAll(m.dpDraft, "\n", "\n  ")) + "\n"
-	} else if m.dpFound == "none" {
-		inner += warnStyle.Render("no mymo.yaml and no Dockerfile in that directory") + "\n\n" +
-			subtextStyle.Render("supported deployment modes:") + "\n" +
-			textStyle.Render("  mymo.yaml with type: image       — deploy an existing OCI image") + "\n" +
-			textStyle.Render("  mymo.yaml with type: dockerfile — build the project's Dockerfile on the node") + "\n"
-	} else if m.dpErr != "" {
-		for _, line := range wrapPlain(m.dpErr, m.stageW-12) {
+			textStyle.Render(strings.ReplaceAll(m.dpDraft, "\n", "\n  ")) + "\n\n" +
+			faintStyle.Render("u climbs to the parent · esc backs out")
+		return m.wizardPanelFit(padLines(inner, w))
+	}
+
+	head := "\n" + titleStyle.Render("Deploy") + " " +
+		faintStyle.Render("· find the project") + "\n" +
+		faintStyle.Render(walkCrumb(m.dpPathText, w-12)) + "\n\n"
+
+	inner := head
+	taken := 0
+	scrollable := len(m.dpWalkEntries) > m.dpWalkWindowRows(false)
+	window := m.dpWalkWindowRows(scrollable)
+	for i := m.dpWalkScroll; i < len(m.dpWalkEntries) && taken < window; i++ {
+		if taken > 0 {
+			inner += "\n"
+		}
+		inner += m.walkRow(m.dpWalkEntries[i], i == m.dpWalkCursor, w)
+		taken++
+	}
+	if taken == 0 {
+		inner += faintStyle.Render("(nothing to walk here)")
+	}
+	inner += "\n\n"
+	if m.dpErr != "" {
+		for _, line := range wrapPlain(m.dpErr, w-12) {
 			inner += errStyle.Render(line) + "\n"
 		}
-	} else {
-		inner += subtextStyle.Render("the directory mymo was run from is the default") + "\n"
 	}
+	inner += faintStyle.Render("enter opens · u climbs · esc backs out")
+	if scrollable {
+		inner += " " + faintStyle.Render("· j/k walk")
+	}
+	return fitHeight(padLines(inner, w), m.contentHeight)
+}
 
-	typed := m.dpPathText
-	cursor := accentStyle.Render("\u258c")
-	shown := typed
-	if w := m.stageW - 14; utf8.RuneCountInString(shown)+1 > w {
+// walkRow renders one walker row: the name, and what lives inside.
+func (m Model) walkRow(e walkEntry, selected bool, w int) string {
+	cursor, style := "  ", itemStyle
+	if selected {
+		cursor, style = "> ", itemSelStyle
+	}
+	name := e.name
+	if e.this {
+		name = "this directory"
+	}
+	marker := ""
+	switch {
+	case e.manifest:
+		marker = okStyle.Render("mymo.yaml")
+	case e.dockerfile:
+		marker = subtextStyle.Render("Dockerfile — draft")
+	case e.up:
+		marker = faintStyle.Render("up one")
+	}
+	nameW := w - 6 - lipgloss.Width(marker) - 4
+	return cursor + style.Render(shorten(name, nameW)) +
+		strings.Repeat(" ", max(1, w-4-lipgloss.Width(marker)-utf8.RuneCountInString(shorten(name, nameW)))) + marker
+}
+
+// walkCrumb shows the walker's directory with the tail kept — the
+// tail names the project, the head is the same /home prefix
+// everywhere.
+func walkCrumb(dir string, w int) string {
+	shown := dir
+	if utf8.RuneCountInString(shown) > w {
 		shown = "\u2026" + string([]rune(shown)[utf8.RuneCountInString(shown)-(w-1):])
 	}
-	inner += "\n" + accentStyle.Render("> ") + textStyle.Render(shown) + cursor + "\n\n" +
-		faintStyle.Render("enter discovers · esc backs out")
-	return m.wizardPanelFit(padLines(inner, m.stageW))
+	return shown
 }
 
 // deployPickView: the verified app hosts — deploy's only targets.
@@ -519,8 +681,12 @@ func (m Model) deployConfirmView() string {
 	inner := titleStyle.Render("Deploy") + " " +
 		faintStyle.Render("· "+app.Name+" → "+app.Node) + "\n\n" +
 		factsLabelStyle.Width(10).Render("type") + textStyle.Render(string(app.Type)+" · "+artifact) + "\n" +
-		factsLabelStyle.Width(10).Render("exposure") + exposeStyle.Render(expose) + "\n" +
-		factsLabelStyle.Width(10).Render("port") + subtextStyle.Render(fmt.Sprint(app.Port)+" · joined to mymo's network") + "\n"
+		factsLabelStyle.Width(10).Render("exposure") + exposeStyle.Render(expose) + "\n"
+	if app.Domain != "" {
+		inner += factsLabelStyle.Width(10).Render("dns") + subtextStyle.Render(
+			"point "+app.Domain+" at this box first — mymo reaches it at "+m.deployNodeHost(app.Node)) + "\n"
+	}
+	inner += factsLabelStyle.Width(10).Render("port") + subtextStyle.Render(fmt.Sprint(app.Port)+" · joined to mymo's network") + "\n"
 	if app.Health != "" {
 		inner += factsLabelStyle.Width(10).Render("health") + subtextStyle.Render(app.Health) + "\n"
 	}
@@ -538,6 +704,17 @@ func (m Model) deployConfirmView() string {
 		subtextStyle.Render(" in full to deploy \u2014 anything else aborts") + "\n" +
 		accentStyle.Render("> ") + textStyle.Render(typed) + cursor
 	return m.wizardPanelFit(padLines(inner, m.stageW))
+}
+
+// deployNodeHost names the address mymo dials the node at — the
+// one DNS should agree with. An unknown host says so honestly.
+func (m Model) deployNodeHost(name string) string {
+	for _, n := range m.nodes {
+		if n.Name == name {
+			return n.Host
+		}
+	}
+	return "its recorded address"
 }
 
 // deployReportView states the outcome one step per row — the same
@@ -575,8 +752,12 @@ func (m Model) deployReportView() string {
 		line := okStyle.Render(m.dpResult.App.Name + " release " + fmt.Sprint(rel.ID) + " is live on " + m.dpResult.App.Node)
 		if m.dpResult.App.Domain != "" {
 			line += " " + faintStyle.Render("· https://"+m.dpResult.App.Domain)
+			inner += line + "\n" +
+				faintStyle.Render("tls is issued once the name resolves to this box — caddy keeps retrying on its own") + "\n"
+		} else {
+			inner += line + "\n"
 		}
-		inner += line + "\n" + faintStyle.Render("enter opens the app")
+		inner += faintStyle.Render("enter opens the app")
 	} else if _, serving := m.dpResult.App.ActiveRelease(); serving {
 		inner += errStyle.Render("the deploy failed — the current release keeps serving") + "\n" +
 			faintStyle.Render("enter opens the app · fix what the rows above name, then deploy again")

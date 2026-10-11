@@ -354,24 +354,38 @@ func (k appRollbackKeymap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{{k.back}}
 }
 
-// deployFlowKeymap: the typed stages take enter and esc; the card
-// itself states what each does.
+// deployFlowKeymap: the walker walks — the pick stage's j/k match —
+// enter opens, u climbs; the confirm card states its own ceremony.
 type deployFlowKeymap struct {
-	back key.Binding
+	up    key.Binding
+	down  key.Binding
+	open  key.Binding
+	climb key.Binding
+	back  key.Binding
+	help  key.Binding
+	quit  key.Binding
 }
 
 func newDeployFlowKeymap() deployFlowKeymap {
 	return deployFlowKeymap{
-		back: key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
+		up:    key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
+		down:  key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
+		open:  key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open")),
+		climb: key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "up")),
+		back:  key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
+		help:  key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
+		quit:  key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
 	}
 }
 
+// ShortHelp keeps only the page's distinctive keys — arrows are
+// universal list knowledge, like the fleet page.
 func (k deployFlowKeymap) ShortHelp() []key.Binding {
-	return []key.Binding{k.back}
+	return []key.Binding{k.open, k.climb, k.back, k.help, k.quit}
 }
 
 func (k deployFlowKeymap) FullHelp() [][]key.Binding {
-	return [][]key.Binding{{k.back}}
+	return [][]key.Binding{{k.up, k.down, k.open, k.climb}, {k.back}}
 }
 
 // deployReportKeymap: the finished report exits forward.

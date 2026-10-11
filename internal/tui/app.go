@@ -107,19 +107,23 @@ type Model struct {
 	// the apply flow: the typed confirmation, the engine's report,
 	// the verify rows, and the injectable pieces tests replace —
 	// the runner and the second-connection prover.
-	dpStage      dpStageID // the deploy flow's stage
-	dpPathText   string    // the typed project directory
-	dpDir        string    // the resolved project directory
-	dpDraft      string    // a Dockerfile's drafted mymo.yaml, shown to finish
-	dpFound      string    // what discovery found: mymo.yaml, Dockerfile, none
-	dpErr        string    // the flow's honest refusal, if any
-	dpMan        manifest.Manifest
-	dpExisting   bool       // the app record already exists
-	dpNodeCursor int        // the pick stage's walker
-	dpTyped      string     // the typed-name gate
-	dpTargetApp  domain.App // the resolved record awaiting the gate
-	dpResult     deploy.Result
-	dpDoneErr    string // the run's fatal error, stated on the report
+	dpStage       dpStageID   // the deploy flow's stage
+	dpPathText    string      // the walker's current directory
+	dpWalkEntries []walkEntry // the walker's marked directories
+	dpWalkCursor  int         // the walker's selected row
+	dpWalkScroll  int         // the walker's window position
+	dpWalkErr     string      // why the walker could not read
+	dpDir         string      // the resolved project directory
+	dpDraft       string      // a Dockerfile's drafted mymo.yaml, shown to finish
+	dpFound       string      // what discovery found: mymo.yaml, Dockerfile, none
+	dpErr         string      // the flow's honest refusal, if any
+	dpMan         manifest.Manifest
+	dpExisting    bool       // the app record already exists
+	dpNodeCursor  int        // the pick stage's walker
+	dpTyped       string     // the typed-name gate
+	dpTargetApp   domain.App // the resolved record awaiting the gate
+	dpResult      deploy.Result
+	dpDoneErr     string // the run's fatal error, stated on the report
 
 	appActions  list.Model       // the app detail page's operations
 	loadingApp  string           // the app an in-flight operation belongs to
@@ -431,10 +435,9 @@ func (m Model) inputActive() bool {
 	if m.cur().kind == scNodePlan && !m.loading.active {
 		return true
 	}
-	// the deploy flow's typed stages: the project path, and the
-	// app's name at the gate
-	if m.cur().kind == scDeploy && !m.loading.active &&
-		(m.dpStage == dpPath || m.dpStage == dpConfirm) {
+	// the deploy flow's typed stage: the app's name at the gate —
+	// the walker takes j/k and stays out of the way
+	if m.cur().kind == scDeploy && !m.loading.active && m.dpStage == dpConfirm {
 		return true
 	}
 	// the rollback gate: the app's name, typed in full
