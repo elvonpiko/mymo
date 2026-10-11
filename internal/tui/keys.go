@@ -354,6 +354,45 @@ func (k appRollbackKeymap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{{k.back}}
 }
 
+// deployFlowKeymap: the typed stages take enter and esc; the card
+// itself states what each does.
+type deployFlowKeymap struct {
+	back key.Binding
+}
+
+func newDeployFlowKeymap() deployFlowKeymap {
+	return deployFlowKeymap{
+		back: key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
+	}
+}
+
+func (k deployFlowKeymap) ShortHelp() []key.Binding {
+	return []key.Binding{k.back}
+}
+
+func (k deployFlowKeymap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{{k.back}}
+}
+
+// deployReportKeymap: the finished report exits forward.
+type deployReportKeymap struct {
+	open key.Binding
+}
+
+func newDeployReportKeymap() deployReportKeymap {
+	return deployReportKeymap{
+		open: key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "app")),
+	}
+}
+
+func (k deployReportKeymap) ShortHelp() []key.Binding {
+	return []key.Binding{k.open}
+}
+
+func (k deployReportKeymap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{{k.open}}
+}
+
 func newSimpleKeymap() simpleKeymap {
 	return simpleKeymap{
 		back: key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),

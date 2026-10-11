@@ -3,6 +3,8 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -10,6 +12,7 @@ import (
 
 	"github.com/elvonpiko/mymo/internal/baseline"
 	"github.com/elvonpiko/mymo/internal/domain"
+	"github.com/elvonpiko/mymo/internal/state"
 )
 
 // cannedAppRunner answers the application verbs' commands: the
@@ -374,5 +377,222 @@ func TestAppRollbackEscAborts(t *testing.T) {
 	}
 	if got, _ := app.ActiveRelease(); got.ID != 2 {
 		t.Errorf("an aborted rollback changed the record: r%d", got.ID)
+	}
+}
+
+// deployCannedRunner answers the engine's questions: the digest of
+// a pulled image, and success for everything else.
+type deployCannedRunner struct{ calls []string }
+
+func (r *deployCannedRunner) Run(_ context.Context, name string, args ...string) (string, int, error) {
+	joined := strings.Join(append([]string{name}, args...), " ")
+	r.calls = append(r.calls, joined)
+	if joined == "id -u" {
+		return "0" + "\n", 0, nil // root: no sudo prefix anywhere
+	}
+	if strings.HasPrefix(joined, "docker image inspect") {
+		return "sha256:c0ffee0000000000000000000000000000000000000000000000000000000000\n", 0, nil
+	}
+	if strings.HasPrefix(joined, "docker network inspect") {
+		return "\n", 1, nil // absent: the engine creates it
+	}
+	if strings.HasPrefix(joined, "docker ps") {
+		return "mymo-web-r1\n", 0, nil // the container answers its own name
+	}
+	if strings.HasPrefix(joined, "systemctl is-active caddy") {
+		return "active\n", 0, nil
+	}
+	return "", 0, nil
+}
+
+func writeProject(t *testing.T, files map[string]string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for name, body := range files {
+		full := dir + "/" + name
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
+func readyWebNode(t *testing.T, s *state.Store) {
+	t.Helper()
+	n := seedNode(t, s, "web-1")
+	n.Bootstrap = domain.Bootstrap{State: domain.BootstrapReady, Baseline: baseline.Version, Verdict: "ready"}
+	if err := s.UpdateNode(n); err != nil {
+		t.Fatal(err)
+	}
+}
+
+const deployManifest = `# mymo: this app's deployable truth
+name: web
+type: image
+image: nginx:1.27
+port: 80
+domain: web.example.com
+health: /
+`
+
+// The whole flow, walked: the typed directory discovers the
+// manifest, the verified host is picked, the card states the
+// domain promise, the exact name runs the engine, the report states
+// the outcome — and enter opens the app the deploy made.
+func TestDeployFlowWalksTheWholePath(t *testing.T) {
+	s := readyStore(t)
+	readyWebNode(t, s)
+	dir := writeProject(t, map[string]string{"mymo.yaml": deployManifest})
+
+	m := New(s)
+	m.appRunner = &deployCannedRunner{}
+	m = press(t, m, "d")
+	if m.cur().kind != scDeploy || m.dpStage != dpPath {
+		t.Fatalf("the flow did not open at the path stage: %d/%d", m.cur().kind, m.dpStage)
+	}
+	m.dpPathText = dir
+	m = press(t, m, "enter")
+
+	// a new app picks its node from the verified hosts
+	if m.dpStage != dpPick {
+		t.Fatalf("a new app should pick its node: %d (%s)", m.dpStage, m.dpErr)
+	}
+	out := ansiStrip(view(m))
+	if !strings.Contains(out, "web-1") || !strings.Contains(out, "web is new") {
+		t.Errorf("the pick stage should list the verified host:\n%s", out)
+	}
+	m = press(t, m, "enter")
+
+	// the confirm card states the domain promise — it is what gets
+	// confirmed
+	if m.dpStage != dpConfirm {
+		t.Fatalf("the gate did not arm: %d (%s)", m.dpStage, m.dpErr)
+	}
+	out = ansiStrip(view(m))
+	for _, want := range []string{"web → web-1", "https://web.example.com through caddy", "type web in full"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the confirm card is missing %q:\n%s", want, out)
+		}
+	}
+
+	// the exact name runs the engine
+	m = press(t, m, "w", "e", "b")
+	m, msgs := drive(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = drain(t, m, msgs)
+
+	if m.dpStage != dpReport {
+		t.Fatalf("the engine did not land its report: %d (%s)", m.dpStage, m.dpDoneErr)
+	}
+	out = ansiStrip(view(m))
+	for _, want := range []string{"DONE", "KEPT", "is live on web-1", "https://web.example.com", "enter opens the app"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the report is missing %q:\n%s", want, out)
+		}
+	}
+	if m.dpResult.OK != true {
+		t.Errorf("the engine should have succeeded: %+v", m.dpResult.Steps)
+	}
+
+	// the finished report exits forward
+	m = press(t, m, "enter")
+	if m.cur().kind != scAppDetail || m.cur().app != "web" {
+		t.Errorf("enter should open the deployed app: %d/%s", m.cur().kind, m.cur().app)
+	}
+	app, err := s.GetApp("web")
+	if err != nil {
+		t.Fatalf("the deploy did not record the app: %v", err)
+	}
+	if rel, _ := app.ActiveRelease(); rel.ID != 1 || rel.State != domain.ReleaseActive {
+		t.Errorf("release 1 should be active: %+v", rel)
+	}
+}
+
+// A public hostname belongs to one app: the conflict is refused
+// before the gate, with the owner named.
+func TestDeployFlowRefusesATakenDomain(t *testing.T) {
+	s := readyStore(t)
+	readyWebNode(t, s)
+	taken := sampleApp("api", "web-1")
+	seedApp(t, s, taken)
+	dir := writeProject(t, map[string]string{"mymo.yaml": strings.Replace(
+		deployManifest, "web.example.com", "api.example.com", 1)})
+
+	m := New(s)
+	m.appRunner = &deployCannedRunner{}
+	m = press(t, m, "d")
+	m.dpPathText = dir
+	m = press(t, m, "enter")
+	m = press(t, m, "enter") // pick web-1
+
+	if m.dpStage == dpConfirm {
+		t.Errorf("the gate armed on a taken domain")
+	}
+	if !strings.Contains(m.dpErr, "api.example.com") || !strings.Contains(m.dpErr, "belongs to api") {
+		t.Errorf("the refusal should name the owner: %q", m.dpErr)
+	}
+}
+
+// A bare Dockerfile earns a draft to finish — mymo does not guess.
+func TestDeployFlowShowsTheDraftHonestly(t *testing.T) {
+	s := readyStore(t)
+	readyWebNode(t, s)
+	dir := writeProject(t, map[string]string{"Dockerfile": "FROM alpine\n"})
+
+	m := press(t, New(s), "d")
+	m.dpPathText = dir
+	m = press(t, m, "enter")
+
+	out := ansiStrip(view(m))
+	if !strings.Contains(out, "has a Dockerfile but no mymo.yaml") {
+		t.Errorf("the draft card should state the situation:\n%s", out)
+	}
+	if !strings.Contains(out, "write this draft to mymo.yaml") {
+		t.Errorf("the draft should be shown to finish:\n%s", out)
+	}
+	if m.dpStage != dpPath {
+		t.Errorf("the flow should stay at the path stage: %d", m.dpStage)
+	}
+}
+
+// No verified hosts means no deploy — the refusal says what to do.
+func TestDeployFlowNeedsAVerifiedHost(t *testing.T) {
+	s := readyStore(t)
+	dir := writeProject(t, map[string]string{"mymo.yaml": deployManifest})
+
+	m := press(t, New(s), "d")
+	m.dpPathText = dir
+	m = press(t, m, "enter")
+
+	if !strings.Contains(m.dpErr, "no verified app host") {
+		t.Errorf("the refusal should name what is missing: %q", m.dpErr)
+	}
+	if m.dpStage != dpPath {
+		t.Errorf("the flow should stay at the path stage: %d", m.dpStage)
+	}
+}
+
+// An existing app's node is fixed — discovery goes straight to the
+// gate, no pick stage.
+func TestDeployFlowExistingAppSkipsThePick(t *testing.T) {
+	s := readyStore(t)
+	readyWebNode(t, s)
+	seedApp(t, s, sampleApp("web", "web-1"))
+	dir := writeProject(t, map[string]string{"mymo.yaml": deployManifest})
+
+	m := New(s)
+	m.appRunner = &deployCannedRunner{}
+	m = press(t, m, "d")
+	m.dpPathText = dir
+	m = press(t, m, "enter")
+
+	if m.dpStage != dpConfirm {
+		t.Fatalf("an existing app should go straight to the gate: %d (%s)", m.dpStage, m.dpErr)
+	}
+	out := ansiStrip(view(m))
+	if !strings.Contains(out, "release 2 · kept") {
+		t.Errorf("the card should say what is current:\n%s", out)
 	}
 }

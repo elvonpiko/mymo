@@ -299,7 +299,7 @@ func (m Model) appDetailView(s screen) string {
 	}
 
 	w := m.stageW
-	head := titleStyle.Render(app.Name) + faintStyle.Render(" · "+app.Node) + "\n\n"
+	head := "\n" + titleStyle.Render(app.Name) + faintStyle.Render(" · "+app.Node) + "\n\n"
 
 	facts := []string{
 		factsLabelStyle.Width(10).Render("type") + textStyle.Render(string(app.Type)+" · "+artifact),
@@ -328,7 +328,7 @@ func (m Model) appDetailView(s screen) string {
 		verbs = faintStyle.Render("nothing to operate — this app has no active release")
 	}
 	budget := m.contentHeight - lipgloss.Height(head) - len(facts) -
-		(len(appActionDefs(app)) + 3) // OPERATIONS label, its air, the final air
+		(len(appActionDefs(app)) + 4) // opening air, OPERATIONS label, its air, the final air
 	if budget < 1 {
 		budget = 1
 	}
@@ -481,8 +481,19 @@ func (m *Model) openApp(a domain.App) {
 	m.push(screen{kind: scAppDetail, node: a.Node, app: a.Name})
 }
 
-// updateAppDetailKeys walks the verbs and runs the picked one.
+// updateAppDetailKeys walks the verbs and runs the picked one;
+// while an operation runs, the ceremony owns the keys.
 func (m Model) updateAppDetailKeys(s screen, str string) (tea.Model, tea.Cmd) {
+	if m.loading.active {
+		switch str {
+		case "q":
+			return m, tea.Quit
+		case "esc":
+			m.cancelLoading()
+			return m, nil
+		}
+		return m, nil
+	}
 	switch str {
 	case "up", "k":
 		var cmd tea.Cmd
@@ -658,6 +669,16 @@ type appProgressMsg struct {
 // as a deploy: runes build the name, enter checks it in full, esc
 // aborts without a trace.
 func (m Model) updateAppRollbackKeys(s screen, str string) (tea.Model, tea.Cmd) {
+	if m.loading.active {
+		switch str {
+		case "q":
+			return m, tea.Quit
+		case "esc":
+			m.cancelLoading()
+			return m, nil
+		}
+		return m, nil
+	}
 	app, _, ok := m.findScreenApp(s)
 	if !ok {
 		m.pop()

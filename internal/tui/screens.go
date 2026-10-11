@@ -78,25 +78,6 @@ func firstAppWord(s string) string {
 	return s
 }
 
-// deployView renders the deploy workflow entry point: deploys run
-// from the project directory, where discovery reads mymo.yaml — the
-// TUI points the way; the command holds the hands.
-func (m Model) deployView() string {
-	inner := titleStyle.Render("Deploy") + "\n\n" +
-		"Every deployment follows the same short path:\n\n" +
-		"  1. Discover    read mymo.yaml — or draft one for a Dockerfile\n" +
-		"  2. Target      a node mymo has verified READY\n" +
-		"  3. Confirm    the app's name, typed in full\n" +
-		"  4. Execute    build or pull, health-gate, activate\n" +
-		"  5. Keep       the previous release, ready to roll back\n\n" +
-		"Deploys run from the project directory:\n" +
-		accentStyle.Render("  mymo deploy -node <name>") + "\n\n" +
-		faintStyle.Render("Ports are never published: apps live on mymo's network,") + "\n" +
-		faintStyle.Render("Caddy alone faces the internet.")
-	return lipgloss.Place(m.contentWidth, m.contentHeight,
-		lipgloss.Center, lipgloss.Center, panelStyle.Render(inner))
-}
-
 // settingsView renders settings: about, security, and the intro replay.
 func (m Model) settingsView() string {
 	stateDir := "~/.mymo"

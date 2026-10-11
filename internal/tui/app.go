@@ -14,8 +14,10 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/elvonpiko/mymo/internal/apply"
+	"github.com/elvonpiko/mymo/internal/deploy"
 	"github.com/elvonpiko/mymo/internal/domain"
 	"github.com/elvonpiko/mymo/internal/facts"
+	"github.com/elvonpiko/mymo/internal/manifest"
 	"github.com/elvonpiko/mymo/internal/plan"
 	"github.com/elvonpiko/mymo/internal/preflight"
 	"github.com/elvonpiko/mymo/internal/ssh"
@@ -105,6 +107,20 @@ type Model struct {
 	// the apply flow: the typed confirmation, the engine's report,
 	// the verify rows, and the injectable pieces tests replace —
 	// the runner and the second-connection prover.
+	dpStage      dpStageID // the deploy flow's stage
+	dpPathText   string    // the typed project directory
+	dpDir        string    // the resolved project directory
+	dpDraft      string    // a Dockerfile's drafted mymo.yaml, shown to finish
+	dpFound      string    // what discovery found: mymo.yaml, Dockerfile, none
+	dpErr        string    // the flow's honest refusal, if any
+	dpMan        manifest.Manifest
+	dpExisting   bool       // the app record already exists
+	dpNodeCursor int        // the pick stage's walker
+	dpTyped      string     // the typed-name gate
+	dpTargetApp  domain.App // the resolved record awaiting the gate
+	dpResult     deploy.Result
+	dpDoneErr    string // the run's fatal error, stated on the report
+
 	appActions  list.Model       // the app detail page's operations
 	loadingApp  string           // the app an in-flight operation belongs to
 	rbTyped     string           // the typed-name gate for a rollback
@@ -338,6 +354,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleAppStatusDone(msg)
 	case appRollbackDoneMsg:
 		return m.handleAppRollbackDone(msg)
+	case deployDoneMsg:
+		return m.handleDeployDone(msg)
 	case appProgressMsg:
 		return m.handleAppProgress(msg)
 	case appDrainedMsg:
@@ -410,7 +428,17 @@ func (m Model) inputActive() bool {
 		return true
 	}
 	// the plan page is one input: the node's name, typed in full
-	return m.cur().kind == scNodePlan && !m.loading.active
+	if m.cur().kind == scNodePlan && !m.loading.active {
+		return true
+	}
+	// the deploy flow's typed stages: the project path, and the
+	// app's name at the gate
+	if m.cur().kind == scDeploy && !m.loading.active &&
+		(m.dpStage == dpPath || m.dpStage == dpConfirm) {
+		return true
+	}
+	// the rollback gate: the app's name, typed in full
+	return m.cur().kind == scAppRollback && !m.loading.active
 }
 
 func (m Model) formActive() bool {
@@ -582,6 +610,8 @@ func (m Model) updateScreenKeys(msg tea.KeyPressMsg, str string) (tea.Model, tea
 		return m.updateAppLogsKeys(str)
 	case scAppRollback:
 		return m.updateAppRollbackKeys(s, str)
+	case scDeploy:
+		return m.updateDeployKeys(str)
 	default:
 		return m.updateSimpleKeys(s.kind, str)
 	}
@@ -655,7 +685,7 @@ func (m Model) updateHomeKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.push(screen{kind: scApps})
 		return m, nil
 	case "d":
-		m.push(screen{kind: scDeploy})
+		m.openDeploy()
 		return m, nil
 	case "s":
 		m.push(screen{kind: scSettings})
@@ -694,7 +724,7 @@ func (m Model) updateFleetKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.push(screen{kind: scApps})
 		return m, nil
 	case "d":
-		m.push(screen{kind: scDeploy})
+		m.openDeploy()
 		return m, nil
 	case "s":
 		m.push(screen{kind: scSettings})
@@ -1001,13 +1031,25 @@ func (m Model) workspaceView() string {
 		case scApps:
 			content = m.allAppsView()
 		case scAppDetail:
-			content = m.appDetailView(s)
+			if m.loading.active {
+				content = m.loadingView()
+			} else {
+				content = m.appDetailView(s)
+			}
 		case scAppLogs:
 			content = m.appLogsView(s)
 		case scAppRollback:
-			content = m.rollbackView(s)
+			if m.loading.active {
+				content = m.loadingView()
+			} else {
+				content = m.rollbackView(s)
+			}
 		case scDeploy:
-			content = m.deployView()
+			if m.loading.active {
+				content = m.loadingView()
+			} else {
+				content = m.deployFlowView()
+			}
 		case scSettings:
 			content = m.settingsView()
 		case scAddNode:
@@ -1197,6 +1239,8 @@ func (m Model) keymap() help.KeyMap {
 		return newAppLogsKeymap()
 	case scAppRollback:
 		return newAppRollbackKeymap()
+	case scDeploy:
+		return m.deployKeymap()
 	default:
 		return newSimpleKeymap()
 	}
