@@ -731,7 +731,7 @@ func (m Model) runAppRollback(app domain.App, node domain.Node, target domain.Re
 	progress := make(chan string, 32)
 	m.appProgress = progress
 
-	return m, tea.Batch(func() tea.Msg {
+	return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 		r, closeFn, err := m.appDial(ctx, node)

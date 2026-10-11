@@ -579,6 +579,9 @@ func (c *Client) Copy(ctx context.Context, dest string, tarball io.Reader, sudo 
 	// no pty: the stream is binary and must arrive unmangled, and
 	// sudo -n does not need a terminal
 	sess.Stdin = tarball
+	var outBuf, errBuf bytes.Buffer
+	sess.Stdout = &outBuf
+	sess.Stderr = &errBuf
 	cmd := "sh -c " + shellQuote("mkdir -p "+dest+" && tar -xzf - -C "+dest)
 	if sudo {
 		cmd = "sudo -n " + cmd
@@ -600,6 +603,13 @@ func (c *Client) Copy(ctx context.Context, dest string, tarball io.Reader, sudo 
 		}
 		var exit *ssh.ExitError
 		if errors.As(err, &exit) {
+			reason := firstLineOf(errBuf.String())
+			if reason == "" {
+				reason = firstLineOf(outBuf.String())
+			}
+			if reason != "" {
+				return fmt.Errorf("extracting the build context failed on the node (exit %d): %s", exit.ExitStatus(), reason)
+			}
 			return fmt.Errorf("extracting the build context failed on the node (exit %d)", exit.ExitStatus())
 		}
 		return fmt.Errorf("ssh: copy to %s: %v", dest, err)

@@ -460,7 +460,7 @@ func (m Model) runDeployEngine() (tea.Model, tea.Cmd) {
 	name := app.Name
 	existing := m.dpExisting
 
-	return m, tea.Batch(func() tea.Msg {
+	return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 		defer cancel()
 

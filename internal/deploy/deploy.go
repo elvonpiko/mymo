@@ -234,6 +234,7 @@ func Deploy(ctx context.Context, r Runner, app domain.App, o Options) Result {
 			return fail(build, "the dockerfile strategy needs a build context transfer, which is not available", "build")
 		}
 		dest := fmt.Sprintf("/tmp/mymo-build/%s-r%d", app.Name, id)
+		o.report("packing the build context")
 		if out, code, err := runW(ctx, r, o, "mkdir", "-p", dest); err != nil || code != 0 {
 			return fail(build, "preparing the build directory failed: "+firstLine(out), "build")
 		}
@@ -241,6 +242,7 @@ func Deploy(ctx context.Context, r Runner, app domain.App, o Options) Result {
 		if terr != nil {
 			return fail(build, "packing the build context failed: "+terr.Error(), "build")
 		}
+		o.report("transferring the build context to the node")
 		if cerr := o.Copier.Copy(ctx, dest, tarball); cerr != nil {
 			return fail(build, "transferring the build context failed: "+cerr.Error(), "build")
 		}
@@ -456,6 +458,7 @@ func probeHealth(ctx context.Context, r Runner, o Options, app domain.App, conta
 		return "no health endpoint declared — the container running is all mymo can vouch for", nil
 	}
 	url := fmt.Sprintf("http://%s:%d%s", container, app.Port, app.Health)
+	o.report("health gate: asking " + app.Health + " to answer")
 	for attempt := 1; attempt <= o.HealthAttempts; attempt++ {
 		if out, code, err := runW(ctx, r, o, "docker", "run", "--rm", "--network", NetworkName,
 			HealthImage, "wget", "-q", "-T", "2", "-O", "/dev/null", url); err == nil && code == 0 {

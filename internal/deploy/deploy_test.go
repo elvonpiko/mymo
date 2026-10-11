@@ -288,10 +288,29 @@ func TestDockerfileBuildsOnTheNode(t *testing.T) {
 	opts := goodOpts()
 	opts.Copier = copier
 	opts.BuildContext = t.TempDir()
+	var heard []string
+	opts.Progress = func(line string) { heard = append(heard, line) }
 
 	res := Deploy(context.Background(), r, app, opts)
 	if !res.OK {
 		t.Fatalf("deploy failed at %s:\n%s", res.FailedAt, r.callList())
+	}
+	// the long steps narrate as they run — a silent stretch reads
+	// as a hang on the loading ceremony
+	for _, want := range []string{
+		"packing the build context",
+		"transferring the build context to the node",
+		"building mymo/api:r1 on the node",
+	} {
+		found := false
+		for _, line := range heard {
+			if strings.Contains(line, want) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("the deploy never said %q — heard %v", want, heard)
+		}
 	}
 	if !copier.tarred || copier.dest != "/tmp/mymo-build/api-r1" {
 		t.Errorf("context transfer = %+v", copier)

@@ -7,11 +7,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/elvonpiko/mymo/internal/baseline"
 	"github.com/elvonpiko/mymo/internal/domain"
+	"github.com/elvonpiko/mymo/internal/manifest"
 	"github.com/elvonpiko/mymo/internal/state"
 )
 
@@ -658,4 +661,55 @@ func TestDeployWalkerFindsTheProject(t *testing.T) {
 	if m.dpStage != dpPick {
 		t.Fatalf("a marked directory should become the project: %d (%s)", m.dpStage, m.dpErr)
 	}
+}
+
+// Both engine ceremonies arm the spinner before they run: without
+// the tick the loading page renders once and freezes — the clock
+// still, the spinner still — while the engine works, and a working
+// deploy reads as a hang.
+func TestEngineCeremoniesArmTheSpinner(t *testing.T) {
+	s := readyStore(t)
+	readyWebNode(t, s)
+	app := sampleApp("api", "web-1")
+	seedApp(t, s, app)
+	node, err := s.GetNode("web-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := New(s)
+	m.appRunner = &cannedAppRunner{}
+
+	// the rollback engine
+	_, cmd := m.runAppRollback(app, node, app.Releases[0])
+	assertArmedTick(t, cmd, "rollback")
+
+	// the deploy engine
+	m.dpMan = manifest.Manifest{Name: "api", Type: "image", Image: "ghcr.io/x/api:1.2.3", Port: 8080}
+	m.dpExisting = true
+	m.dpTargetApp = app
+	_, cmd = m.runDeployEngine()
+	assertArmedTick(t, cmd, "deploy")
+}
+
+// assertArmedTick runs one engine batch and demands the spinner's
+// tick among its commands — the tick animates the clock and the
+// spinner; without it the ceremony renders once and goes still.
+func assertArmedTick(t *testing.T, cmd tea.Cmd, what string) {
+	t.Helper()
+	res, ok := runCmdTimed(cmd, 400*time.Millisecond)
+	if !ok {
+		t.Fatalf("%s: the batch never resolved", what)
+	}
+	batch, is := res.(tea.BatchMsg)
+	if !is {
+		t.Fatalf("%s: the batch yielded %T, not commands", what, res)
+	}
+	for _, c := range batch {
+		if msg, ok := runCmdTimed(c, 300*time.Millisecond); ok {
+			if _, is := msg.(spinner.TickMsg); is {
+				return
+			}
+		}
+	}
+	t.Errorf("%s: the ceremony never armed the spinner — the page would freeze", what)
 }
