@@ -34,6 +34,20 @@ const SSHDropin = "/etc/ssh/sshd_config.d/00-mymo.conf"
 // mymo's own work.
 const SSHRetiredDropin = "/etc/ssh/sshd_config.d/60-mymo.conf"
 
+// AutoUpgradesFile is where apt's periodic policy lives on both
+// Ubuntu and Debian. Installing the unattended-upgrades package
+// alone does not turn automatic upgrades on — on a minimal Debian
+// it ships dormant — so the baseline writes the two lines that make
+// the package do its work, the same file on both distributions.
+const AutoUpgradesFile = "/etc/apt/apt.conf.d/20auto-upgrades"
+
+// AutoUpgradesConfig is the pinned content of AutoUpgradesFile:
+// refresh the lists daily and apply the security origin
+// unattended. Reboots stay the operator's.
+const AutoUpgradesConfig = `APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+`
+
 // SSHDirective is one pinned sshd setting.
 type SSHDirective struct {
 	Key    string

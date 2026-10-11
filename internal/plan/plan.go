@@ -266,13 +266,19 @@ func updatesStep() Step {
 		Title:    "security updates",
 		Detail:   "auto-apply security patches; reboots stay yours",
 		Packages: baseline.SystemPackages,
+		Files: []File{
+			{Path: baseline.AutoUpgradesFile, Content: baseline.AutoUpgradesConfig, Mode: "0644", Owner: "root:root"},
+		},
 		Exec: [][]string{
 			{"apt-get", "update"},
 			{"apt-get", "install", "-y", "unattended-upgrades"},
 		},
-		// the step's whole work is the package: installed is
-		// converged, and a resume never refreshes apt for it again
-		Check: installedCheck("unattended-upgrades"),
+		// converged means the package is installed and the switch
+		// that makes it run is in place — installed alone is a
+		// Debian box quietly not updating itself
+		Check: []string{"sh", "-c",
+			"dpkg-query -W -f='${Status}' unattended-upgrades 2>/dev/null | grep -q 'install ok installed' && " +
+				"test -f " + baseline.AutoUpgradesFile},
 	}
 }
 

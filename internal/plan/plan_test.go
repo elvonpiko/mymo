@@ -589,3 +589,30 @@ func TestInstallStepsCarryTheirConvergence(t *testing.T) {
 		t.Errorf("the firewall converges on installed, not active: %q", strings.Join(have["firewall"], " "))
 	}
 }
+
+// Auto-updates converge on the package AND the switch that makes it
+// run: on a minimal Debian the package alone ships dormant, and
+// "installed" would be a quiet box that never updates itself.
+func TestSecurityUpdatesConvergeOnTheSwitch(t *testing.T) {
+	steps, err := Generate(context.Background(), ubuntuRunner(), cleanNode(), cleanSnapshot(), cleanAudit())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range steps {
+		if s.Control != "unattended-upgrades" {
+			continue
+		}
+		if len(s.Files) != 1 || s.Files[0].Path != baseline.AutoUpgradesFile {
+			t.Fatalf("the step does not pin %s: %+v", baseline.AutoUpgradesFile, s.Files)
+		}
+		if !strings.Contains(s.Files[0].Content, `APT::Periodic::Unattended-Upgrade "1"`) {
+			t.Errorf("the pinned policy does not turn unattended upgrades on:\n%s", s.Files[0].Content)
+		}
+		joined := strings.Join(s.Check, " ")
+		if !strings.Contains(joined, "unattended-upgrades") || !strings.Contains(joined, baseline.AutoUpgradesFile) {
+			t.Errorf("the convergence probe must cover the package and the switch: %s", joined)
+		}
+		return
+	}
+	t.Fatal("no unattended-upgrades step in the plan")
+}

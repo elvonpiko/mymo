@@ -457,7 +457,7 @@ func Evaluate(f facts.Node, s Audit) []Check {
 	case f.Arch == "":
 		checks = append(checks, Check{"platform", "platform", Abort, "architecture unknown — observe the node first", "open the node once so facts can be read, then check again"})
 	case !baseline.ArchSupported(f.Arch):
-		checks = append(checks, Check{"platform", "platform", Abort, f.Arch + " — no official Docker or Caddy packages", "use a box on an architecture with official packages (amd64, arm64, armhf)"})
+		checks = append(checks, Check{"platform", "platform", Abort, f.Arch + " — no official Docker or Caddy packages", "use a box on an architecture with official packages (amd64, arm64)"})
 	case !f.Systemd:
 		checks = append(checks, Check{"platform", "platform", Abort, f.OS + " · " + f.Arch + " — but no systemd; the baseline manages services through it", "use a box with systemd — the baseline starts and supervises services through it"})
 	default:
