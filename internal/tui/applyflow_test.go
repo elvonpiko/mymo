@@ -278,13 +278,20 @@ func TestApplyFailureStopsAndReportsWhere(t *testing.T) {
 		t.Fatal("a failed earlier step still reached the sshd reload")
 	}
 
-	// walking home resumes sampling over the kept connection
+	// the finished page exits forward: esc is not its way out
+	// anymore, enter opens the node, and the report never strands
 	m = press(t, m, "esc")
-	if m.cur().kind != scNode {
-		t.Fatalf("esc did not return to the observe page: %v", m.cur().kind)
+	if m.cur().kind != scNodeApplyReport {
+		t.Fatalf("esc should not leave the report: %v", m.cur().kind)
 	}
+	m = press(t, m, "enter")
+	if m.cur().kind != scNode {
+		t.Fatalf("enter did not open the observe page: %v", m.cur().kind)
+	}
+	// entering observes: the probe lands and sampling takes over
+	m = observe(t, m, "web-1", richSnapshot("web-1"))
 	if !m.live {
-		t.Fatal("sampling did not resume after walking away from a failed apply")
+		t.Fatal("sampling did not resume after entering the node page")
 	}
 }
 

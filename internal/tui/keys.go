@@ -181,25 +181,25 @@ func (k planKeymap) FullHelp() [][]key.Binding {
 
 // Apply-report keymap: the report stays until walked away from.
 type applyReportKeymap struct {
-	back key.Binding
+	open key.Binding
 	help key.Binding
 	quit key.Binding
 }
 
 func newApplyReportKeymap() applyReportKeymap {
 	return applyReportKeymap{
-		back: key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
+		open: key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "node")),
 		help: key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 		quit: key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
 	}
 }
 
 func (k applyReportKeymap) ShortHelp() []key.Binding {
-	return []key.Binding{k.back, k.help, k.quit}
+	return []key.Binding{k.open, k.help, k.quit}
 }
 
 func (k applyReportKeymap) FullHelp() [][]key.Binding {
-	return [][]key.Binding{{k.back}, {k.help, k.quit}}
+	return [][]key.Binding{{k.open}, {k.help, k.quit}}
 }
 
 // Node keymap: the observe page's action list plus direct ssh and

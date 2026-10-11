@@ -531,14 +531,17 @@ func (m Model) updateScreenKeys(msg tea.KeyPressMsg, str string) (tea.Model, tea
 				m.arScroll--
 			}
 			return m, nil
-		case "esc":
-			m.pop()
-			// the preflight review that led here is answered by the
-			// report itself; home is the observe page
-			if m.cur().kind == scNodePreflight {
-				m.pop()
+		case "enter":
+			// the setup is finished: the way out is forward, to the
+			// node itself — walking back into a check the report
+			// already answers would be a strange destination
+			n := m.selNode
+			if m.store != nil {
+				if nn, err := m.store.GetNode(m.selNode.Name); err == nil {
+					n = nn
+				}
 			}
-			return m, nil
+			return m, m.openNode(n)
 		}
 		return m, nil
 	case scAddNode:
@@ -880,7 +883,9 @@ func (m *Model) layout() {
 		rows = 5
 	}
 	m.contentHeight = max(1, m.height-rows)
-	fleetH := m.contentHeight - 5
+	// the fleet page opens with an air row: the list's bound gives
+	// that row back at the floor
+	fleetH := m.contentHeight - 6
 	if fleetH < 1 {
 		fleetH = 1
 	}

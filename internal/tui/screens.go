@@ -59,7 +59,8 @@ func (m Model) appsPage(apps []domain.App, emptyLine, emptyHint string) string {
 			relStyle.Render(release))
 	}
 	inner := strings.Join(rows, "\n")
-	return fitHeight(titledCard("Applications", padLines(inner, m.cardW())), m.contentHeight)
+	// the canvas opens with air, like every page
+	return fitHeight("\n"+titledCard("Applications", padLines(inner, m.cardW())), m.contentHeight)
 }
 
 // appDetailView renders one application's truth: what it is, how it

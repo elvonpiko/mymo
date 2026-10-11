@@ -325,14 +325,18 @@ func TestObservePageSectionsBreathe(t *testing.T) {
 	m = observe(t, m, "web-1", richSnapshot("web-1"))
 
 	lines := strings.Split(ansiStrip(view(m)), "\n")
-	// one heading line: the node's identity and connection together
-	if !strings.Contains(lines[3], "root@203.0.113.10:22") || !strings.Contains(lines[3], "agent auth") {
-		t.Errorf("heading lost the connection identity: %q", lines[3])
+	// the canvas opens with air, then one heading line: the node's
+	// identity and connection together
+	if strings.Trim(lines[3], "\u2502 ") != "" {
+		t.Errorf("row 3 should be the page's opening air: %q", lines[3])
 	}
-	// air between the heading, the cards, and the actions — the
-	// mymo state rides the heading badge, so the page affords full
-	// breathing at the 19-row floor with every action visible
-	for _, i := range []int{4, 11, 16} {
+	if !strings.Contains(lines[4], "root@203.0.113.10:22") || !strings.Contains(lines[4], "agent auth") {
+		t.Errorf("heading lost the connection identity: %q", lines[4])
+	}
+	// air between the cards and the actions — the mymo state rides
+	// the heading badge, so the page affords full breathing at the
+	// 19-row floor with every action visible
+	for _, i := range []int{11, 16} {
 		if strings.Trim(lines[i], "\u2502 ") != "" {
 			t.Errorf("row %d should be air between sections: %q", i, lines[i])
 		}
@@ -342,8 +346,8 @@ func TestObservePageSectionsBreathe(t *testing.T) {
 	if !strings.Contains(lines[5], "SYSTEM") || !strings.Contains(lines[12], "LIVE") {
 		t.Fatalf("section layout shifted:\n%s", strings.Join(lines, "\n"))
 	}
-	if !strings.Contains(lines[3], "not a mymo node") {
-		t.Errorf("the heading lost the mymo state: %q", lines[3])
+	if !strings.Contains(lines[4], "not a mymo node") {
+		t.Errorf("the heading lost the mymo state: %q", lines[4])
 	}
 	if !strings.Contains(lines[21], "Remove") {
 		t.Errorf("last action clipped at the floor: %q", lines[21])
@@ -408,5 +412,32 @@ func TestNodeHeadingCarriesTheRecordedBaseline(t *testing.T) {
 	m = observe(t, m, "web-1", snap)
 	if out := ansiStrip(view(m)); !strings.Contains(out, "mymo pins "+baseline.Version) {
 		t.Errorf("heading missing the drift warning:\n%s", out)
+	}
+}
+
+// The observe page's last word is the box's relationship to mymo: a
+// verified node wears the badge in the brand color, an unmanaged box
+// keeps its warning — and the clock stays out of the identity row.
+func TestObservePageBadgesAMymoNode(t *testing.T) {
+	s := readyStore(t)
+	n := seedNode(t, s, "web-1")
+	n.Bootstrap = domain.Bootstrap{State: domain.BootstrapReady, Baseline: baseline.Version, Verdict: "ready", At: time.Now()}
+	if err := s.UpdateNode(n); err != nil {
+		t.Fatal(err)
+	}
+	m := press(t, New(s), "n", "enter")
+	m = observe(t, m, "web-1", richSnapshot("web-1"))
+
+	got := ansiStrip(view(m))
+	if !strings.Contains(got, "mymo node") {
+		t.Errorf("a ready node should wear the mymo node badge:\n%s", got)
+	}
+	if strings.Contains(got, "not a mymo node") {
+		t.Errorf("a ready node should not wear the unmanaged badge:\n%s", got)
+	}
+	// the identity row is identity: the clock belongs to the SYSTEM
+	// card's checked row, not the badge
+	if strings.Contains(got, "checked just now · mymo node") {
+		t.Errorf("the identity row should not carry the clock:\n%s", got)
 	}
 }

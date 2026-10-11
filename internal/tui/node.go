@@ -111,11 +111,13 @@ func newActionsList(n domain.Node) list.Model {
 func (m Model) nodeView() string {
 	n := m.selNode
 	var b strings.Builder
+	// the canvas opens with air: every page breathes below the
+	// frame, and the heading's old gap moved here — the SYSTEM
+	// card's own border separates it from the heading, so the floor
+	// keeps every row it had
+	b.WriteString("\n")
 	b.WriteString(m.nodeHeadingLine(n))
-	// air between every section: heading, cards, actions — the floor
-	// is 19 rows and this layout was re-counted to afford it, with
-	// the mymo state in the heading badge instead of a statement row
-	b.WriteString("\n\n")
+	b.WriteString("\n")
 	b.WriteString(m.systemCard(n))
 	// the LIVE card exists only once something is there to sample,
 	// and spans the same width as the SYSTEM card beside it
@@ -180,14 +182,12 @@ func (m Model) systemCard(n domain.Node) string {
 // the health verdict. Pieces drop off in priority order if the line
 // would run past the stage — the record page keeps everything.
 func (m Model) nodeHeadingLine(n domain.Node) string {
-	label, labelStyle := healthLabel(n)
 	auth := fmt.Sprintf("%s auth", n.Auth)
 	if n.Auth == domain.AuthKey {
 		auth = "key auth"
 	}
 	line := healthDot(classifyNode(n)) + " " + titleStyle.Render(n.Name) +
 		" " + modeBadge(n.Mode)
-	health := faintStyle.Render(" · ") + labelStyle.Render(label)
 
 	// the recorded baseline, when a previous apply left its marker:
 	// the drift surface, shown in warning colors when it is not the
@@ -208,18 +208,21 @@ func (m Model) nodeHeadingLine(n domain.Node) string {
 		faintStyle.Render(" · ")+subtextStyle.Render(n.User+"@"+n.Address()),
 		faintStyle.Render(" · ")+subtextStyle.Render(auth),
 	)
+	badge := faintStyle.Render(" · ") + warnStyle.Render("not a mymo node")
+	if nodeIsManaged(n) {
+		badge = faintStyle.Render(" · ") + brandStyle.Render("mymo node")
+	}
 	for _, piece := range pieces {
-		if lipgloss.Width(line)+lipgloss.Width(piece)+lipgloss.Width(health) <= m.stageW-2 {
+		if lipgloss.Width(line)+lipgloss.Width(piece)+lipgloss.Width(badge) <= m.stageW-2 {
 			line += piece
 		}
 	}
-	if !nodeIsManaged(n) {
-		// an unmanaged box states itself in the identity row: the
-		// setup action below is the answer to this fact, and the
-		// warning color ties them together
-		return line + warnStyle.Render(" · not a mymo node")
-	}
-	return line + health
+	// the badge states the box's relationship to mymo — the identity
+	// row's last word, appended after the fit so it never drops:
+	// the warning color marks what setup answers; the brand color
+	// marks what already answers to mymo. Freshness is the dot's
+	// business, and the SYSTEM card's checked row keeps the clock
+	return line + badge
 }
 
 // systemRows builds the SYSTEM card's label/value pairs in display

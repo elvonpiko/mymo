@@ -342,9 +342,10 @@ func TestWideTerminalCentersTheStage(t *testing.T) {
 	if got := leadSpaces(lines[1]); got < 10 {
 		t.Errorf("header not centered at 120 cols: gutter=%d", got)
 	}
-	// the page's own rows share one gutter: heading above, system card
-	// below — a centered block, not line-by-line scattering
-	heading, card, actions := leadSpaces(lines[3]), leadSpaces(lines[5]), leadSpaces(lines[17])
+	// the page's own rows share one gutter: the opening air, then
+	// heading, then the system card — a centered block, not
+	// line-by-line scattering
+	heading, card, actions := leadSpaces(lines[4]), leadSpaces(lines[5]), leadSpaces(lines[17])
 	if heading == 0 || heading != card || heading != actions {
 		t.Errorf("stage not one centered block: heading=%d card=%d actions=%d", heading, card, actions)
 	}

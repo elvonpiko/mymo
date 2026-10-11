@@ -425,7 +425,7 @@ func (m Model) arTail(w int, scrollable bool) string {
 		tail += okStyle.Render("mymo security baseline applied and verified") + "\n"
 		tail += faintStyle.Render("promote to app host when ready: mymo node promote "+m.selNode.Name) + "\n"
 	default:
-		tail += faintStyle.Render("esc back — the report stays in the node's lifecycle record") + "\n"
+		tail += faintStyle.Render("the report stays in the node's lifecycle record — enter opens the node") + "\n"
 	}
 	if scrollable {
 		tail += faintStyle.Render("j/k scroll") + "\n"

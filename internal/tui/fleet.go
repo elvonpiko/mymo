@@ -100,8 +100,9 @@ func (m Model) fleetView() string {
 		return m.emptyFleetView()
 	}
 	var b strings.Builder
-	// the list rides in a card like the observe page's, so every
-	// work page speaks the same design language
+	// the canvas opens with air, like every page; the list's bound
+	// gives the row back so the floor keeps everything
+	b.WriteString("\n")
 	b.WriteString(titledCard("NODES", padLines(m.fleet.View(), m.cardW())))
 	b.WriteString("\n\n")
 	b.WriteString(sectionLabel("APPLICATIONS"))

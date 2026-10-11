@@ -586,8 +586,9 @@ func TestFleetListRidesInACard(t *testing.T) {
 	m := press(t, New(s), "n")
 
 	lines := strings.Split(ansiStrip(view(m)), "\n")
-	// the list carries the card title like the observe page's cards
-	if !strings.Contains(lines[3], "NODES") {
+	// the page opens with air, then the list carries the card title
+	// like the observe page's cards
+	if !strings.Contains(lines[4], "NODES") {
 		t.Fatalf("fleet list not carded:\n%s", strings.Join(lines, "\n"))
 	}
 	// card corners align: the title border spans the card
