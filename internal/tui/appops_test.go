@@ -755,3 +755,38 @@ func TestDeployReportKeepsTheWholeReason(t *testing.T) {
 		t.Errorf("a fitting note left its row:\n%s", out)
 	}
 }
+
+// A failed build gets its layer named on the report: whose fix it
+// is — the project's or the box's — stated in plain words under
+// the failure, so the operator knows where to work before they
+// reread the note.
+func TestDeployReportNamesWhoseFixItIs(t *testing.T) {
+	s := readyStore(t)
+	readyWebNode(t, s)
+	m := New(s)
+	m.push(screen{kind: scDeploy})
+	m.dpStage = dpReport
+	m.dpResult = deploy.Result{
+		App:      sampleApp("web", "web-1"),
+		FailedAt: "build",
+		Steps: []deploy.StepResult{
+			{
+				Title: "dockerfile .",
+				State: deploy.StepFailed,
+				Note:  "main.go:18:2: missing go.sum entry for module providing package github.com/go-chi/chi/v5; to add: go get example.com/simple-go-web",
+			},
+		},
+	}
+	out := ansiStrip(view(m))
+	if !strings.Contains(out, "the failure is inside the project's build") {
+		t.Errorf("the report did not name whose fix it is:\n%s", out)
+	}
+
+	// a network failure inside the build is the box's, not the
+	// project's — the sentence follows the note
+	m.dpResult.Steps[0].Note = "go: dial tcp: lookup proxy.golang.org: i/o timeout — go mod download failed"
+	out = ansiStrip(view(m))
+	if !strings.Contains(out, "the box's docker networking, not the app's code") {
+		t.Errorf("a network failure should be named the box's:\n%s", out)
+	}
+}

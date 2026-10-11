@@ -229,6 +229,16 @@ func runDeploy(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		} else {
 			fmt.Fprintf(stderr, "mymo deploy: failed at %s — nothing was activated\n", res.FailedAt)
 		}
+		if res.FailedAt == "build" {
+			note := ""
+			for _, st := range res.Steps {
+				if st.State == deploy.StepFailed {
+					note = st.Note
+					break
+				}
+			}
+			fmt.Fprintf(stderr, "%s\n", deploy.OwnTheBuildFailure(note))
+		}
 		return exitErr
 	}
 

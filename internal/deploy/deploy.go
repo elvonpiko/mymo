@@ -251,7 +251,7 @@ func Deploy(ctx context.Context, r Runner, app domain.App, o Options) Result {
 		out, code, err := runW(ctx, r, o, "docker", "build", "-t", imageRef, dest)
 		if err != nil || code != 0 {
 			runW(ctx, r, o, "rm", "-rf", dest) // best effort; the build dir is scratch
-			return fail(build, fmt.Sprintf("build failed (%d): %s", code, reasonLine(out)), "build")
+			return fail(build, fmt.Sprintf("build failed (%d): %s", code, buildFailNote(out)), "build")
 		}
 		runW(ctx, r, o, "rm", "-rf", dest)
 		var ierr error

@@ -711,6 +711,23 @@ func (m Model) deployConfirmView() string {
 	return m.wizardPanelFit(padLines(inner, m.stageW))
 }
 
+// buildOwnershipLine states whose fix a failed build is, when the
+// build is what failed: the note's own words carry the layer, and
+// the sentence says which side of the wire to work on.
+func (m Model) buildOwnershipLine() string {
+	if m.dpResult.FailedAt != "build" {
+		return ""
+	}
+	note := ""
+	for _, st := range m.dpResult.Steps {
+		if st.State == deploy.StepFailed {
+			note = st.Note
+			break
+		}
+	}
+	return faintStyle.Render(deploy.OwnTheBuildFailure(note)) + "\n"
+}
+
 // deployNodeHost names the address mymo dials the node at — the
 // one DNS should agree with. An unknown host says so honestly.
 func (m Model) deployNodeHost(name string) string {
@@ -781,10 +798,10 @@ func (m Model) deployReportView() string {
 		inner += faintStyle.Render("enter opens the app")
 	} else if _, serving := m.dpResult.App.ActiveRelease(); serving {
 		inner += errStyle.Render("the deploy failed — the current release keeps serving") + "\n" +
-			faintStyle.Render("enter opens the app · fix what the rows above name, then deploy again")
+			m.buildOwnershipLine() + faintStyle.Render("enter opens the app · fix what the rows above name, then deploy again")
 	} else {
 		inner += errStyle.Render("the deploy failed — nothing was activated") + "\n" +
-			faintStyle.Render("enter opens the app · fix what the rows above name, then deploy again")
+			m.buildOwnershipLine() + faintStyle.Render("enter opens the app · fix what the rows above name, then deploy again")
 	}
 	return m.wizardPanelFit(padLines(inner, m.stageW))
 }

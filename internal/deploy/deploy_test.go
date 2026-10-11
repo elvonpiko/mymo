@@ -75,11 +75,14 @@ func (f *fakeRunner) Run(_ context.Context, name string, args ...string) (string
 			return miss, 1, nil
 		}
 	}
+	// a coded failure carries its output when one is stated — the
+	// real transport returns both, and a build's diagnosis lives in
+	// the output beside the exit code
+	if code, ok := f.codes[key]; ok {
+		return f.responses[key], code, nil
+	}
 	if out, ok := f.responses[key]; ok {
 		return out, 0, nil
-	}
-	if code, ok := f.codes[key]; ok {
-		return "", code, nil
 	}
 	return "", 0, nil
 }
