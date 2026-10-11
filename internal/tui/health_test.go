@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -188,18 +190,33 @@ func TestObservePageAfterFailedFirstCheck(t *testing.T) {
 	if n.LastCheck.Error == "" {
 		t.Fatal("failure not recorded in LastCheck")
 	}
-	// a box that did not answer gets its own page: the words say
-	// what happened, the raw reason rides below, and a stale
-	// dashboard never reads as live
+	// a box that did not answer gets the error ceremony: the red
+	// mark and wordmark, the words that say what happened, the raw
+	// reason faint below — and no header: an error page is
+	// chromeless like the loading splash. The moves live in the
+	// footer, where every page's keys live, never in the body
 	got := ansiStrip(view(m))
 	for _, want := range []string{
 		"did not answer", "connection refused",
 		"nothing ran — the box was not touched",
-		"r try again",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("unreachable page missing %q:\n%s", want, got)
 		}
+	}
+	if strings.Contains(got, "mymo / fleet / web-1") {
+		t.Errorf("an error ceremony carries no header:\n%s", got)
+	}
+	// the mark in alarm opens the page
+	if !strings.Contains(got, "█") {
+		t.Errorf("the error ceremony lost its mark:\n%s", got)
+	}
+	// the footer states the moves; the body does not carry buttons
+	if !strings.Contains(got, "r retry") || !strings.Contains(got, "x remove") || !strings.Contains(got, "i inspect") {
+		t.Errorf("the footer lost the error page's moves:\n%s", got)
+	}
+	if strings.Contains(got, "try again   ") {
+		t.Errorf("the body still carries button rows:\n%s", got)
 	}
 	if m.live || m.liveClient != nil {
 		t.Fatal("failed probe must not leave a live session")
@@ -234,16 +251,16 @@ func TestFailedCheckKeepsFactsAndStopsLive(t *testing.T) {
 	if n.Facts.OS != "Ubuntu 24.04.5 LTS" || n.Facts.Docker == "" {
 		t.Fatalf("facts clobbered by failed check: %+v", n.Facts)
 	}
-	got := view(m)
+	got := ansiStrip(view(m))
 	if !strings.Contains(got, "did not answer") {
 		t.Errorf("the failure did not take the page:\n%s", got)
 	}
-	// the page says when the box was last alive and where the
-	// record lives
-	if !strings.Contains(got, "mymo last saw it") || !strings.Contains(got, "i inspect record") {
+	// the page says when the box was last alive; the record itself
+	// is one footer key away
+	if !strings.Contains(got, "mymo last saw it") || !strings.Contains(got, "i inspect") {
 		t.Errorf("unreachable page lost the record pointer:\n%s", got)
 	}
-	if !strings.Contains(got, "nothing ran — the box was not touched") {
+	if !strings.Contains(got, "nothing ran") {
 		t.Errorf("the page forgot its reassurance:\n%s", got)
 	}
 }
@@ -439,5 +456,35 @@ func TestObservePageBadgesAMymoNode(t *testing.T) {
 	// card's checked row, not the badge
 	if strings.Contains(got, "checked just now · mymo node") {
 		t.Errorf("the identity row should not carry the clock:\n%s", got)
+	}
+}
+
+// A state-loading failure renders through the same error ceremony:
+// the red mark, the words, no header — one design for every
+// failure mymo states.
+func TestLoadFailureUsesTheErrorCeremony(t *testing.T) {
+	s := readyStore(t)
+	if err := os.WriteFile(filepath.Join(s.Dir(), "nodes.json"), []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := press(t, New(s), "n") // the fleet page
+
+	got := ansiStrip(view(m))
+	for _, want := range []string{
+		"mymo could not read its local state",
+		"state lives in ~/.mymo as plain JSON",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the load failure page is missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "mymo / fleet") {
+		t.Errorf("an error ceremony carries no header:\n%s", got)
+	}
+	if strings.Contains(got, "│ NODES") {
+		t.Errorf("a failed load must not render the fleet as if it read:\n%s", got)
+	}
+	if !strings.Contains(got, "esc back") {
+		t.Errorf("the footer lost the way out:\n%s", got)
 	}
 }

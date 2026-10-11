@@ -39,37 +39,48 @@ func unreachClass(err string) (title, note string) {
 	}
 }
 
-// unreachableView renders the page: red mark, the box's name and
-// what happened, the raw reason, the reassurance that nothing ran,
-// the last-seen fact, and the moves.
-func (m Model) unreachableView() string {
-	n := m.selNode
-	title, note := unreachClass(m.nodeCheckErr)
-
-	inner := brandIconErr() + "\n\n" +
-		titleStyle.Render(n.Name) + errStyle.Render(" "+title) + "\n\n"
+// errorCeremonyView is mymo's error page — the one design every
+// failure renders through, the loading ceremony's mirror: the mark
+// in alarm, the words centered, no header, no chrome. The headline
+// names what failed; the note explains in plain words; the raw
+// reason rides faint below; the last word is the reassurance that
+// belongs to this failure. The moves live in the footer, where
+// every page's keys live — the body states the failure, the
+// footer states what can be done about it.
+func (m Model) errorCeremonyView(headline, note, raw, lastWord string) string {
+	inner := brandIconErr() + " " + errStyle.Render("mymo") + "\n\n" +
+		headline + "\n\n"
 
 	for _, line := range wrapPlain(note, 62) {
 		inner += textStyle.Render(line) + "\n"
 	}
 	inner += "\n"
 
-	for _, line := range wrapDetail(m.nodeCheckErr, 62) {
+	for _, line := range wrapDetail(raw, 62) {
 		inner += faintStyle.Render(line) + "\n"
 	}
-	inner += "\n" + faintStyle.Render("nothing ran — the box was not touched") + "\n"
-
-	if !n.Facts.CollectedAt.IsZero() {
-		inner += faintStyle.Render("mymo last saw it "+ago(n.Facts.CollectedAt)+" · i inspect record") + "\n"
+	if lastWord != "" {
+		inner += "\n" + faintStyle.Render(lastWord) + "\n"
 	}
-
-	inner += "\n" +
-		accentStyle.Render("r") + subtextStyle.Render(" try again   ") +
-		accentStyle.Render("x") + subtextStyle.Render(" remove   ") +
-		accentStyle.Render("i") + subtextStyle.Render(" inspect record")
 
 	return lipgloss.Place(m.contentWidth, m.contentHeight,
 		lipgloss.Center, lipgloss.Center, inner)
+}
+
+// unreachableView renders the box that did not answer through the
+// error ceremony: name and what happened, the raw reason, the
+// reassurance that nothing ran, the last-seen fact.
+func (m Model) unreachableView() string {
+	n := m.selNode
+	title, note := unreachClass(m.nodeCheckErr)
+
+	headline := titleStyle.Render(n.Name) + errStyle.Render(" "+title)
+	lastWord := "nothing ran — the box was not touched"
+	if !n.Facts.CollectedAt.IsZero() {
+		lastWord = "nothing ran · mymo last saw it " + ago(n.Facts.CollectedAt)
+	}
+
+	return m.errorCeremonyView(headline, note, m.nodeCheckErr, lastWord)
 }
 
 // ago renders a duration since t in the words the page uses.
@@ -149,9 +160,9 @@ type unreachKeymap struct {
 
 func newUnreachKeymap() unreachKeymap {
 	return unreachKeymap{
-		retry:   key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "try again")),
+		retry:   key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "retry")),
 		remove:  key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "remove")),
-		inspect: key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "inspect record")),
+		inspect: key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "inspect")),
 		back:    key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
 		help:    key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 		quit:    key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
@@ -159,9 +170,9 @@ func newUnreachKeymap() unreachKeymap {
 }
 
 func (k unreachKeymap) ShortHelp() []key.Binding {
-	// the page states its own moves (r/x/i) in its body; the footer
-	// carries the chrome — a truncated hint is a dishonest hint
-	return []key.Binding{k.back, k.help, k.quit}
+	// the moves live in the footer, where every page's keys live;
+	// the body states the failure, not the buttons
+	return []key.Binding{k.retry, k.remove, k.inspect, k.back, k.help, k.quit}
 }
 
 func (k unreachKeymap) FullHelp() [][]key.Binding {

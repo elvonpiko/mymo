@@ -1065,7 +1065,24 @@ func (m Model) workspaceView() string {
 // family: mymo's mark and word carry the identity while the work
 // runs, and the breadcrumb waits below.
 func (m Model) showHeader() bool {
-	return m.introDone && m.cur().kind != scHome && !m.loading.active
+	if !m.introDone || m.loading.active {
+		return false
+	}
+	switch s := m.cur(); s.kind {
+	case scHome:
+		return false
+	case scNode:
+		// an error ceremony is chromeless: the mark in alarm opens
+		// the page, and no breadcrumb rides above it
+		if m.nodeCheckErr != "" {
+			return false
+		}
+	case scFleet:
+		if m.loadErr != nil {
+			return false
+		}
+	}
+	return true
 }
 
 // frame wraps the page in the signature mymo border, centering it on
@@ -1188,6 +1205,9 @@ func (m Model) keymap() help.KeyMap {
 	case scFleet:
 		if m.confirmRemove {
 			return newConfirmKeymap()
+		}
+		if m.loadErr != nil {
+			return newSimpleKeymap()
 		}
 		return newFleetKeymap()
 	case scNode:

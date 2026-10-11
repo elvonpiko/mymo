@@ -113,12 +113,10 @@ func (m Model) fleetView() string {
 
 // loadErrView renders a state-loading failure.
 func (m Model) loadErrView() string {
-	inner := errStyle.Render("mymo could not read its local state") + "\n\n" +
-		textStyle.Render(m.loadErr.Error()) + "\n\n" +
-		faintStyle.Render("state lives in ~/.mymo as plain JSON; fix the file and relaunch")
-	panel := panelStyle.Render(inner)
-	return lipgloss.Place(m.contentWidth, m.contentHeight,
-		lipgloss.Center, lipgloss.Center, panel)
+	return m.errorCeremonyView(
+		errStyle.Render("mymo could not read its local state"),
+		"state lives in ~/.mymo as plain JSON — fix the file and relaunch",
+		m.loadErr.Error(), "")
 }
 
 // emptyFleetView renders the node list with nothing in it: what mymo
