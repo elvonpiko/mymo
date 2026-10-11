@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -201,11 +200,11 @@ func runDeploy(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		Copier:   copierFor(sudo),
 	}
 	if app.Type == domain.SourceDockerfile {
-		// the build context is the manifest's directory, resolved
-		// against the project — mymo was run from its root
-		opts.BuildContext, err = filepath.Abs(app.Dockerfile)
+		// "." means the project itself, a file means its directory,
+		// and outside is refused before anything streams
+		opts.BuildContext, err = deploy.ResolveBuildContext(cwd, app.Dockerfile)
 		if err != nil {
-			fmt.Fprintf(stderr, "mymo deploy: resolving the build context: %v\n", err)
+			fmt.Fprintf(stderr, "mymo deploy: %v\n", err)
 			return exitErr
 		}
 	}

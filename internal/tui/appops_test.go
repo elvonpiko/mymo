@@ -13,6 +13,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/elvonpiko/mymo/internal/baseline"
+	"github.com/elvonpiko/mymo/internal/deploy"
 	"github.com/elvonpiko/mymo/internal/domain"
 	"github.com/elvonpiko/mymo/internal/manifest"
 	"github.com/elvonpiko/mymo/internal/state"
@@ -712,4 +713,45 @@ func assertArmedTick(t *testing.T, cmd tea.Cmd, what string) {
 		}
 	}
 	t.Errorf("%s: the ceremony never armed the spinner — the page would freeze", what)
+}
+
+// The report's reason never dies mid-word: a note that does not fit
+// its row wraps underneath, whole, with the rest of its lines
+// folded and counted — "c..." hiding "context deadline exceeded"
+// sent a real deploy's diagnosis down the drain.
+func TestDeployReportKeepsTheWholeReason(t *testing.T) {
+	s := readyStore(t)
+	readyWebNode(t, s)
+	app := sampleApp("web", "web-1")
+	app.Releases = nil
+	node, err := s.GetNode("web-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := New(s)
+	m.push(screen{kind: scDeploy})
+	m.dpStage = dpReport
+	m.dpResult = deploy.Result{
+		App: app,
+		Steps: []deploy.StepResult{
+			{Title: "docker network mymo-net", State: deploy.StepKept, Note: "already exists"},
+			{
+				Title: "dockerfile .",
+				State: deploy.StepFailed,
+				Note:  "transferring the build context failed: ssh: copy to /tmp/mymo-build/web-r1: context deadline exceeded",
+			},
+		},
+	}
+	_ = node
+	out := ansiStrip(view(m))
+	if !strings.Contains(out, "context deadline exceeded") {
+		t.Errorf("the reason was cut:\n%s", out)
+	}
+	if strings.Contains(out, "c...") || strings.Contains(out, "c…") {
+		t.Errorf("the reason still dies mid-word:\n%s", out)
+	}
+	// a short note stays on its row: the happy report keeps its height
+	if !strings.Contains(out, "already exists") {
+		t.Errorf("a fitting note left its row:\n%s", out)
+	}
 }

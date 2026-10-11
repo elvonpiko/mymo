@@ -497,7 +497,12 @@ func (m Model) runDeployEngine() (tea.Model, tea.Cmd) {
 				close(progress)
 				return deployDoneMsg{app: name, node: node.Name, fatal: "the project directory is not resolved"}
 			}
-			opts.BuildContext = filepath.Dir(filepath.Join(m.dpDir, app.Dockerfile))
+			buildCtx, cerr := deploy.ResolveBuildContext(m.dpDir, app.Dockerfile)
+			if cerr != nil {
+				close(progress)
+				return deployDoneMsg{app: name, node: node.Name, fatal: cerr.Error()}
+			}
+			opts.BuildContext = buildCtx
 		}
 		res := deploy.Deploy(ctx, runner, app, opts)
 		close(progress)
@@ -741,10 +746,26 @@ func (m Model) deployReportView() string {
 			word, style = "BLOCKED", warnStyle
 		}
 		row := style.Width(8).Render(word) + textStyle.Render(s.Title)
-		if s.Note != "" {
-			row += " " + subtextStyle.Render(shorten(s.Note, m.stageW-10-lipgloss.Width(s.Title)))
+		budget := m.stageW - 10 - lipgloss.Width(s.Title)
+		if s.Note != "" && lipgloss.Width(s.Note) <= budget {
+			row += " " + subtextStyle.Render(s.Note)
 		}
 		inner += row + "\n"
+		if s.Note != "" && lipgloss.Width(s.Note) > budget {
+			lines := wrapDetail(s.Note, m.stageW-12)
+			folded := 0
+			if len(lines) > 2 {
+				folded = len(lines) - 2
+				lines = lines[:2]
+			}
+			for _, ln := range lines {
+				inner += style.Width(8).Render("") + subtextStyle.Render(ln) + "\n"
+			}
+			if folded > 0 {
+				inner += style.Width(8).Render("") + faintStyle.Render(
+					"… "+fmt.Sprint(folded)+" "+plural("more line", folded)+" folded") + "\n"
+			}
+		}
 	}
 	inner += "\n"
 	if m.dpResult.OK {
