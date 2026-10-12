@@ -287,7 +287,7 @@ func (m Model) appDetailView(s screen) string {
 	if app.Type == domain.SourceDockerfile {
 		artifact = "Dockerfile in " + app.Dockerfile
 	}
-	expose := "internal only · port " + fmt.Sprint(app.Port)
+	expose := "internal only · " + app.Name + ":" + fmt.Sprint(app.Port) + " · no public address"
 	exposeStyle := subtextStyle
 	if app.Domain != "" {
 		expose = "https://" + app.Domain + " · port " + fmt.Sprint(app.Port)

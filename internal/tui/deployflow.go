@@ -793,7 +793,10 @@ func (m Model) deployReportView() string {
 			inner += line + "\n" +
 				faintStyle.Render("tls is issued once the name resolves to this box — caddy keeps retrying on its own") + "\n"
 		} else {
-			inner += line + "\n"
+			inner += line + "\n" +
+				strings.Join(wrapPlain("reachable inside the network as "+m.dpResult.App.Name+":"+
+					fmt.Sprint(m.dpResult.App.Port), m.stageW-4), "\n") + "\n" +
+				strings.Join(wrapPlain("nothing is exposed publicly — add domain: <your name> to mymo.yaml and deploy again for https through caddy", m.stageW-4), "\n") + "\n"
 		}
 		inner += faintStyle.Render("enter opens the app")
 	} else if _, serving := m.dpResult.App.ActiveRelease(); serving {

@@ -798,3 +798,53 @@ func TestDeployReportNamesWhoseFixItIs(t *testing.T) {
 		t.Errorf("a registry refusal should name the FROM reference:\n%s", out)
 	}
 }
+
+// An internal-only deploy states where the app answers and how to
+// open it up: the network address on the report, and the domain
+// path spelled out — the operator never has to ask "how do I see
+// it now".
+func TestInternalDeployStatesTheAddressAndTheDomainPath(t *testing.T) {
+	s := readyStore(t)
+	readyWebNode(t, s)
+	app := sampleApp("web", "web-1")
+	app.Domain = ""
+	app.Releases = nil
+	m := New(s)
+	m.push(screen{kind: scDeploy})
+	m.dpStage = dpReport
+	m.dpResult = deploy.Result{App: app, OK: true}
+	out := ansiStrip(view(m))
+	for _, want := range []string{
+		"reachable inside the network as web:8080",
+		"nothing is exposed publicly",
+		"add domain: <your name> to mymo.yaml",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the report is missing %q:\n%s", want, out)
+		}
+	}
+
+	// the app page carries the same address and the same honesty
+	internal := sampleApp("web", "web-1")
+	internal.Domain = ""
+	seedApp(t, s, internal)
+	m = press(t, New(s), "a", "enter")
+	out = ansiStrip(view(m))
+	if !strings.Contains(out, "internal only · web:8080 · no public address") {
+		t.Errorf("the app page does not state the internal address:\n%s", out)
+	}
+
+	// a domain flips the story to the public one
+	internal.Domain = "web.example.com"
+	if err := s.UpdateApp(internal); err != nil {
+		t.Fatal(err)
+	}
+	m = press(t, New(s), "a", "enter")
+	out = ansiStrip(view(m))
+	if !strings.Contains(out, "https://web.example.com") {
+		t.Errorf("a domained app should show its address:\n%s", out)
+	}
+	if strings.Contains(out, "no public address") {
+		t.Errorf("a domained app is not internal-only:\n%s", out)
+	}
+}
