@@ -104,12 +104,18 @@ func TestNodeAppsPageFiltersToOneNode(t *testing.T) {
 	seedApp(t, s, sampleApp("api", "web-1"))
 	seedApp(t, s, sampleApp("celery", "web-2"))
 
+	// the applications action exists only where mymo set the box
+	// up: make web-1 a managed node, then the probe answers and the
+	// ACTIONS list — down once past SSH, into Applications
+	if n, err := s.GetNode("web-1"); err == nil {
+		n.Bootstrap.State = domain.BootstrapReady
+		if err := s.UpdateNode(n); err != nil {
+			t.Fatal(err)
+		}
+	}
 	m := press(t, New(s), "n", "enter")
-	// the probe answers, then the ACTIONS list: down twice to
-	// Applications — setup leads the list on an unmanaged box
 	m = observe(t, m, "web-1", richSnapshot("web-1"))
 	m = driveKeys(t, m,
-		tea.KeyPressMsg{Code: tea.KeyDown},
 		tea.KeyPressMsg{Code: tea.KeyDown},
 		tea.KeyPressMsg{Code: tea.KeyEnter},
 	)

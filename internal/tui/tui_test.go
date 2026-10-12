@@ -245,8 +245,9 @@ func TestNodeActionsNavigation(t *testing.T) {
 	s := readyStore(t)
 	seedNode(t, s, "web-1")
 
-	// Actions in display order for an unmanaged box: Set up this
-	// node, SSH, Applications, Inspect record, Remove. SSH execs a
+	// Actions in display order for an unmanaged box: Initial setup,
+	// SSH, Inspect record, Remove — and no Applications, because
+	// mymo manages nothing on a box it never set up. SSH execs a
 	// real ssh client and Set up starts a real probe, so the journey
 	// walks the navigable screens — after proving the setup action
 	// is offered first.
@@ -259,23 +260,20 @@ func TestNodeActionsNavigation(t *testing.T) {
 	if got := view(m); !strings.Contains(got, "Initial setup") {
 		t.Fatalf("an unmanaged box must offer setup first:\n%s", got)
 	}
+	if got := view(m); strings.Contains(got, "Applications") {
+		t.Fatalf("an unmanaged box has no mymo applications to list:\n%s", got)
+	}
 
-	m = press(t, m, "down", "down", "enter") // action 2: Applications
-	if got := view(m); !strings.Contains(got, "no mymo-managed applications") {
-		t.Fatalf("applications action missing:\n%s", got)
+	m = press(t, m, "down", "down", "enter") // action 2: Inspect record
+	if got := view(m); !strings.Contains(got, "Stored record") {
+		t.Fatalf("inspect action missing:\n%s", got)
 	}
 	m = press(t, m, "esc")
 	if got := view(m); !strings.Contains(got, "Inspect record") {
 		t.Fatalf("esc did not return to the observe page:\n%s", got)
 	}
 
-	m = press(t, m, "down", "enter") // action 3: Inspect (index preserved at 2)
-	if got := view(m); !strings.Contains(got, "Stored record") {
-		t.Fatalf("inspect action missing:\n%s", got)
-	}
-	m = press(t, m, "esc")
-
-	m = press(t, m, "down", "enter") // action 4: Remove (index preserved at 3)
+	m = press(t, m, "down", "enter") // action 3: Remove (index preserved at 2 → 3)
 	if got := view(m); !strings.Contains(got, "not touched") {
 		t.Fatalf("remove confirmation missing:\n%s", got)
 	}
@@ -298,9 +296,9 @@ func TestRemoveNodeFlow(t *testing.T) {
 		snap:   facts.Node{Hostname: "web-1", CollectedAt: time.Now()},
 		client: ssh.New(domain.Node{}, ""),
 	})
-	// five actions for an unmanaged box: Set up, SSH, Applications,
-	// Inspect, Remove — four downs land on Remove.
-	m = press(t, m, "down", "down", "down", "down", "enter")
+	// four actions for an unmanaged box: Set up, SSH, Inspect,
+	// Remove — three downs land on Remove.
+	m = press(t, m, "down", "down", "down", "enter")
 	// the card states everything the goodbye forgets, by name
 	if got := view(m); !strings.Contains(got, "api") || !strings.Contains(got, "nothing running on any box changes") {
 		t.Fatalf("the removal card must name the applications:\n%s", got)

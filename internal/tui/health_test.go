@@ -314,9 +314,10 @@ func TestInspectShowsRecordAndFacts(t *testing.T) {
 	nodeWithFacts(t, s, "web-1")
 	m := press(t, New(s), "n", "enter")
 	m = observe(t, m, "web-1", richSnapshot("web-1"))
-	// three downs land on Inspect record (fourth action — setup
-	// leads the list on an unmanaged box)
-	m = press(t, m, "down", "down", "down", "enter")
+	// two downs land on Inspect record (third action — setup leads
+	// the list on an unmanaged box, and Applications waits for the
+	// setup that earns it)
+	m = press(t, m, "down", "down", "enter")
 	got := view(m)
 	for _, want := range []string{
 		"Stored record", "Discovered", "Ubuntu 24.04.5 LTS", "just now", "last check", "OK just now",
@@ -359,15 +360,15 @@ func TestObservePageSectionsBreathe(t *testing.T) {
 		}
 	}
 	// SYSTEM and LIVE keep their titles; the heading badge carries
-	// the mymo state; all five actions survive the 19-row floor
+	// the mymo state; all four actions survive the 19-row floor
 	if !strings.Contains(lines[5], "SYSTEM") || !strings.Contains(lines[12], "LIVE") {
 		t.Fatalf("section layout shifted:\n%s", strings.Join(lines, "\n"))
 	}
 	if !strings.Contains(lines[4], "not a mymo node") {
 		t.Errorf("the heading lost the mymo state: %q", lines[4])
 	}
-	if !strings.Contains(lines[21], "Remove") {
-		t.Errorf("last action clipped at the floor: %q", lines[21])
+	if !strings.Contains(lines[20], "Remove") {
+		t.Errorf("last action clipped at the floor: %q", lines[20])
 	}
 	// uptime is motion: it lives in the LIVE card, never in SYSTEM
 	for _, r := range lines[5:11] {

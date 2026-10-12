@@ -49,14 +49,21 @@ func actionDefs(n domain.Node) []actionItem {
 	defs := make([]actionItem, 0, 5)
 	if !nodeIsManaged(n) {
 		defs = append(defs, actionItem{actSetup, "Initial setup",
-			"check · plan · apply — turn this box into a mymo node"})
+			"check · plan · apply — a mymo node, ready to deploy apps"})
 	}
-	return append(defs,
-		actionItem{actSSH, "SSH", "open an interactive session on the node"},
-		actionItem{actApps, "Applications", "list applications on this node"},
-		actionItem{actInspect, "Inspect record", "the full stored state for this node"},
-		actionItem{actRemove, "Remove", "remove this node from mymo"},
-	)
+	// SSH leads the managed list, and applications slot in after it
+	// — the same position setup hands them to. Applications are what
+	// mymo manages on a box, and it manages nothing on a box it
+	// never set up: the action arrives with the setup that earns it
+	rest := []actionItem{
+		{actSSH, "SSH", "open an interactive session on the node"},
+		{actInspect, "Inspect record", "the full stored state for this node"},
+		{actRemove, "Remove", "remove this node from mymo"},
+	}
+	if nodeIsManaged(n) {
+		rest = append(rest[:1], append([]actionItem{{actApps, "Applications", "list applications on this node"}}, rest[1:]...)...)
+	}
+	return append(defs, rest...)
 }
 
 // actionItem adapts a node action for the actions list.

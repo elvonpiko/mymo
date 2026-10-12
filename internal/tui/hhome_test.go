@@ -27,16 +27,17 @@ func TestHomeKeyReturnsFromEverywhere(t *testing.T) {
 		t.Fatal("the stack leaked into the home page")
 	}
 
-	// from deep inside a node — its applications screen
+	// from deep inside a node — its inspect record screen
+	// (an unmanaged box has no applications action to walk into)
 	m = press(t, m, "n", "enter")
 	m = observe(t, m, "web-1", richSnapshot("web-1"))
-	m = press(t, m, "down", "down", "enter") // open Applications
-	if m.cur().kind != scNodeApps {
-		t.Fatalf("not on the apps screen: %v", m.cur().kind)
+	m = press(t, m, "down", "down", "enter") // open Inspect record
+	if m.cur().kind != scNodeInspect {
+		t.Fatalf("not on the inspect screen: %v", m.cur().kind)
 	}
 	m = press(t, m, "h")
 	if m.cur().kind != scHome {
-		t.Fatalf("h did not come home from the apps screen: %v", m.cur().kind)
+		t.Fatalf("h did not come home from the inspect screen: %v", m.cur().kind)
 	}
 
 	// the home page still works afterwards — h is a clean cut, not
