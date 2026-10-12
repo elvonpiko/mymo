@@ -45,7 +45,7 @@ func (r *cannedAppRunner) Run(_ context.Context, name string, args ...string) (s
 		return r.logs, 0, nil
 	case strings.HasPrefix(joined, "docker restart"):
 		return "mymo-api-r2\n", 0, nil
-	case strings.HasPrefix(joined, "docker inspect --format {{.NetworkSettings"):
+	case strings.HasPrefix(joined, `docker inspect --format {{(index .NetworkSettings`):
 		return "172.20.0.41\n", 0, nil // the pinned address on the network
 	}
 	return "", 0, nil
@@ -405,7 +405,7 @@ func (r *deployCannedRunner) Run(_ context.Context, name string, args ...string)
 	if strings.HasPrefix(joined, "docker ps") {
 		return "mymo-web-r1\n", 0, nil // the container answers its own name
 	}
-	if strings.HasPrefix(joined, "docker inspect --format {{.NetworkSettings") {
+	if strings.HasPrefix(joined, `docker inspect --format {{(index .NetworkSettings`) {
 		return "172.20.0.21\n", 0, nil // the pinned address on the network
 	}
 	if strings.HasPrefix(joined, "systemctl is-active caddy") {

@@ -506,6 +506,14 @@ func probeHealth(ctx context.Context, r Runner, o Options, app domain.App, conta
 	return "", fmt.Errorf("%s never answered", url)
 }
 
+// inspectIPTemplate is docker's own Go template for the address
+// question. The network's name carries a hyphen, and a hyphen is
+// not a legal identifier in a template field — the index form asks
+// the map by its quoted key, the shape docker's parser accepts.
+func inspectIPTemplate() string {
+	return `{{(index .NetworkSettings.Networks "` + NetworkName + `").IPAddress}}`
+}
+
 // containerIP asks docker for the container's address on mymo's
 // network. The host shares the bridge, so this address is the one
 // both worlds reach: caddy on the host dials it, containers dial
@@ -513,7 +521,7 @@ func probeHealth(ctx context.Context, r Runner, o Options, app domain.App, conta
 // nothing honest to point caddy at.
 func containerIP(ctx context.Context, r Runner, o Options, container string) (string, error) {
 	out, code, err := runW(ctx, r, o, "docker", "inspect", "--format",
-		"{{.NetworkSettings.Networks."+NetworkName+".IPAddress}}", container)
+		inspectIPTemplate(), container)
 	if err != nil || code != 0 {
 		return "", fmt.Errorf("could not find %s's address on the network: %s", container, reasonLine(out))
 	}

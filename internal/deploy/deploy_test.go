@@ -168,14 +168,14 @@ func goodOpts() Options {
 // path, plus the digests for two release tags.
 func nodeRunner() *fakeRunner {
 	r := &fakeRunner{responses: map[string]string{
-		"docker image inspect --format {{.Id}} ghcr.io/x/api:1.2.3":                            "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n",
-		"docker image inspect --format {{.Id}} mymo/api:r1":                                    "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n",
-		"docker image inspect --format {{.Id}} mymo/api:r2":                                    "sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210\n",
-		"docker image inspect --format {{.Id}} mymo/api:r3":                                    "sha256:1111111111111111111111111111111111111111111111111111111111111111\n",
-		"systemctl is-active caddy":                                                            "active\n",
-		"docker inspect --format {{.NetworkSettings.Networks.mymo-net.IPAddress}} mymo-api-r1": "172.20.0.11\n",
-		"docker inspect --format {{.NetworkSettings.Networks.mymo-net.IPAddress}} mymo-api-r2": "172.20.0.12\n",
-		"docker inspect --format {{.NetworkSettings.Networks.mymo-net.IPAddress}} mymo-api-r3": "172.20.0.13\n",
+		"docker image inspect --format {{.Id}} ghcr.io/x/api:1.2.3":                                        "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n",
+		"docker image inspect --format {{.Id}} mymo/api:r1":                                                "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n",
+		"docker image inspect --format {{.Id}} mymo/api:r2":                                                "sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210\n",
+		"docker image inspect --format {{.Id}} mymo/api:r3":                                                "sha256:1111111111111111111111111111111111111111111111111111111111111111\n",
+		"systemctl is-active caddy":                                                                        "active\n",
+		"docker inspect --format {{(index .NetworkSettings.Networks \"mymo-net\").IPAddress}} mymo-api-r1": "172.20.0.11\n",
+		"docker inspect --format {{(index .NetworkSettings.Networks \"mymo-net\").IPAddress}} mymo-api-r2": "172.20.0.12\n",
+		"docker inspect --format {{(index .NetworkSettings.Networks \"mymo-net\").IPAddress}} mymo-api-r3": "172.20.0.13\n",
 	}, codes: map[string]int{}}
 	// the network is absent the first time — the deploy creates it
 	r.codes["docker network inspect mymo-net"] = 1

@@ -60,7 +60,7 @@ func happyNodeRunner() *cliRunner {
 func happyHealth(r *cliRunner, container string) {
 	r.responses[fmt.Sprintf("sudo -n docker run --rm --network mymo-net busybox:1.36 wget -q -T 2 -O /dev/null http://%s:8080/healthz", container)] = ""
 	r.responses[fmt.Sprintf("sudo -n docker ps --filter name=%s --filter status=running --format {{.Names}}", container)] = container + "\n"
-	r.responses[fmt.Sprintf("sudo -n docker inspect --format {{.NetworkSettings.Networks.mymo-net.IPAddress}} %s", container)] = "172.20.0.31\n"
+	r.responses[fmt.Sprintf("sudo -n docker inspect --format {{(index .NetworkSettings.Networks \"mymo-net\").IPAddress}} %s", container)] = "172.20.0.31\n"
 }
 
 // writeProject drops a mymo.yaml into a fresh directory and chdirs

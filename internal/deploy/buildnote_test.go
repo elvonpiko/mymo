@@ -1,7 +1,9 @@
 package deploy
 
 import (
+	"bytes"
 	"context"
+	"text/template"
 
 	"github.com/elvonpiko/mymo/internal/domain"
 	"strings"
@@ -148,5 +150,31 @@ ERROR: failed to build: failed to solve: process "/bin/sh -c go build ." did not
 	}
 	if got := OwnTheBuildFailure(note); !strings.Contains(got, "inside the project") {
 		t.Errorf("the ownership sentence misread the layer:\n%s", got)
+	}
+}
+
+// The address question's template is docker's own Go template, and
+// docker parses it at run time — a broken template is a broken
+// deploy on every box. The hyphen in mymo-net is not a legal
+// template identifier; the index form is. This test parses AND
+// executes the exact template the engine sends, against docker's
+// inspect shape, so a bad character can never reach a node again.
+func TestInspectIPTemplateParsesAndAnswers(t *testing.T) {
+	type network struct{ IPAddress string }
+	var out bytes.Buffer
+	tpl := template.Must(template.New("ip").Parse(inspectIPTemplate()))
+	if err := tpl.Execute(&out, struct {
+		NetworkSettings struct {
+			Networks map[string]network
+		}
+	}{NetworkSettings: struct {
+		Networks map[string]network
+	}{Networks: map[string]network{
+		NetworkName: {IPAddress: "172.20.0.5"},
+	}}}); err != nil {
+		t.Fatalf("the template does not execute: %v", err)
+	}
+	if got := out.String(); got != "172.20.0.5" {
+		t.Errorf("the template answered %q, want the address", got)
 	}
 }
