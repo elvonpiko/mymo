@@ -54,6 +54,20 @@ ERROR: failed to build: failed to solve: process "/bin/sh -c go build ." did not
 		t.Errorf("the remedy line is missing:\n%s", note)
 	}
 
+	// the registry-refusal shape from a live deploy: the banner
+	// above the ERROR is not a cause, and the 403 is the reason
+	regOut := `#0 building with "default" instance using docker driver
+#1 resolving source 0.0 (dockerfile://Dockerfile)
+ERROR: unexpected status from HEAD request to https://cgr.dev/chainguard/static/manifests/latest: 403 Forbidden
+`
+	note = buildFailNote(regOut)
+	if !strings.Contains(note, "403 Forbidden") {
+		t.Errorf("the registry refusal is missing:\n%s", note)
+	}
+	if strings.Contains(note, "building with") {
+		t.Errorf("BuildKit's banner became the cause:\n%s", note)
+	}
+
 	// a build with an ERROR and no cause lines still names the
 	// failing command
 	bare := "#5 ERROR: process \"/bin/sh -c make\" did not complete successfully: exit code: 2\n"
@@ -80,6 +94,11 @@ func TestOwnTheBuildFailure(t *testing.T) {
 	got = OwnTheBuildFailure("main.go:18:2: missing go.sum entry for module providing package github.com/go-chi/chi/v5")
 	if !strings.Contains(got, "inside the project") || !strings.Contains(got, "the project's") {
 		t.Errorf("a source failure is the project's, not the node's:\n%s", got)
+	}
+	// a registry's refusal names the FROM reference, not the code
+	got = OwnTheBuildFailure("ERROR: unexpected status from HEAD request to https://cgr.dev/chainguard/static/manifests/latest: 403 Forbidden")
+	if !strings.Contains(got, "the registry refused the image") || !strings.Contains(got, "FROM reference") {
+		t.Errorf("a registry refusal should name the FROM reference:\n%s", got)
 	}
 }
 

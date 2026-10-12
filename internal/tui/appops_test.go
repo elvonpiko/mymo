@@ -789,4 +789,12 @@ func TestDeployReportNamesWhoseFixItIs(t *testing.T) {
 	if !strings.Contains(out, "the box's docker networking, not the app's code") {
 		t.Errorf("a network failure should be named the box's:\n%s", out)
 	}
+
+	// a registry's refusal names the FROM reference — a third
+	// layer, stated as plainly as the other two
+	m.dpResult.Steps[0].Note = "ERROR: unexpected status from HEAD request to https://cgr.dev/chainguard/static/manifests/latest: 403 Forbidden"
+	out = ansiStrip(view(m))
+	if !strings.Contains(out, "the registry refused the image the Dockerfile names") {
+		t.Errorf("a registry refusal should name the FROM reference:\n%s", out)
+	}
 }

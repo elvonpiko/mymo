@@ -31,7 +31,8 @@ func buildFailNote(out string) string {
 		}
 		plain := stripStepPrefix(raw)
 		if plain == "" || strings.HasPrefix(plain, "[") || strings.HasPrefix(plain, "DONE") ||
-			strings.HasPrefix(plain, "CACHED") || strings.HasPrefix(plain, "ERROR") {
+			strings.HasPrefix(plain, "CACHED") || strings.HasPrefix(plain, "ERROR") ||
+			strings.HasPrefix(plain, "building with") {
 			break
 		}
 		// collected backward, shown in the order docker said them
@@ -83,6 +84,15 @@ func OwnTheBuildFailure(note string) string {
 	for _, w := range network {
 		if strings.Contains(l, w) {
 			return "the build could not reach the internet from the node — the box's docker networking, not the app's code"
+		}
+	}
+	registry := []string{
+		"403", "forbidden", "unauthorized", "pull access denied",
+		"authentication required", "may require", "manifest unknown",
+	}
+	for _, w := range registry {
+		if strings.Contains(l, w) {
+			return "the registry refused the image the Dockerfile names — the FROM reference or its registry login; not the code, not the node, not mymo"
 		}
 	}
 	return "the failure is inside the project's build — its Dockerfile and its source; the fix is the project's, not the node's"
