@@ -390,7 +390,7 @@ func Deploy(ctx context.Context, r Runner, app domain.App, o Options) Result {
 			return fail(verify, "caddy is not active after the reload", "verify")
 		}
 		verify.Note = "the release serves; caddy reloaded the route cleanly"
-		if pub := probePublic(ctx, r, o, app); pub != "" {
+		if pub := probeEdge(ctx, r, o, app); pub != "" {
 			verify.Note = pub
 		}
 	}
@@ -532,17 +532,18 @@ func containerIP(ctx context.Context, r Runner, o Options, container string) (st
 	return ip, nil
 }
 
-// probePublic asks the browser's question once, from the box
-// itself: does https://<domain> answer? A certificate still being
-// issued — the name was pointed at the box minutes ago — is the
-// expected not-yet, and the note says so instead of letting a green
-// report claim a path that is still dark.
-func probePublic(ctx context.Context, r Runner, o Options, app domain.App) string {
+// probeEdge asks the browser's question from the box itself: does
+// https://<domain> answer? When it does, the note says what was
+// proven — from the box; the world's path is past the box. When it
+// does not, the box's firewall is read and the wall is named where
+// it stands: the box's own rules, or the provider's door mymo
+// cannot see past.
+func probeEdge(ctx context.Context, r Runner, o Options, app domain.App) string {
 	url := "https://" + app.Domain
 	for attempt := 0; attempt < o.HealthAttempts; attempt++ {
 		if _, code, err := runW(ctx, r, o, "docker", "run", "--rm", "--network", "host",
 			HealthImage, "wget", "-q", "-T", "3", "-O", "/dev/null", "--no-check-certificate", url); err == nil && code == 0 {
-			return "the release serves; " + url + " answers publicly"
+			return "the release serves; " + url + " answers — verified from the box"
 		}
 		select {
 		case <-ctx.Done():
@@ -550,7 +551,47 @@ func probePublic(ctx context.Context, r Runner, o Options, app domain.App) strin
 		case <-time.After(o.HealthPause):
 		}
 	}
-	return "the release serves inside the network; " + url + " does not answer publicly yet — tls is issued once the name resolves to this box, and caddy keeps retrying on its own"
+	return url + " " + firewallTruth(ctx, r, o)
+}
+
+// firewallTruth reads the box's own firewall and states which side
+// of the wire the wall sits on. The provider's firewall is
+// invisible from the box — mymo names the layer it cannot verify
+// instead of implying the page loads.
+func firewallTruth(ctx context.Context, r Runner, o Options) string {
+	out, code, err := runW(ctx, r, o, "ufw", "status")
+	if err != nil || code != 0 || !strings.Contains(out, "Status:") {
+		return "does not answer yet — tls issues once its challenge can reach this box, and caddy keeps retrying on its own"
+	}
+	if !strings.Contains(out, "Status: active") {
+		return "does not answer from the box — the box's firewall is off, so the block is between it and the internet; the provider's firewall is the next place to open"
+	}
+	allows := map[string]bool{}
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		allowed := false
+		for _, f := range fields[1:] {
+			if strings.EqualFold(f, "ALLOW") {
+				allowed = true
+			}
+		}
+		if !allowed {
+			continue
+		}
+		if strings.HasPrefix(fields[0], "80/") {
+			allows["80"] = true
+		}
+		if strings.HasPrefix(fields[0], "443/") {
+			allows["443"] = true
+		}
+	}
+	if !allows["80"] || !allows["443"] {
+		return "does not answer yet — the box's firewall does not allow 80/443, so caddy cannot be reached; run mymo's initial setup again, or allow them by hand"
+	}
+	return "does not answer from the box — the box allows the edge; if the world cannot connect, the block is outside the box, and that door is the provider's"
 }
 
 // imageDigest resolves a reference to its immutable sha256 identity.

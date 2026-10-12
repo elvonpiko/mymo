@@ -771,9 +771,12 @@ func (m Model) deployReportView() string {
 		if s.Note != "" && lipgloss.Width(s.Note) > budget {
 			lines := wrapDetail(s.Note, m.stageW-12)
 			folded := 0
-			if len(lines) > 2 {
-				folded = len(lines) - 2
-				lines = lines[:2]
+			// three rows before the fold: the ownership sentences
+			// end with whose fix it is, and the tail is the part
+			// worth reading
+			if len(lines) > 3 {
+				folded = len(lines) - 3
+				lines = lines[:3]
 			}
 			for _, ln := range lines {
 				inner += style.Width(8).Render("") + subtextStyle.Render(ln) + "\n"

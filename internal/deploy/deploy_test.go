@@ -254,8 +254,10 @@ func TestPublicNotYetIsStatedNotClaimed(t *testing.T) {
 	r := nodeRunner()
 	firstDeployHealth(r, "mymo-api-r1")
 	// the public probe from the host never connects: the cert is
-	// still issuing
+	// still issuing, and the box's firewall allows the edge — so
+	// the wall is named outside the box, at the provider's door
 	r.codes["docker run --rm --network host busybox:1.36 wget -q -T 3 -O /dev/null --no-check-certificate https://api.example.com"] = 1
+	r.responses["ufw status"] = "Status: active\n\nTo                         Action      From\n--                         ------      ----\n22/tcp                     ALLOW       Anywhere\n80/tcp                     ALLOW       Anywhere\n443/tcp                    ALLOW       Anywhere\n"
 	opts := goodOpts()
 	res := Deploy(context.Background(), r, app, opts)
 	if !res.OK {
@@ -267,9 +269,51 @@ func TestPublicNotYetIsStatedNotClaimed(t *testing.T) {
 			note = st.Note
 		}
 	}
-	if !strings.Contains(note, "does not answer publicly yet") ||
-		!strings.Contains(note, "tls is issued once the name resolves to this box") {
-		t.Errorf("the verify note must state the not-yet:\n%s", note)
+	if !strings.Contains(note, "the box allows the edge") ||
+		!strings.Contains(note, "the block is outside the box, and that door is the provider's") {
+		t.Errorf("the verify note must name where the wall stands:\n%s", note)
+	}
+}
+
+// The box's own firewall is the one layer mymo can read, and each
+// state says a different fix: missing rules are mymo's baseline's
+// business, an off firewall points past the box, and an unreadable
+// one does not pretend.
+func TestFirewallTruthNamesTheLayer(t *testing.T) {
+	app := imageApp()
+	opts := goodOpts()
+
+	// missing 80/443: the one case the baseline itself answers for
+	r := nodeRunner()
+	r.codes["docker run --rm --network host busybox:1.36 wget -q -T 3 -O /dev/null --no-check-certificate https://api.example.com"] = 1
+	r.responses["ufw status"] = "Status: active\n\nTo                         Action      From\n--                         ------      ----\n22/tcp                     ALLOW       Anywhere\n"
+	if got := probeEdge(context.Background(), r, opts, app); !strings.Contains(got, "does not allow 80/443") ||
+		!strings.Contains(got, "run mymo's initial setup again") {
+		t.Errorf("missing edge rules should name the baseline's business:\n%s", got)
+	}
+
+	// an off firewall: the block is not the box's
+	r = nodeRunner()
+	r.codes["docker run --rm --network host busybox:1.36 wget -q -T 3 -O /dev/null --no-check-certificate https://api.example.com"] = 1
+	r.responses["ufw status"] = "Status: inactive\n"
+	if got := probeEdge(context.Background(), r, opts, app); !strings.Contains(got, "the box's firewall is off") ||
+		!strings.Contains(got, "the provider's firewall is the next place to open") {
+		t.Errorf("an off firewall should point past the box:\n%s", got)
+	}
+
+	// an unreadable firewall: the retry story, no claims
+	r = nodeRunner()
+	r.codes["docker run --rm --network host busybox:1.36 wget -q -T 3 -O /dev/null --no-check-certificate https://api.example.com"] = 1
+	if got := probeEdge(context.Background(), r, opts, app); !strings.Contains(got, "caddy keeps retrying") {
+		t.Errorf("an unreadable firewall keeps the honest retry story:\n%s", got)
+	}
+
+	// a v6 rule line counts too: ufw prints both forms
+	r = nodeRunner()
+	r.codes["docker run --rm --network host busybox:1.36 wget -q -T 3 -O /dev/null --no-check-certificate https://api.example.com"] = 1
+	r.responses["ufw status"] = "Status: active\n\nTo                         Action      From\n--                         ------      ----\n80/tcp (v6)                ALLOW       Anywhere (v6)\n443/tcp (v6)               ALLOW       Anywhere (v6)\n"
+	if got := probeEdge(context.Background(), r, opts, app); !strings.Contains(got, "the box allows the edge") {
+		t.Errorf("v6 rule lines should count as allowed:\n%s", got)
 	}
 }
 
