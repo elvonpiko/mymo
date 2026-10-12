@@ -29,6 +29,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"strings"
 	"time"
 
@@ -105,6 +106,11 @@ type Options struct {
 	HealthAttempts int
 	// HealthPause spaces health attempts.
 	HealthPause time.Duration
+	// NodeHost is the address mymo itself reaches the box by. The
+	// edge probe uses it to check the two agreements the public
+	// path needs: the domain resolves to this box, and the box
+	// carries its public address on its own interfaces.
+	NodeHost string
 }
 
 // defaults fills the fields a caller may leave unset.
@@ -551,7 +557,62 @@ func probeEdge(ctx context.Context, r Runner, o Options, app domain.App) string 
 		case <-time.After(o.HealthPause):
 		}
 	}
-	return url + " " + firewallTruth(ctx, r, o)
+	return url + " " + edgeTruth(ctx, r, o, app)
+}
+
+// edgeTruth walks the dark public path layer by layer and states
+// the first wall it can name: the name must resolve to this box,
+// the box must carry its public address, its own firewall must
+// allow the edge — and past all three, the wall is the provider's,
+// which mymo cannot see.
+func edgeTruth(ctx context.Context, r Runner, o Options, app domain.App) string {
+	host := o.NodeHost
+	resolved := resolveFromBox(ctx, r, o, app)
+	if resolved == "" {
+		if host != "" {
+			return "does not resolve from the box yet — dns takes minutes to travel; the record must point at this box (" + host + ")"
+		}
+		return "does not resolve from the box yet — dns takes minutes to travel, and caddy keeps retrying on its own"
+	}
+	if host != "" && net.ParseIP(host) != nil && net.ParseIP(resolved) != nil && resolved != host {
+		return "resolves to " + resolved + ", not this box (" + host + ") — the record points at a different machine; point it here, then deploy again"
+	}
+	if host != "" && net.ParseIP(host) != nil && !hostOnInterfaces(ctx, r, o, host) {
+		return "resolves to this box, but the box's interfaces do not carry " + host + " — the provider maps that address (nat); if its mapping skips 80/443 the world cannot arrive, and that table is the provider's to open"
+	}
+	return firewallTruth(ctx, r, o)
+}
+
+// resolveFromBox asks the box's own resolver where the name points
+// today. The answer is the last address busybox prints — the
+// server comes first, the answer last.
+func resolveFromBox(ctx context.Context, r Runner, o Options, app domain.App) string {
+	out, code, err := runW(ctx, r, o, "docker", "run", "--rm", "--network", "host",
+		HealthImage, "nslookup", app.Domain)
+	if err != nil || code != 0 {
+		return ""
+	}
+	answer := ""
+	for _, line := range strings.Split(out, "\n") {
+		for _, field := range strings.Fields(line) {
+			if ip := net.ParseIP(strings.TrimSuffix(field, ",")); ip != nil && ip.To4() != nil {
+				answer = ip.String()
+			}
+		}
+	}
+	return answer
+}
+
+// hostOnInterfaces reports whether the box carries the address mymo
+// reaches it by on one of its own interfaces. A nat vps does not —
+// its public address exists only in the provider's translation,
+// which is the one wall no os rule can move.
+func hostOnInterfaces(ctx context.Context, r Runner, o Options, host string) bool {
+	out, code, err := runW(ctx, r, o, "ip", "-4", "addr", "show")
+	if err != nil || code != 0 {
+		return true // unreadable is not accused
+	}
+	return strings.Contains(out, "inet "+host+"/")
 }
 
 // firewallTruth reads the box's own firewall and states which side

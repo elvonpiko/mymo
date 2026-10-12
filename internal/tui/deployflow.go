@@ -491,6 +491,10 @@ func (m Model) runDeployEngine() (tea.Model, tea.Cmd) {
 			Sudo:     sudo,
 			Progress: func(line string) { progress <- line },
 			Copier:   copier,
+			// the address mymo itself reaches the box by — the
+			// edge probe checks the domain and the interfaces
+			// against it
+			NodeHost: node.Host,
 		}
 		if app.Type == domain.SourceDockerfile {
 			if m.dpDir == "" {

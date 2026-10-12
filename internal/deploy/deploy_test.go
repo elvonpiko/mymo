@@ -161,7 +161,30 @@ func goodOpts() Options {
 	return Options{
 		Now:            func() time.Time { return time.Date(2026, 10, 3, 14, 0, 0, 0, time.UTC) },
 		HealthAttempts: 1, HealthPause: 0,
+		// the address the domain must agree on, and the interfaces
+		// must carry
+		NodeHost: "193.93.169.48",
 	}
+}
+
+// edgeAnswers teaches the fake node where the name resolves and
+// what its interfaces carry — the two agreements the public path
+// needs before the firewall is even read.
+func edgeAnswers(r *fakeRunner, resolved string, onInterfaces bool) {
+	ns := "Server:         172.20.88.1\nAddress:        172.20.88.1:53\n\nName:      api.example.com\nAddress 1: " + resolved + " api.example.com\n"
+	if resolved == "" {
+		ns = "nslookup: can't resolve '" + "api.example.com" + "'\n"
+		r.codes["docker run --rm --network host busybox:1.36 nslookup api.example.com"] = 1
+		return
+	}
+	r.responses["docker run --rm --network host busybox:1.36 nslookup api.example.com"] = ns
+	addr := "1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536\n    inet 127.0.0.1/8 scope host lo\n2: ens3: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500\n"
+	if onInterfaces {
+		addr += "    inet 193.93.169.48/24 scope global ens3\n"
+	} else {
+		addr += "    inet 172.20.89.20/23 scope global dynamic ens3\n"
+	}
+	r.responses["ip -4 addr show"] = addr
 }
 
 // nodeRunner answers everything a healthy node says to the happy
@@ -257,6 +280,7 @@ func TestPublicNotYetIsStatedNotClaimed(t *testing.T) {
 	// still issuing, and the box's firewall allows the edge — so
 	// the wall is named outside the box, at the provider's door
 	r.codes["docker run --rm --network host busybox:1.36 wget -q -T 3 -O /dev/null --no-check-certificate https://api.example.com"] = 1
+	edgeAnswers(r, "193.93.169.48", true)
 	r.responses["ufw status"] = "Status: active\n\nTo                         Action      From\n--                         ------      ----\n22/tcp                     ALLOW       Anywhere\n80/tcp                     ALLOW       Anywhere\n443/tcp                    ALLOW       Anywhere\n"
 	opts := goodOpts()
 	res := Deploy(context.Background(), r, app, opts)
@@ -285,6 +309,7 @@ func TestFirewallTruthNamesTheLayer(t *testing.T) {
 
 	// missing 80/443: the one case the baseline itself answers for
 	r := nodeRunner()
+	edgeAnswers(r, "193.93.169.48", true)
 	r.codes["docker run --rm --network host busybox:1.36 wget -q -T 3 -O /dev/null --no-check-certificate https://api.example.com"] = 1
 	r.responses["ufw status"] = "Status: active\n\nTo                         Action      From\n--                         ------      ----\n22/tcp                     ALLOW       Anywhere\n"
 	if got := probeEdge(context.Background(), r, opts, app); !strings.Contains(got, "does not allow 80/443") ||
@@ -294,6 +319,7 @@ func TestFirewallTruthNamesTheLayer(t *testing.T) {
 
 	// an off firewall: the block is not the box's
 	r = nodeRunner()
+	edgeAnswers(r, "193.93.169.48", true)
 	r.codes["docker run --rm --network host busybox:1.36 wget -q -T 3 -O /dev/null --no-check-certificate https://api.example.com"] = 1
 	r.responses["ufw status"] = "Status: inactive\n"
 	if got := probeEdge(context.Background(), r, opts, app); !strings.Contains(got, "the box's firewall is off") ||
@@ -303,6 +329,7 @@ func TestFirewallTruthNamesTheLayer(t *testing.T) {
 
 	// an unreadable firewall: the retry story, no claims
 	r = nodeRunner()
+	edgeAnswers(r, "193.93.169.48", true)
 	r.codes["docker run --rm --network host busybox:1.36 wget -q -T 3 -O /dev/null --no-check-certificate https://api.example.com"] = 1
 	if got := probeEdge(context.Background(), r, opts, app); !strings.Contains(got, "caddy keeps retrying") {
 		t.Errorf("an unreadable firewall keeps the honest retry story:\n%s", got)
@@ -310,10 +337,53 @@ func TestFirewallTruthNamesTheLayer(t *testing.T) {
 
 	// a v6 rule line counts too: ufw prints both forms
 	r = nodeRunner()
+	edgeAnswers(r, "193.93.169.48", true)
 	r.codes["docker run --rm --network host busybox:1.36 wget -q -T 3 -O /dev/null --no-check-certificate https://api.example.com"] = 1
 	r.responses["ufw status"] = "Status: active\n\nTo                         Action      From\n--                         ------      ----\n80/tcp (v6)                ALLOW       Anywhere (v6)\n443/tcp (v6)               ALLOW       Anywhere (v6)\n"
 	if got := probeEdge(context.Background(), r, opts, app); !strings.Contains(got, "the box allows the edge") {
 		t.Errorf("v6 rule lines should count as allowed:\n%s", got)
+	}
+}
+
+// The two agreements before the firewall: the name must resolve to
+// this box, and the box must carry its public address itself. A
+// name pointing elsewhere names the record; a box behind the
+// provider's nat names the nat — ssh may be the only door it
+// forwards.
+func TestEdgeTruthNamesTheRecordAndTheNat(t *testing.T) {
+	app := imageApp()
+	opts := goodOpts()
+	dark := func(r *fakeRunner) *fakeRunner {
+		r.codes["docker run --rm --network host busybox:1.36 wget -q -T 3 -O /dev/null --no-check-certificate https://api.example.com"] = 1
+		return r
+	}
+
+	// the name resolves to a different machine: the record is wrong
+	r := dark(nodeRunner())
+	edgeAnswers(r, "203.0.113.9", true)
+	if got := probeEdge(context.Background(), r, opts, app); !strings.Contains(got, "resolves to 203.0.113.9, not this box (193.93.169.48)") ||
+		!strings.Contains(got, "point it here, then deploy again") {
+		t.Errorf("a foreign record should name the record:\n%s", got)
+	}
+
+	// the name resolves here, but the box does not carry its public
+	// address: the provider's nat stands between the world and the
+	// interfaces
+	r = dark(nodeRunner())
+	edgeAnswers(r, "193.93.169.48", false)
+	if got := probeEdge(context.Background(), r, opts, app); !strings.Contains(got, "the box's interfaces do not carry 193.93.169.48") ||
+		!strings.Contains(got, "nat") ||
+		!strings.Contains(got, "that table is the provider's to open") {
+		t.Errorf("a nat box should name the nat:\n%s", got)
+	}
+
+	// the name does not resolve from the box at all: dns still
+	// travelling, and the note says where it must land
+	r = dark(nodeRunner())
+	edgeAnswers(r, "", false)
+	if got := probeEdge(context.Background(), r, opts, app); !strings.Contains(got, "does not resolve from the box yet") ||
+		!strings.Contains(got, "(193.93.169.48)") {
+		t.Errorf("an unresolved name should say where it must land:\n%s", got)
 	}
 }
 

@@ -198,6 +198,9 @@ func runDeploy(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		Sudo:     sudo,
 		Progress: func(line string) { fmt.Fprintln(stdout, "· "+line) },
 		Copier:   copierFor(sudo),
+		// the address mymo itself reaches the box by — the edge
+		// probe checks the domain and the interfaces against it
+		NodeHost: node.Host,
 	}
 	if app.Type == domain.SourceDockerfile {
 		// "." means the project itself, a file means its directory,
