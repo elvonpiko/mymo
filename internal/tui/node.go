@@ -479,11 +479,27 @@ func (m Model) inspectView() string {
 		lipgloss.Center, lipgloss.Center, inner)
 }
 
-// removeConfirmView asks for explicit confirmation before removing a node.
+// removeConfirmView asks for explicit confirmation before removing a
+// node, and states the whole of what mymo forgets: the box's own
+// records and every application's. Nothing on any box changes — a
+// box already gone is exactly why the app records must not be
+// held hostage to a reachable machine.
 func (m Model) removeConfirmView() string {
 	inner := warnStyle.Render("Remove "+m.selNode.Name+" from the fleet?") + "\n\n" +
 		"The server itself is not touched — only mymo's\n" +
-		"local record is removed.\n\n" +
+		"local record is removed."
+	if m.store != nil {
+		if apps, err := m.store.AppsOnNode(m.selNode.Name); err == nil && len(apps) > 0 {
+			names := make([]string, len(apps))
+			for i, a := range apps {
+				names[i] = a.Name
+			}
+			inner += "\n\n" + textStyle.Render(fmt.Sprintf("mymo forgets %d %s with it: ",
+				len(apps), plural("application", len(apps)))) + warnStyle.Render(strings.Join(names, ", ")) +
+				textStyle.Render("\n— nothing running on any box changes")
+		}
+	}
+	inner += "\n\n" +
 		accentStyle.Render("[y]") + textStyle.Render(" remove    ") +
 		accentStyle.Render("[esc]") + textStyle.Render(" cancel")
 	return lipgloss.Place(m.contentWidth, m.contentHeight,

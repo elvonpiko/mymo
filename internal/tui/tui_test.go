@@ -289,6 +289,9 @@ func TestRemoveNodeFlow(t *testing.T) {
 	s := readyStore(t)
 	seedNode(t, s, "web-1")
 	seedNode(t, s, "web-2")
+	if err := s.AddApp(domain.App{Name: "api", Node: "web-1", Type: domain.SourceImage, Image: "nginx:1.27", Port: 8080}); err != nil {
+		t.Fatal(err)
+	}
 	m := press(t, New(s), "n", "enter")
 	m = step(t, m, checkDoneMsg{
 		node: "web-1", seq: m.checkSeq,
@@ -297,15 +300,23 @@ func TestRemoveNodeFlow(t *testing.T) {
 	})
 	// five actions for an unmanaged box: Set up, SSH, Applications,
 	// Inspect, Remove — four downs land on Remove.
-	m = press(t, m, "down", "down", "down", "down", "enter", "y")
+	m = press(t, m, "down", "down", "down", "down", "enter")
+	// the card states everything the goodbye forgets, by name
+	if got := view(m); !strings.Contains(got, "api") || !strings.Contains(got, "nothing running on any box changes") {
+		t.Fatalf("the removal card must name the applications:\n%s", got)
+	}
+	m = press(t, m, "y")
 	if _, err := s.GetNode("web-1"); !errors.Is(err, state.ErrNodeNotFound) {
 		t.Fatalf("node still present after confirm: %v", err)
+	}
+	if _, err := s.GetApp("api"); !errors.Is(err, state.ErrAppNotFound) {
+		t.Fatalf("the app record survived its node's removal: %v", err)
 	}
 	if got := view(m); !strings.Contains(got, "web-2") {
 		t.Fatalf("fleet after removal missing web-2:\n%s", got)
 	}
-	if m.toast == nil || !strings.Contains(m.toast.text, "web-1") {
-		t.Fatalf("no removal toast: %+v", m.toast)
+	if m.toast == nil || !strings.Contains(m.toast.text, "web-1") || !strings.Contains(m.toast.text, "its 1 application") {
+		t.Fatalf("the toast must count what was forgotten: %+v", m.toast)
 	}
 }
 
@@ -622,9 +633,14 @@ func TestFleetListRidesInACard(t *testing.T) {
 	if gotTop, gotBot := colOf(lines[top], "╮"), colOf(lines[bottom], "╯"); gotTop != gotBot {
 		t.Errorf("fleet card corners misaligned: top=%d bottom=%d", gotTop, gotBot)
 	}
-	// the applications summary survives the floor budget below the card
+	// the page is the fleet and only the fleet: the applications
+	// summary is gone, and the footer carries the key that leads
+	// there instead
 	joined := strings.Join(lines, "\n")
-	if !strings.Contains(joined, "APPLICATIONS") || !strings.Contains(joined, "none managed yet") {
-		t.Errorf("applications section lost below the card:\n%s", joined)
+	if strings.Contains(joined, "APPLICATIONS") || strings.Contains(joined, "none managed yet") {
+		t.Errorf("the applications summary lives on the fleet page:\n%s", joined)
+	}
+	if !strings.Contains(joined, "a apps") {
+		t.Errorf("the footer must carry the apps key:\n%s", joined)
 	}
 }

@@ -448,16 +448,29 @@ func runNodeRemove(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "mymo node rm: %v\n", err)
 		return exitErr
 	}
+	apps, err := store.AppsOnNode(name)
+	if err != nil {
+		fmt.Fprintf(stderr, "mymo node rm: %v\n", err)
+		return exitErr
+	}
 	if !*force {
 		if !stdinIsTerminal() {
 			fmt.Fprintln(stderr, "mymo node rm: confirmation requires a terminal; pass -f to remove without asking")
 			return exitUsage
 		}
+		title := fmt.Sprintf("Remove node %q from mymo? The server itself is not touched.", name)
+		if len(apps) > 0 {
+			names := make([]string, len(apps))
+			for i, a := range apps {
+				names[i] = a.Name
+			}
+			title += fmt.Sprintf("\nmymo forgets %d application record(s) with it: %s.\nNothing on any box changes.", len(apps), strings.Join(names, ", "))
+		}
 		confirmed := false
 		form := newForm(
 			huh.NewGroup(
 				huh.NewConfirm().
-					Title(fmt.Sprintf("Remove node %q from mymo? The server itself is not touched.", name)).
+					Title(title).
 					Affirmative("remove").Negative("cancel").
 					Value(&confirmed),
 			),
@@ -481,6 +494,10 @@ func runNodeRemove(args []string, stdout, stderr io.Writer) int {
 	if err := ssh.ForgetHostKey(knownHostsPath(store), node.Host, node.Port); err != nil {
 		fmt.Fprintf(stderr, "mymo node rm: removed %q but a trust entry stayed: %v\n", name, err)
 		return exitErr
+	}
+	if len(apps) > 0 {
+		fmt.Fprintf(stdout, "Removed node %q. mymo forgot it and its %d application record(s); the box was not touched.\n", name, len(apps))
+		return exitOK
 	}
 	fmt.Fprintf(stdout, "Removed node %q. mymo forgot it; the box was not touched.\n", name)
 	return exitOK

@@ -1,8 +1,14 @@
 package cli
 
 import (
+	"errors"
+	"time"
+
+	"github.com/elvonpiko/mymo/internal/domain"
+
 	"bytes"
 	"context"
+	"github.com/elvonpiko/mymo/internal/state"
 	"reflect"
 	"strings"
 	"testing"
@@ -243,5 +249,59 @@ func TestGatherFlags(t *testing.T) {
 				t.Errorf("rest = %v, want %v", rest, tc.rest)
 			}
 		})
+	}
+}
+
+// node rm -f is the whole goodbye without a terminal: the node,
+// its key pair, and the records of every application on it —
+// locally only, nothing on any box. The goodbye line counts what
+// was forgotten.
+func TestNodeRemoveForgetsItsApps(t *testing.T) {
+	s := newSession(t)
+	store, err := state.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []domain.Node{
+		{Name: "web-1", Host: "203.0.113.10", Port: 22, User: "root", Auth: domain.AuthAgent, Mode: domain.ModeAppHost, AddedAt: time.Now()},
+		{Name: "web-2", Host: "203.0.113.11", Port: 22, User: "root", Auth: domain.AuthAgent, Mode: domain.ModeAppHost, AddedAt: time.Now()},
+		{Name: "web-3", Host: "203.0.113.12", Port: 22, User: "root", Auth: domain.AuthAgent, Mode: domain.ModeAppHost, AddedAt: time.Now()},
+	} {
+		if err := store.AddNode(n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, a := range []domain.App{
+		{Name: "api", Node: "web-1", Type: domain.SourceImage, Image: "nginx:1.27", Port: 8080},
+		{Name: "keeper", Node: "web-2", Type: domain.SourceImage, Image: "nginx:1.27", Port: 80},
+	} {
+		if err := store.AddApp(a); err != nil {
+			t.Fatal(err)
+		}
+	}
+	code, out, errOut := s.run(t, "node", "rm", "web-1", "-f")
+	if code != exitOK {
+		t.Fatalf("exit code = %d (%s)", code, errOut)
+	}
+	if !strings.Contains(out, "its 1 application record") {
+		t.Errorf("the goodbye must count the forgotten records: %q", out)
+	}
+	if _, err := store.GetNode("web-1"); !errors.Is(err, state.ErrNodeNotFound) {
+		t.Errorf("node survived removal: %v", err)
+	}
+	if _, err := store.GetApp("api"); !errors.Is(err, state.ErrAppNotFound) {
+		t.Errorf("the app record survived its node's removal: %v", err)
+	}
+	if _, err := store.GetApp("keeper"); err != nil {
+		t.Errorf("another node's app must survive: %v", err)
+	}
+
+	// a node with no apps keeps the plain goodbye
+	code, out, errOut = s.run(t, "node", "rm", "web-3", "-f")
+	if code != exitOK {
+		t.Fatalf("exit code = %d (%s)", code, errOut)
+	}
+	if !strings.Contains(out, "mymo forgot it; the box was not touched") {
+		t.Errorf("a bare removal keeps the plain goodbye: %q", out)
 	}
 }

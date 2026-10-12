@@ -48,7 +48,7 @@ func TestUnreachablePageOffersTheMoves(t *testing.T) {
 	if _, err := s.GetNode("web-1"); err == nil {
 		t.Fatal("the record survived its own removal")
 	}
-	if m.toast == nil || !strings.Contains(m.toast.text, "the box was not touched") {
+	if m.toast == nil || !strings.Contains(m.toast.text, "nothing on any box changed") {
 		t.Fatal("the goodbye toast missing its promise")
 	}
 }

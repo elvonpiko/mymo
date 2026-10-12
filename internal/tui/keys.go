@@ -95,7 +95,7 @@ func newFleetKeymap() fleetKeymap {
 // ShortHelp keeps only the page's distinctive keys; arrows are
 // universal list knowledge and the rest waits behind ?.
 func (k fleetKeymap) ShortHelp() []key.Binding {
-	return []key.Binding{k.open, k.add, k.remove, k.filter, k.help, k.quit}
+	return []key.Binding{k.open, k.add, k.remove, k.apps, k.help, k.quit}
 }
 
 func (k fleetKeymap) FullHelp() [][]key.Binding {

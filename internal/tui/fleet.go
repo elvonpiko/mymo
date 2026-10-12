@@ -90,8 +90,9 @@ func newFleetList(nodes []domain.Node) list.Model {
 	return l
 }
 
-// fleetView renders the fleet screen: the NODES list over an
-// APPLICATIONS summary, filling the content area.
+// fleetView renders the fleet screen: the NODES list, and nothing
+// else — the page is the fleet, focused. Applications live one key
+// away, and the footer says which.
 func (m Model) fleetView() string {
 	if m.loadErr != nil {
 		return m.loadErrView()
@@ -104,10 +105,6 @@ func (m Model) fleetView() string {
 	// gives the row back so the floor keeps everything
 	b.WriteString("\n")
 	b.WriteString(titledCard("NODES", padLines(m.fleet.View(), m.cardW())))
-	b.WriteString("\n\n")
-	b.WriteString(sectionLabel("APPLICATIONS"))
-	b.WriteString("\n")
-	b.WriteString(faintStyle.Render("none managed yet · press d for the deploy workflow"))
 	return fitHeight(b.String(), m.contentHeight)
 }
 

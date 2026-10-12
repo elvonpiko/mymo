@@ -811,9 +811,16 @@ func (m Model) updateRemoveConfirm(str string) (tea.Model, tea.Cmd) {
 		}
 		name := m.selNode.Name
 		host, port := m.selNode.Host, m.selNode.Port
+		// the count of what this goodbye forgets, named on the card
+		// and counted on the toast
+		forgot := 0
+		if apps, err := m.store.AppsOnNode(name); err == nil {
+			forgot = len(apps)
+		}
 		// removal is mymo forgetting its whole side: the record, the
-		// key pair, and the trust entry — the box itself keeps
-		// everything mymo built there, running and untouched
+		// key pair, the trust entry, and every application record on
+		// the box — the box itself keeps everything mymo built there,
+		// running and untouched
 		if err := m.store.RemoveNode(name); err != nil {
 			m.confirmRemove = false
 			return m, m.notify(shorten(err.Error(), 44), toastErr)
@@ -829,7 +836,12 @@ func (m Model) updateRemoveConfirm(str string) (tea.Model, tea.Cmd) {
 			m.pop()
 		}
 		m.reloadFleet()
-		return m, m.notify("removed "+name+" — mymo forgot it; the box was not touched", toastOK)
+		m.reloadApps()
+		goodbye := "removed " + name + " — mymo forgot it"
+		if forgot > 0 {
+			goodbye += fmt.Sprintf(" and its %d %s", forgot, plural("application", forgot))
+		}
+		return m, m.notify(goodbye+"; nothing on any box changed", toastOK)
 	case "esc", "n", "N":
 		m.confirmRemove = false
 		return m, nil

@@ -4,7 +4,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -47,27 +46,51 @@ func TestRemoveNodeForgetsEverythingLocal(t *testing.T) {
 	}
 }
 
-// TestRemoveNodeRefusesWhileAppsRemain proves applications gate the
-// removal: the operator removes them one by one, deliberately.
-func TestRemoveNodeRefusesWhileAppsRemain(t *testing.T) {
+// TestRemoveNodeForgetsItsApps proves the whole goodbye: a node's
+// removal forgets its applications' records with it — locally
+// only, and only theirs. A box already gone is exactly why the
+// records cannot be hostages of a reachable machine; an app on
+// another node survives untouched.
+func TestRemoveNodeForgetsItsApps(t *testing.T) {
 	s := OpenDirForTest(t)
-	n := domain.Node{Name: "web-1", Host: "203.0.113.10", Port: 22,
-		User: "root", Auth: domain.AuthAgent, Mode: domain.ModeAppHost, AddedAt: time.Now()}
-	if err := s.AddNode(n); err != nil {
-		t.Fatal(err)
+	for _, n := range []domain.Node{
+		{Name: "web-1", Host: "203.0.113.10", Port: 22, User: "root", Auth: domain.AuthAgent, Mode: domain.ModeAppHost, AddedAt: time.Now()},
+		{Name: "web-2", Host: "203.0.113.11", Port: 22, User: "root", Auth: domain.AuthAgent, Mode: domain.ModeAppHost, AddedAt: time.Now()},
+	} {
+		if err := s.AddNode(n); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := s.AddApp(domain.App{Name: "api", Node: "web-1", Type: domain.SourceImage, Image: "nginx:1.27", Port: 8080}); err != nil {
-		t.Fatal(err)
+	for _, a := range []domain.App{
+		{Name: "api", Node: "web-1", Type: domain.SourceImage, Image: "nginx:1.27", Port: 8080},
+		{Name: "web", Node: "web-1", Type: domain.SourceImage, Image: "nginx:1.27", Port: 80},
+		{Name: "keeper", Node: "web-2", Type: domain.SourceImage, Image: "nginx:1.27", Port: 80},
+	} {
+		if err := s.AddApp(a); err != nil {
+			t.Fatal(err)
+		}
 	}
-	err := s.RemoveNode("web-1")
-	if !errors.Is(err, ErrNodeHasApps) {
-		t.Fatalf("RemoveNode = %v, want ErrNodeHasApps", err)
+	on, err := s.AppsOnNode("web-1")
+	if err != nil || len(on) != 2 {
+		t.Fatalf("AppsOnNode = %v, %v; want the two on web-1", on, err)
 	}
-	if !strings.Contains(err.Error(), "api") {
-		t.Fatalf("the refusal must name the applications: %v", err)
+	if err := s.RemoveNode("web-1"); err != nil {
+		t.Fatalf("RemoveNode: %v", err)
 	}
-	if _, err := s.GetNode("web-1"); err != nil {
-		t.Fatal("a refused removal must leave the node in place")
+	if _, err := s.GetNode("web-1"); !errors.Is(err, ErrNodeNotFound) {
+		t.Fatalf("record survived removal: %v", err)
+	}
+	for _, gone := range []string{"api", "web"} {
+		if _, err := s.GetApp(gone); !errors.Is(err, ErrAppNotFound) {
+			t.Fatalf("app %s survived its node's removal: %v", gone, err)
+		}
+	}
+	if _, err := s.GetApp("keeper"); err != nil {
+		t.Fatalf("an app on another node must survive: %v", err)
+	}
+	// removing again is an honest error, not a silent no-op
+	if err := s.RemoveNode("web-1"); !errors.Is(err, ErrNodeNotFound) {
+		t.Fatalf("second removal = %v, want ErrNodeNotFound", err)
 	}
 }
 
