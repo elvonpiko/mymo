@@ -15,9 +15,10 @@ import (
 //	/etc/caddy/Caddyfile          one import line, added once
 //	/etc/caddy/mymo/<app>.caddy   one route file per public app
 //
-// The route file targets the release's container name — its unique
-// DNS identity on the network — so a reload switches releases
-// atomically and no window ever mixes two. Every new route is
+// The route file targets the app's pinned address on the network —
+// the one address the host's caddy can dial and a restart cannot
+// change — so a reload switches releases atomically and no window
+// ever mixes two. Every new route is
 // validated before the reload that activates it; when validation
 // fails the previous content is restored and the reload never runs,
 // so the old route keeps serving.
@@ -30,9 +31,9 @@ const caddyRouteDir = "/etc/caddy/mymo"
 
 // renderRoute draws the one site block mymo owns for an app. The
 // comment is part of the contract: mymo overwrites what it owns.
-func renderRoute(name, domainName, container string, port int) string {
+func renderRoute(name, domainName, upstream string, port int) string {
 	return fmt.Sprintf("# mymo route for %s — managed by mymo; edits are overwritten\n%s {\n\treverse_proxy %s:%d\n}\n",
-		name, domainName, container, port)
+		name, domainName, upstream, port)
 }
 
 // activateRoute makes caddy serve container for the app's domain:
@@ -42,8 +43,11 @@ func renderRoute(name, domainName, container string, port int) string {
 // error — the caller stops the new release, the old route keeps
 // serving.
 func activateRoute(ctx context.Context, r Runner, o Options, app domainApp, container string) (string, error) {
+	if app.NetworkIP == "" {
+		return "", fmt.Errorf("%s has no pinned address on the network — deploy again to assign one", app.Name)
+	}
 	routePath := path.Join(caddyRouteDir, app.Name+".caddy")
-	content := renderRoute(app.Name, app.Domain, container, app.Port)
+	content := renderRoute(app.Name, app.Domain, app.NetworkIP, app.Port)
 
 	if err := ensureImport(ctx, r, o); err != nil {
 		return "", err
@@ -72,7 +76,7 @@ func activateRoute(ctx context.Context, r Runner, o Options, app domainApp, cont
 		}
 		return "", fmt.Errorf("the caddy reload failed (%d): %s", code, firstLine(out))
 	}
-	return app.Domain + " → " + container + " — route swapped and reloaded", nil
+	return app.Domain + " → " + app.NetworkIP + ":" + fmt.Sprint(app.Port) + " — route swapped and reloaded", nil
 }
 
 // ensureImport wires mymo's route directory into the Caddyfile
@@ -145,7 +149,8 @@ func restore(ctx context.Context, r Runner, o Options, file, content string) err
 
 // domainApp is the slice of domain.App the caddy wiring needs.
 type domainApp struct {
-	Name   string
-	Domain string
-	Port   int
+	Name      string
+	Domain    string
+	Port      int
+	NetworkIP string
 }

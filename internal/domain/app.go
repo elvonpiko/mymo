@@ -62,7 +62,12 @@ type App struct {
 	Port       int       `json:"port"`                 // the container's internal port
 	Domain     string    `json:"domain,omitempty"`     // "" = internal only
 	Health     string    `json:"health,omitempty"`     // path, "" = none declared
-	AddedAt    time.Time `json:"added_at,omitempty"`
+	// NetworkIP is the app's stable address on mymo's docker
+	// network: assigned at the first deploy, pinned by every later
+	// one. The public route points here — the one address a host's
+	// caddy can reach and a container restart cannot change.
+	NetworkIP string    `json:"network_ip,omitempty"` // "" = not assigned yet
+	AddedAt   time.Time `json:"added_at,omitempty"`
 
 	// Releases are newest last. The previous working release is
 	// kept available; rollback selects it by its ID.

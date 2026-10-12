@@ -10,14 +10,19 @@
 // they live on mymo's docker network, reached by name; the public
 // path is Caddy alone.
 //
-// Networking: each release runs as mymo-<app>-r<id> — the container
-// name is its unique DNS identity on the network, so health checks
-// and Caddy routes address one release exactly, never a mix of two.
-// Every running container also carries the stable <app> alias for
-// app-to-app traffic; the only moment two containers share it is the
-// blue-green window between staging and retirement, which affects
+// Networking: each release runs as mymo-<app>-r<id> on mymo's docker
+// network, reached two ways. Inside the network, containers dial
+// each other by the stable <app> alias, and mymo's health gate
+// addresses one release exactly by its unique name. From the host —
+// where caddy runs as a plain service — a container's name means
+// nothing: docker's DNS lives inside the bridge. So the first deploy
+// asks docker for the app's address on the network and the record
+// pins it; every later release runs with --ip, the caddy route
+// dials that address, and a container restart cannot move it. The
+// only moment two containers share the alias is the blue-green
+// window between staging and retirement, which affects
 // internal-by-name traffic alone — public traffic switches at the
-// Caddy reload, atomically.
+// Caddy reload, atomically, at the pinned address.
 package deploy
 
 import (
@@ -288,9 +293,26 @@ func Deploy(ctx context.Context, r Runner, app domain.App, o Options) Result {
 		"--network", NetworkName,
 		"--network-alias", app.Name,
 		"--restart", "unless-stopped",
-		imageRef}
+	}
+	if app.NetworkIP != "" {
+		runArgv = append(runArgv, "--ip", app.NetworkIP)
+	}
+	runArgv = append(runArgv, imageRef)
 	if out, code, err := runW(ctx, r, o, runArgv...); err != nil || code != 0 {
 		return fail(stage, fmt.Sprintf("the container did not start (%d): %s", code, reasonLine(out)), "stage")
+	}
+	// the first deploy asks docker for an address; every later one
+	// pins it. The public route needs an address the host's caddy
+	// can reach — a container's name resolves only inside the
+	// network, but its IP on the bridge is the host's to dial
+	if app.NetworkIP == "" {
+		ip, ipErr := containerIP(ctx, r, o, container)
+		if ipErr != nil {
+			runW(ctx, r, o, "docker", "stop", container)
+			return fail(stage, ipErr.Error(), "stage")
+		}
+		app.NetworkIP = ip
+		res.App.NetworkIP = ip
 	}
 	stage.State = StepDone
 	stage.Note = container + " is running on " + NetworkName + " — no port is published"
@@ -313,7 +335,7 @@ func Deploy(ctx context.Context, r Runner, app domain.App, o Options) Result {
 	if app.Domain == "" {
 		activate.State, activate.Note = StepKept, "internal only — there is no route to activate"
 	} else {
-		swapped, aErr := activateRoute(ctx, r, o, domainApp{Name: app.Name, Domain: app.Domain, Port: app.Port}, container)
+		swapped, aErr := activateRoute(ctx, r, o, domainApp{Name: app.Name, Domain: app.Domain, Port: app.Port, NetworkIP: app.NetworkIP}, container)
 		if aErr != nil {
 			// the route still serves the old release; the new one
 			// is stopped and kept for its logs
@@ -368,6 +390,9 @@ func Deploy(ctx context.Context, r Runner, app domain.App, o Options) Result {
 			return fail(verify, "caddy is not active after the reload", "verify")
 		}
 		verify.Note = "the release serves; caddy reloaded the route cleanly"
+		if pub := probePublic(ctx, r, o, app); pub != "" {
+			verify.Note = pub
+		}
 	}
 	if verify.Note == "" {
 		verify.Note = "the container runs, healthy inside the network"
@@ -421,7 +446,13 @@ func Rollback(ctx context.Context, r Runner, app domain.App, o Options) Result {
 
 	if app.Domain != "" {
 		route := step("rollback", "caddy route")
-		if swapped, err := activateRoute(ctx, r, o, domainApp{Name: app.Name, Domain: app.Domain, Port: app.Port}, target.Container); err != nil {
+		ip, ipErr := containerIP(ctx, r, o, target.Container)
+		if ipErr != nil {
+			runW(ctx, r, o, "docker", "stop", target.Container)
+			return fail(route, ipErr.Error(), "route")
+		}
+		res.App.NetworkIP = ip
+		if swapped, err := activateRoute(ctx, r, o, domainApp{Name: app.Name, Domain: app.Domain, Port: app.Port, NetworkIP: ip}, target.Container); err != nil {
 			runW(ctx, r, o, "docker", "stop", target.Container)
 			return fail(route, err.Error(), "route")
 		} else {
@@ -473,6 +504,45 @@ func probeHealth(ctx context.Context, r Runner, o Options, app domain.App, conta
 		}
 	}
 	return "", fmt.Errorf("%s never answered", url)
+}
+
+// containerIP asks docker for the container's address on mymo's
+// network. The host shares the bridge, so this address is the one
+// both worlds reach: caddy on the host dials it, containers dial
+// each other's names. A public route needs it; without one there is
+// nothing honest to point caddy at.
+func containerIP(ctx context.Context, r Runner, o Options, container string) (string, error) {
+	out, code, err := runW(ctx, r, o, "docker", "inspect", "--format",
+		"{{.NetworkSettings.Networks."+NetworkName+".IPAddress}}", container)
+	if err != nil || code != 0 {
+		return "", fmt.Errorf("could not find %s's address on the network: %s", container, reasonLine(out))
+	}
+	ip := strings.TrimSpace(out)
+	if ip == "" {
+		return "", fmt.Errorf("%s has no address on the network — docker did not attach it", container)
+	}
+	return ip, nil
+}
+
+// probePublic asks the browser's question once, from the box
+// itself: does https://<domain> answer? A certificate still being
+// issued — the name was pointed at the box minutes ago — is the
+// expected not-yet, and the note says so instead of letting a green
+// report claim a path that is still dark.
+func probePublic(ctx context.Context, r Runner, o Options, app domain.App) string {
+	url := "https://" + app.Domain
+	for attempt := 0; attempt < o.HealthAttempts; attempt++ {
+		if _, code, err := runW(ctx, r, o, "docker", "run", "--rm", "--network", "host",
+			HealthImage, "wget", "-q", "-T", "3", "-O", "/dev/null", "--no-check-certificate", url); err == nil && code == 0 {
+			return "the release serves; " + url + " answers publicly"
+		}
+		select {
+		case <-ctx.Done():
+			return ""
+		case <-time.After(o.HealthPause):
+		}
+	}
+	return "the release serves inside the network; " + url + " does not answer publicly yet — tls is issued once the name resolves to this box, and caddy keeps retrying on its own"
 }
 
 // imageDigest resolves a reference to its immutable sha256 identity.

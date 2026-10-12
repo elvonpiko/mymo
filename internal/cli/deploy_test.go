@@ -60,6 +60,7 @@ func happyNodeRunner() *cliRunner {
 func happyHealth(r *cliRunner, container string) {
 	r.responses[fmt.Sprintf("sudo -n docker run --rm --network mymo-net busybox:1.36 wget -q -T 2 -O /dev/null http://%s:8080/healthz", container)] = ""
 	r.responses[fmt.Sprintf("sudo -n docker ps --filter name=%s --filter status=running --format {{.Names}}", container)] = container + "\n"
+	r.responses[fmt.Sprintf("sudo -n docker inspect --format {{.NetworkSettings.Networks.mymo-net.IPAddress}} %s", container)] = "172.20.0.31\n"
 }
 
 // writeProject drops a mymo.yaml into a fresh directory and chdirs
@@ -204,6 +205,9 @@ func TestDeployRecordsTheRelease(t *testing.T) {
 	rel, ok := app.ActiveRelease()
 	if !ok || rel.ID != 1 || rel.State != domain.ReleaseActive {
 		t.Errorf("release record = %+v", app.Releases)
+	}
+	if app.NetworkIP != "172.20.0.31" {
+		t.Errorf("the record did not pin the network address: %q", app.NetworkIP)
 	}
 	if !strings.HasPrefix(rel.Digest, "sha256:") {
 		t.Errorf("digest = %q", rel.Digest)

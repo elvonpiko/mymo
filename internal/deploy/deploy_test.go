@@ -168,11 +168,14 @@ func goodOpts() Options {
 // path, plus the digests for two release tags.
 func nodeRunner() *fakeRunner {
 	r := &fakeRunner{responses: map[string]string{
-		"docker image inspect --format {{.Id}} ghcr.io/x/api:1.2.3": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n",
-		"docker image inspect --format {{.Id}} mymo/api:r1":         "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n",
-		"docker image inspect --format {{.Id}} mymo/api:r2":         "sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210\n",
-		"docker image inspect --format {{.Id}} mymo/api:r3":         "sha256:1111111111111111111111111111111111111111111111111111111111111111\n",
-		"systemctl is-active caddy":                                 "active\n",
+		"docker image inspect --format {{.Id}} ghcr.io/x/api:1.2.3":                            "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n",
+		"docker image inspect --format {{.Id}} mymo/api:r1":                                    "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n",
+		"docker image inspect --format {{.Id}} mymo/api:r2":                                    "sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210\n",
+		"docker image inspect --format {{.Id}} mymo/api:r3":                                    "sha256:1111111111111111111111111111111111111111111111111111111111111111\n",
+		"systemctl is-active caddy":                                                            "active\n",
+		"docker inspect --format {{.NetworkSettings.Networks.mymo-net.IPAddress}} mymo-api-r1": "172.20.0.11\n",
+		"docker inspect --format {{.NetworkSettings.Networks.mymo-net.IPAddress}} mymo-api-r2": "172.20.0.12\n",
+		"docker inspect --format {{.NetworkSettings.Networks.mymo-net.IPAddress}} mymo-api-r3": "172.20.0.13\n",
 	}, codes: map[string]int{}}
 	// the network is absent the first time — the deploy creates it
 	r.codes["docker network inspect mymo-net"] = 1
@@ -232,10 +235,41 @@ func TestImageReleaseRunsTheLifecycle(t *testing.T) {
 	if !strings.Contains(rel.Health, "/healthz answers") {
 		t.Errorf("health = %q", rel.Health)
 	}
-	// the route targets the release's unique name — a reload can
-	// never mix two releases
-	if !r.wrote("reverse_proxy mymo-api-r1:8080") {
-		t.Errorf("route does not target the release container:\n%s", r.callList())
+	// the route targets the app's pinned address — the host's
+	// caddy can dial it, and a restart cannot change it
+	if !r.wrote("reverse_proxy 172.20.0.11:8080") {
+		t.Errorf("route does not target the pinned address:\n%s", r.callList())
+	}
+	if res.App.NetworkIP != "172.20.0.11" {
+		t.Errorf("the record did not pin the address: %q", res.App.NetworkIP)
+	}
+}
+
+// The public path is verified from the box itself, and a
+// still-issuing certificate is not lied about: the verify step
+// says the domain does not answer yet and why — tls issues once
+// the name resolves to the box, and caddy keeps retrying.
+func TestPublicNotYetIsStatedNotClaimed(t *testing.T) {
+	app := imageApp()
+	r := nodeRunner()
+	firstDeployHealth(r, "mymo-api-r1")
+	// the public probe from the host never connects: the cert is
+	// still issuing
+	r.codes["docker run --rm --network host busybox:1.36 wget -q -T 3 -O /dev/null --no-check-certificate https://api.example.com"] = 1
+	opts := goodOpts()
+	res := Deploy(context.Background(), r, app, opts)
+	if !res.OK {
+		t.Fatalf("a dark public path is not a failed deploy:\n%s", r.callList())
+	}
+	var note string
+	for _, st := range res.Steps {
+		if st.Control == "verify" {
+			note = st.Note
+		}
+	}
+	if !strings.Contains(note, "does not answer publicly yet") ||
+		!strings.Contains(note, "tls is issued once the name resolves to this box") {
+		t.Errorf("the verify note must state the not-yet:\n%s", note)
 	}
 }
 
@@ -384,7 +418,7 @@ func TestCaddyRefusalRestoresTheOldRouteAndNeverReloads(t *testing.T) {
 	firstDeployHealth(r, "mymo-api-r2")
 	r.codes["caddy validate --config /etc/caddy/Caddyfile"] = 1
 	// r1's route is live on the node — the refusal must restore it
-	r.responses["cat /etc/caddy/mymo/api.caddy"] = renderRoute("api", "api.example.com", "mymo-api-r1", 8080)
+	r.responses["cat /etc/caddy/mymo/api.caddy"] = renderRoute("api", "api.example.com", "172.20.0.11", 8080)
 
 	res := Deploy(context.Background(), r, app, goodOpts())
 	if res.OK || res.FailedAt != "activate" {
@@ -398,7 +432,7 @@ func TestCaddyRefusalRestoresTheOldRouteAndNeverReloads(t *testing.T) {
 	}
 	// the old route content was written back: the serving config is
 	// the one that was serving
-	if !r.wrote("reverse_proxy mymo-api-r1:8080") || !r.wrote("reverse_proxy mymo-api-r2:8080") {
+	if !r.wrote("reverse_proxy 172.20.0.11:8080") || !r.wrote("reverse_proxy 172.20.0.12:8080") {
 		t.Errorf("route was not swapped and restored:\n%s", r.callList())
 	}
 	// r1 keeps serving; r2 is a recorded failure
@@ -442,6 +476,11 @@ func TestSecondDeployRetiresKeepsAndEventuallyPrunes(t *testing.T) {
 	res2 := Deploy(context.Background(), r, res.App, goodOpts())
 	if !res2.OK {
 		t.Fatalf("third deploy failed:\n%s", r.callList())
+	}
+	// every later release pins the address the first one was
+	// assigned — that is the point of a pinned address
+	if !r.called("--ip 172.20.0.12") {
+		t.Errorf("the later deploys did not pin the assigned address:\n%s", r.callList())
 	}
 	if !r.called("docker rm mymo-api-r1") {
 		t.Error("the release outside the rollback window was never pruned")
@@ -512,9 +551,12 @@ func TestRollbackIsDeterministic(t *testing.T) {
 	if !r.called("docker stop mymo-api-r2") {
 		t.Error("the rolled-back release keeps running")
 	}
-	// the route points back at r1
-	if !r.wrote("reverse_proxy mymo-api-r1:8080") {
+	// the route points back at r1's address
+	if !r.wrote("reverse_proxy 172.20.0.11:8080") {
 		t.Errorf("route not restored to r1:\n%s", r.callList())
+	}
+	if res.App.NetworkIP != "172.20.0.11" {
+		t.Errorf("the rollback did not keep the pinned address: %q", res.App.NetworkIP)
 	}
 	if act, _ := res.App.ActiveRelease(); act.ID != 1 {
 		t.Errorf("active = %+v, want r1", act)
