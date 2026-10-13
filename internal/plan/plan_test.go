@@ -58,7 +58,7 @@ func cleanSnapshot() facts.Node {
 
 func TestGenerateCleanUbuntuPlan(t *testing.T) {
 	r := ubuntuRunner()
-	steps, err := Generate(context.Background(), r, cleanNode(), cleanSnapshot(), cleanAudit())
+	steps, err := Generate(context.Background(), r, cleanNode(), cleanSnapshot(), cleanAudit(), false)
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -253,7 +253,7 @@ func TestGenerateCleanUbuntuPlan(t *testing.T) {
 
 func TestGenerateIsReadOnly(t *testing.T) {
 	r := ubuntuRunner()
-	if _, err := Generate(context.Background(), r, cleanNode(), cleanSnapshot(), cleanAudit()); err != nil {
+	if _, err := Generate(context.Background(), r, cleanNode(), cleanSnapshot(), cleanAudit(), false); err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
 	if len(r.asked) != 1 {
@@ -269,11 +269,52 @@ func TestGenerateIsReadOnly(t *testing.T) {
 	}
 }
 
+// A decided audit plans: the operator took the call, apply
+// re-verifies what was accepted. The generation itself stays
+// read-only either way — deciding changes the draft, not the box.
+func TestGenerateDecidedDecisionsPlan(t *testing.T) {
+	audit := cleanAudit()
+	audit.Listeners = map[int]string{80: "nginx"}
+	audit.DockerPkg = "docker.io"
+	r := ubuntuRunner()
+	steps, err := Generate(context.Background(), r, cleanNode(), cleanSnapshot(), audit, true)
+	if err != nil {
+		t.Fatalf("a decided audit should plan: %v", err)
+	}
+	if len(steps) == 0 {
+		t.Fatal("the plan came back empty")
+	}
+	if len(r.asked) != 1 {
+		t.Fatalf("generation ran %d commands, want 1: %q", len(r.asked), r.asked)
+	}
+	for _, cmd := range r.asked {
+		lower := strings.ToLower(cmd)
+		for _, banned := range []string{"rm ", "apt-get", "systemctl", "tee ", "ufw ", "useradd", "curl", "install "} {
+			if strings.Contains(lower, banned) {
+				t.Errorf("generation ran a mutating command: %q (matched %q)", cmd, banned)
+			}
+		}
+	}
+}
+
+// An abort is never decidable: the box cannot carry the baseline,
+// and no operator answer changes that.
+func TestGenerateAbortsRefuseEvenWhenDecided(t *testing.T) {
+	snap := cleanSnapshot()
+	snap.OS = ""
+	snap.Arch = ""
+	_, err := Generate(context.Background(), ubuntuRunner(), cleanNode(), snap, cleanAudit(), true)
+	var blocked *BlockedError
+	if !errors.As(err, &blocked) {
+		t.Fatalf("a decided abort still refused: %v", err)
+	}
+}
+
 func TestGenerateBlockedByDecisions(t *testing.T) {
 	audit := cleanAudit()
 	audit.Listeners = map[int]string{80: "nginx"}
 	audit.DockerPkg = "docker.io"
-	_, err := Generate(context.Background(), ubuntuRunner(), cleanNode(), cleanSnapshot(), audit)
+	_, err := Generate(context.Background(), ubuntuRunner(), cleanNode(), cleanSnapshot(), audit, false)
 
 	var blocked *BlockedError
 	if !errors.As(err, &blocked) {
@@ -302,7 +343,7 @@ func TestGenerateBlockedByDecisions(t *testing.T) {
 func TestGenerateRefusesHostileOperatorName(t *testing.T) {
 	n := cleanNode()
 	n.User = "amir; PermitRootLogin yes"
-	_, err := Generate(context.Background(), ubuntuRunner(), n, cleanSnapshot(), cleanAudit())
+	_, err := Generate(context.Background(), ubuntuRunner(), n, cleanSnapshot(), cleanAudit(), false)
 	if err == nil || !strings.Contains(err.Error(), "not a valid unix name") {
 		t.Fatalf("hostile operator accepted: %v", err)
 	}
@@ -315,7 +356,7 @@ func TestGenerateRootOperatorWarnsAndCarvesOnlyMymo(t *testing.T) {
 	n.User = "root"
 	snap := cleanSnapshot()
 	snap.User = "root"
-	steps, err := Generate(context.Background(), ubuntuRunner(), n, snap, cleanAudit())
+	steps, err := Generate(context.Background(), ubuntuRunner(), n, snap, cleanAudit(), false)
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -341,7 +382,7 @@ func TestGenerateAdoptsInsteadOfReinstalling(t *testing.T) {
 	audit := cleanAudit()
 	audit.DockerPkg = "docker-ce"
 
-	steps, err := Generate(context.Background(), ubuntuRunner(), cleanNode(), snap, audit)
+	steps, err := Generate(context.Background(), ubuntuRunner(), cleanNode(), snap, audit, false)
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -379,7 +420,7 @@ func TestGenerateAdoptsInsteadOfReinstalling(t *testing.T) {
 func TestGenerateKeepsActiveFirewallDefaults(t *testing.T) {
 	audit := cleanAudit()
 	audit.Firewall = "active"
-	steps, err := Generate(context.Background(), ubuntuRunner(), cleanNode(), cleanSnapshot(), audit)
+	steps, err := Generate(context.Background(), ubuntuRunner(), cleanNode(), cleanSnapshot(), audit, false)
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -408,7 +449,7 @@ func TestGenerateDebianPaths(t *testing.T) {
 	r.responses[`sh -c . /etc/os-release && echo "$ID $VERSION_CODENAME"`] = "debian bookworm"
 	snap := cleanSnapshot()
 	snap.OS = "Debian GNU/Linux 12 (bookworm)"
-	steps, err := Generate(context.Background(), r, cleanNode(), snap, cleanAudit())
+	steps, err := Generate(context.Background(), r, cleanNode(), snap, cleanAudit(), false)
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -424,11 +465,11 @@ func TestGenerateDebianPaths(t *testing.T) {
 func TestGenerateRefusesUnknownCodename(t *testing.T) {
 	r := ubuntuRunner()
 	r.responses[`sh -c . /etc/os-release && echo "$ID $VERSION_CODENAME"`] = ""
-	if _, err := Generate(context.Background(), r, cleanNode(), cleanSnapshot(), cleanAudit()); err == nil {
+	if _, err := Generate(context.Background(), r, cleanNode(), cleanSnapshot(), cleanAudit(), false); err == nil {
 		t.Fatal("missing codename accepted")
 	}
 	r.responses[`sh -c . /etc/os-release && echo "$ID $VERSION_CODENAME"`] = "alpine edge"
-	if _, err := Generate(context.Background(), r, cleanNode(), cleanSnapshot(), cleanAudit()); err == nil {
+	if _, err := Generate(context.Background(), r, cleanNode(), cleanSnapshot(), cleanAudit(), false); err == nil {
 		t.Fatal("unsupported distribution id accepted")
 	}
 }
@@ -447,7 +488,7 @@ func TestGenerateResumesAnInterruptedBootstrap(t *testing.T) {
 	a.MymoUserUsed = true
 	a.MymoDirUsed = true
 	a.MymoSudoers = baseline.MymoSudoersRule
-	steps, err := Generate(context.Background(), r, cleanNode(), cleanSnapshot(), a)
+	steps, err := Generate(context.Background(), r, cleanNode(), cleanSnapshot(), a, false)
 	if err != nil {
 		t.Fatalf("Generate refused an interrupted bootstrap: %v", err)
 	}
@@ -499,7 +540,7 @@ func TestMyMoUserStepSurvivesItsOwnResume(t *testing.T) {
 // each: the loading page tells the story while mymo works.
 func TestNotesRideBesideTheirCommands(t *testing.T) {
 	r := ubuntuRunner()
-	steps, err := Generate(context.Background(), r, cleanNode(), cleanSnapshot(), cleanAudit())
+	steps, err := Generate(context.Background(), r, cleanNode(), cleanSnapshot(), cleanAudit(), false)
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -520,7 +561,7 @@ func TestNotesRideBesideTheirCommands(t *testing.T) {
 
 func TestARepoFileNeverExistsWithoutItsKey(t *testing.T) {
 	r := ubuntuRunner()
-	steps, err := Generate(context.Background(), r, cleanNode(), cleanSnapshot(), cleanAudit())
+	steps, err := Generate(context.Background(), r, cleanNode(), cleanSnapshot(), cleanAudit(), false)
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -571,7 +612,7 @@ func TestARepoFileNeverExistsWithoutItsKey(t *testing.T) {
 
 func TestInstallStepsCarryTheirConvergence(t *testing.T) {
 	r := ubuntuRunner()
-	steps, err := Generate(context.Background(), r, cleanNode(), cleanSnapshot(), cleanAudit())
+	steps, err := Generate(context.Background(), r, cleanNode(), cleanSnapshot(), cleanAudit(), false)
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -594,7 +635,7 @@ func TestInstallStepsCarryTheirConvergence(t *testing.T) {
 // run: on a minimal Debian the package alone ships dormant, and
 // "installed" would be a quiet box that never updates itself.
 func TestSecurityUpdatesConvergeOnTheSwitch(t *testing.T) {
-	steps, err := Generate(context.Background(), ubuntuRunner(), cleanNode(), cleanSnapshot(), cleanAudit())
+	steps, err := Generate(context.Background(), ubuntuRunner(), cleanNode(), cleanSnapshot(), cleanAudit(), false)
 	if err != nil {
 		t.Fatal(err)
 	}

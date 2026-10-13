@@ -22,8 +22,20 @@ import (
 // commands in full so it can be reviewed before anything runs. When
 // the audit demands decisions, the plan refuses and lists them.
 func runNodePlan(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	// --decide carries the operator's answer past Decide findings:
+	// apply re-verifies everything accepted; aborts still block
+	decided := false
+	names := make([]string, 0, len(args))
+	for _, a := range args {
+		if a == "--decide" {
+			decided = true
+			continue
+		}
+		names = append(names, a)
+	}
+	args = names
 	if len(args) != 1 {
-		fmt.Fprintln(stderr, "usage: mymo node plan <name>")
+		fmt.Fprintln(stderr, "usage: mymo node plan <name> [--decide]")
 		return exitUsage
 	}
 	store, ok := openStore(stderr)
@@ -58,7 +70,7 @@ func runNodePlan(ctx context.Context, args []string, stdout, stderr io.Writer) i
 		return exitErr
 	}
 
-	steps, err := plan.Generate(ctx, client, node, snapshot, audit)
+	steps, err := plan.Generate(ctx, client, node, snapshot, audit, decided)
 	var blocked *plan.BlockedError
 	if errors.As(err, &blocked) {
 		node.Facts = snapshot
@@ -73,6 +85,7 @@ func runNodePlan(ctx context.Context, args []string, stdout, stderr io.Writer) i
 		}
 		_ = store.UpdateNode(node)
 		printPlanBlocked(stdout, blocked)
+		fmt.Fprintln(stderr, "decisions are yours: resolve these on the node, or pass --decide to plan over them (apply re-verifies).")
 		return pfExitDecide
 	}
 	if err != nil {

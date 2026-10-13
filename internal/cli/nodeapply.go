@@ -82,14 +82,22 @@ func runNodeApply(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		fmt.Fprintf(stderr, "mymo node apply: audit failed: %v\n", err)
 		return exitErr
 	}
-	steps, err := plan.Generate(ctx, client, node, snapshot, audit)
+	// --decide carries the operator's answer past Decide findings;
+	// the typed name below stays the real gate
+	decided := false
+	for _, a := range args {
+		if a == "--decide" {
+			decided = true
+		}
+	}
+	steps, err := plan.Generate(ctx, client, node, snapshot, audit, decided)
 	var blocked *plan.BlockedError
 	if errors.As(err, &blocked) {
 		node.Facts = snapshot
 		node.LastCheck = domain.CheckState{At: time.Now()}
 		_ = store.UpdateNode(node)
 		printPlanBlocked(stdout, blocked)
-		fmt.Fprintln(stderr, "mymo applies nothing past a decision; resolve these on the node first.")
+		fmt.Fprintln(stderr, "mymo applies nothing past an undecided audit; resolve these on the node, or pass --decide (apply re-verifies).")
 		return pfExitDecide
 	}
 	if err != nil {

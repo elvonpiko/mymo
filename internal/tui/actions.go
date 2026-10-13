@@ -341,10 +341,10 @@ func (m Model) runPlan() (tea.Model, tea.Cmd) {
 				return planMsg{node: name, err: err}
 			}
 			defer c.Close()
-			steps, err := plan.Generate(ctx, c, n, snap, audit)
+			steps, err := plan.Generate(ctx, c, n, snap, audit, m.pfDecided)
 			return planMsg{node: name, steps: steps, err: err}
 		}
-		steps, err := plan.Generate(ctx, client, n, snap, audit)
+		steps, err := plan.Generate(ctx, client, n, snap, audit, m.pfDecided)
 		return planMsg{node: name, steps: steps, err: err}
 	})
 }

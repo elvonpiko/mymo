@@ -100,12 +100,14 @@ func (e *BlockedError) Error() string {
 }
 
 // Generate builds the change list for one node from its fresh
-// snapshot and deep audit. It refuses to plan anything when the
-// audit's verdict is decide or abort, listing exactly what stands in
-// the way.
-func Generate(ctx context.Context, r preflight.Runner, n domain.Node, f facts.Node, a preflight.Audit) ([]Step, error) {
+// snapshot and deep audit. It refuses to plan past an undecided
+// decision or an abort, listing exactly what stands in the way.
+// A decided audit plans: the operator took the calls mymo refuses
+// to make, and apply re-verifies everything it accepted — but an
+// abort is never decidable, whatever the operator says.
+func Generate(ctx context.Context, r preflight.Runner, n domain.Node, f facts.Node, a preflight.Audit, decided bool) ([]Step, error) {
 	checks := preflight.Evaluate(f, a)
-	if worst := preflight.Verdict(checks); worst >= preflight.Decide {
+	if worst := preflight.Verdict(checks); worst >= preflight.Decide && (worst > preflight.Decide || !decided) {
 		var decisions []preflight.Check
 		for _, c := range checks {
 			if c.Outcome >= preflight.Decide {
