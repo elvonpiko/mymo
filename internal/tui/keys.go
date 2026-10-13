@@ -130,30 +130,32 @@ func (k loadingKeymap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{{k.back}, {k.help, k.quit}}
 }
 
-// Preflight keymap: a clear verdict continues to the plan, anything
-// else leaves.
+// Preflight keymap: a clear verdict continues to the plan, a
+// decision can be taken, anything else leaves.
 type preflightKeymap struct {
-	plan key.Binding
-	back key.Binding
-	help key.Binding
-	quit key.Binding
+	plan   key.Binding
+	decide key.Binding
+	back   key.Binding
+	help   key.Binding
+	quit   key.Binding
 }
 
 func newPreflightKeymap() preflightKeymap {
 	return preflightKeymap{
-		plan: key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "plan")),
-		back: key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
-		help: key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
-		quit: key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
+		plan:   key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "plan")),
+		decide: key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "decide + plan")),
+		back:   key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
+		help:   key.NewBinding(key.WithKeys("?", "help"), key.WithHelp("?", "help")),
+		quit:   key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
 	}
 }
 
 func (k preflightKeymap) ShortHelp() []key.Binding {
-	return []key.Binding{k.plan, k.back, k.help, k.quit}
+	return []key.Binding{k.plan, k.decide, k.back, k.help, k.quit}
 }
 
 func (k preflightKeymap) FullHelp() [][]key.Binding {
-	return [][]key.Binding{{k.plan, k.back}, {k.help, k.quit}}
+	return [][]key.Binding{{k.plan, k.decide, k.back}, {k.help, k.quit}}
 }
 
 // Plan keymap: the plan changes nothing until its author applies it.

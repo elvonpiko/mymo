@@ -282,8 +282,8 @@ func TestPlanBlockedByDecisionsToasts(t *testing.T) {
 	if m.cur().kind != scNodePreflight {
 		t.Fatalf("enter started planning past decisions: %v", m.cur().kind)
 	}
-	if m.toast == nil || !strings.Contains(m.toast.text, "resolve the decisions") {
-		t.Fatalf("blocked enter must toast: %+v", m.toast)
+	if m.toast == nil || !strings.Contains(m.toast.text, "press d to proceed") {
+		t.Fatalf("blocked enter must toast the way through: %+v", m.toast)
 	}
 }
 
@@ -378,7 +378,7 @@ func TestToastRidesTheFooterRow(t *testing.T) {
 	lines := strings.Split(view(m), "\n")
 	// the notice takes the footer row, centered — never the header
 	footer := lines[len(lines)-2]
-	if !strings.Contains(footer, "resolve the decisions above, then plan") {
+	if !strings.Contains(footer, "press d to proceed") {
 		t.Errorf("toast not in the footer row: %q", footer)
 	}
 	if leadSpaces(footer) < 8 {
@@ -465,5 +465,48 @@ func TestOverflowingCheckScrollsInsteadOfClipping(t *testing.T) {
 	m = press(t, m, "k")
 	if back := ansiStrip(view(m)); back != before {
 		t.Errorf("k did not return to the first finding:\n%s", back)
+	}
+}
+
+// The duplicate-declaration sshd finding is a Decide: the box is
+// fixable by hand or provable by apply, and both paths belong to
+// the operator. The check page must offer the decision — a dead
+// end with no key is a bug, not a gate.
+func TestPreflightDecideOffersTheKey(t *testing.T) {
+	s := readyStore(t)
+	seedNode(t, s, "web-1")
+	m := press(t, New(s), "n", "enter")
+	snap := richSnapshot("web-1")
+	m = observe(t, m, "web-1", snap)
+
+	// the audit lands with sshd's classic cloud-init conflict:
+	// password authentication declared twice, first-match-wins
+	audit := cannedAudit()
+	audit.SSHDirectives = map[string][]string{"passwordauthentication": {"yes", "yes"}}
+	m = press(t, m, "I")
+	m = step(t, m, pfDoneMsg{node: "web-1", snap: snap, audit: audit})
+
+	if m.pfVerdict != preflight.Decide {
+		t.Fatalf("duplicate declarations should decide, not pass: %v", m.pfVerdict)
+	}
+	out := ansiStrip(view(m))
+	if !strings.Contains(out, "d decide") {
+		t.Errorf("the footer must offer the decision key:\n%s", out)
+	}
+
+	// enter alone explains itself instead of dead-ending
+	m = press(t, m, "enter")
+	if !strings.Contains(m.toast.text, "press d to proceed") {
+		t.Errorf("the gate should name the way through: %q", m.toast.text)
+	}
+
+	// d takes the decision and plans — the plan is read-only, so
+	// deciding costs nothing; apply owns the real gate
+	m = press(t, m, "d")
+	if m.cur().kind != scNodePlan {
+		t.Fatalf("the decision did not open the plan: %v", m.cur().kind)
+	}
+	if !m.pfDecided {
+		t.Error("the decision was not recorded")
 	}
 }

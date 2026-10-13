@@ -83,6 +83,7 @@ type Model struct {
 	// flow refreshes them
 	pfChecks  []preflight.Check
 	pfVerdict preflight.Outcome
+	pfDecided bool
 	// pfScroll walks the check rows when the card cannot hold them
 	// all at once: the rows move, the verdict and the way forward
 	// stay pinned
@@ -561,6 +562,10 @@ func (m Model) updateScreenKeys(msg tea.KeyPressMsg, str string) (tea.Model, tea
 				}
 				return m, nil
 			}
+		}
+		if str == "d" && m.pfVerdict == preflight.Decide {
+			m.pfDecided = true
+			return m.runPlan()
 		}
 		if str == "enter" {
 			return m.runPlan()
@@ -1285,6 +1290,9 @@ func (m Model) keymap() help.KeyMap {
 		// blocked audit drops the key from the footer, not from the
 		// screen
 		km.plan.SetEnabled(m.pfVerdict == preflight.Pass || m.pfVerdict == preflight.Adopt)
+		// the decision key exists exactly when the verdict leaves
+		// one to take
+		km.decide.SetEnabled(m.pfVerdict == preflight.Decide)
 		return km
 	case scNodePlan:
 		if m.loading.active {

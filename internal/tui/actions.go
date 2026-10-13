@@ -235,6 +235,8 @@ func (m Model) handlePreflightDone(msg pfDoneMsg) (tea.Model, tea.Cmd) {
 	verdict := preflight.Verdict(checks)
 	m.pfChecks = checks
 	m.pfVerdict = verdict
+	// a fresh audit starts the decision over
+	m.pfDecided = false
 	// a fresh check opens where its story points: passing rows read
 	// from the top, but when findings stand between the box and the
 	// plan the page opens on the first of them — the passing rows
@@ -304,7 +306,10 @@ func (m Model) runPlan() (tea.Model, tea.Cmd) {
 	if m.pfVerdict == preflight.Abort {
 		return m, m.notify("this node cannot be prepared — see the aborts above", toastErr)
 	}
-	if m.pfVerdict != preflight.Pass && m.pfVerdict != preflight.Adopt {
+	if m.pfVerdict == preflight.Decide && !m.pfDecided {
+		return m, m.notify("decisions are yours: fix the box, or press d to proceed", toastWarn)
+	}
+	if m.pfVerdict != preflight.Pass && m.pfVerdict != preflight.Adopt && m.pfVerdict != preflight.Decide {
 		return m, m.notify("resolve the decisions above, then plan", toastWarn)
 	}
 	n := m.selNode
