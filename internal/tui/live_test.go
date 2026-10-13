@@ -3,6 +3,9 @@ package tui
 import (
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/elvonpiko/mymo/internal/domain"
 )
 
 const sampleLiveOut = `0.08 0.10 0.09 1/126 4567
@@ -105,8 +108,19 @@ func TestLiveSamplesFlow(t *testing.T) {
 	if len(m.liveSparkMem) != 2 || m.liveSparkMem[1] != 60 {
 		t.Fatalf("mem spark = %v, want [50 60]", m.liveSparkMem)
 	}
+	// the springs carry the readings to the card: ticks drive them
+	// until they settle
+	settled := false
+	for i := 0; i < 40 && !settled; i++ {
+		mm, _ := m.Update(animTickMsg{seq: m.liveSeq})
+		m = mm.(Model)
+		settled = m.liveAnim.cpu.settled() && m.liveAnim.mem.settled()
+	}
+	if !settled {
+		t.Fatal("the cpu spring never settled")
+	}
 	got := view(m)
-	for _, want := range []string{"LIVE", "10%", "▄▅", "40 B/100 B avail", "0.12", "LOAD"} {
+	for _, want := range []string{"LIVE", "10%", "▁", "▰▱", "40 B/100 B avail", "0.12", "LOAD"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("live card missing %q:\n%s", want, got)
 		}
@@ -310,5 +324,154 @@ func TestPlanFlowPausesSamplingToo(t *testing.T) {
 	m = press(t, m, "esc") // home to the observe page
 	if !m.live {
 		t.Fatal("sampling did not resume on the observe page")
+	}
+}
+
+// The network counters come from /proc/net/dev: every interface
+// summed, the loopback excluded — local chatter is not the box
+// talking to the world.
+func TestParseLiveCountsNetworkInterfaces(t *testing.T) {
+	out := "0.10 0.10 0.10 1/100 1000\n" +
+		"MemTotal:       100 kB\n" +
+		"MemAvailable:    50 kB\n" +
+		"cpu  10 0 0 90 0 0 0 0 0 0\n" +
+		"Inter-|   Receive                                                |  Transmit\n" +
+		" face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets\n" +
+		"  lo: 999999 100 0 0 0 0 0 0 999999 100\n" +
+		"  eth0: 1000 10 0 0 0 0 0 0 2000 20\n" +
+		"  eth1: 300 5 0 0 0 0 0 0 50 2\n"
+	s := parseLive(out)
+	if s.rxBytes != 1300 || s.txBytes != 2050 {
+		t.Errorf("rx/tx = %d/%d, want 1300/2050", s.rxBytes, s.txBytes)
+	}
+	if s.load != "0.10" || s.memTotal != 100*1024 || s.memAvail != 50*1024 {
+		t.Errorf("the rest of the sample did not parse: %+v", s)
+	}
+}
+
+// docker ps answers names and statuses; only "Up" containers are
+// running, and the parse never invents one.
+func TestParseDockerNamesTheRunning(t *testing.T) {
+	out := "mymo-api-r2\tUp 3 hours\n" +
+		"mymo-web-r1\tUp 2 minutes\n" +
+		"old-thing\tExited (0) 5 minutes ago\n" +
+		"\n"
+	names := parseDocker(out)
+	if len(names) != 2 || names[0] != "mymo-api-r2" || names[1] != "mymo-web-r1" {
+		t.Errorf("running containers = %v", names)
+	}
+}
+
+// The springs are the animation: a reading aims, ticks carry the
+// number to it, and the ticker rests once it lands — a calm card
+// costs nothing.
+func TestSpringsCarryReadingsAndRest(t *testing.T) {
+	s := readyStore(t)
+	seedNode(t, s, "web-1")
+	m := press(t, New(s), "n", "enter")
+	m = observe(t, m, "web-1", richSnapshot("web-1"))
+
+	m = step(t, m, liveSampleMsg{seq: m.liveSeq, s: liveSample{
+		load: "0.10", memTotal: 100, memAvail: 50,
+		busy: 100, idle: 900, total: 1000,
+	}})
+	if !m.liveAnim.ticking {
+		t.Fatal("a first reading should wake the ticker")
+	}
+	// settle the memory spring alone
+	rested := false
+	for i := 0; i < 60 && !rested; i++ {
+		mm, cmd := m.Update(animTickMsg{seq: m.liveSeq})
+		m = mm.(Model)
+		if m.liveAnim.mem.settled() && !m.liveAnim.cpu.has {
+			if cmd != nil {
+				t.Fatal("the ticker re-armed with nothing moving")
+			}
+			rested = true
+			if m.liveAnim.ticking {
+				t.Fatal("the ticker never rested")
+			}
+		}
+	}
+	if !rested {
+		t.Fatal("the memory spring never settled")
+	}
+	if int(m.liveAnim.mem.pos+0.5) != 50 {
+		t.Errorf("memory reading = %v, want 50", m.liveAnim.mem.pos)
+	}
+}
+
+// The LIVE card carries the gadgets: network rates, the memory bar,
+// and docker's running containers — each honest about what it does
+// not know.
+func TestLiveCardCarriesTheGadgets(t *testing.T) {
+	s := readyStore(t)
+	seedNode(t, s, "web-1")
+	m := press(t, New(s), "n", "enter")
+	m = observe(t, m, "web-1", richSnapshot("web-1"))
+
+	now := time.Now()
+	m = step(t, m, liveSampleMsg{seq: m.liveSeq, s: liveSample{
+		load: "0.10", memTotal: 100, memAvail: 50,
+		busy: 100, idle: 900, total: 1000,
+		rxBytes: 1000, txBytes: 500, at: now,
+	}})
+	m = step(t, m, liveSampleMsg{seq: m.liveSeq, s: liveSample{
+		load: "0.12", memTotal: 100, memAvail: 40,
+		busy: 200, idle: 1800, total: 2000,
+		rxBytes: 4000, txBytes: 2500, at: now.Add(2 * time.Second),
+	}, dockOK: true, dockers: []string{"mymo-api-r2", "mymo-web-r1", "worker", "extra-1", "extra-2"}})
+	for i := 0; i < 40; i++ {
+		mm, _ := m.Update(animTickMsg{seq: m.liveSeq})
+		m = mm.(Model)
+	}
+	got := ansiStrip(view(m))
+	for _, want := range []string{
+		"NET", "in 1.5 KiB/s", "out 1000 B/s", // 3000 and 2000 bytes over 2s
+		"MEM", "▰", "LOAD", "0.12",
+		"DOCK", "5 running: mymo-api-r2 mymo-web-r1 worker", "+2 more",
+		"UP",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("live card missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "extra-1") {
+		t.Errorf("the fold leaked a name:\n%s", got)
+	}
+}
+
+// The mymo row sits under the LIVE card on a managed box: the
+// applications, their releases, and the last deploy — one honest
+// line. An unmanaged box keeps its air.
+func TestManagedLineNamesWhatMymoManages(t *testing.T) {
+	s := readyStore(t)
+	n := seedNode(t, s, "web-1")
+	n.Bootstrap = domain.Bootstrap{State: domain.BootstrapReady}
+	if err := s.UpdateNode(n); err != nil {
+		t.Fatal(err)
+	}
+	app := sampleApp("api", "web-1")
+	app.Releases = []domain.Release{
+		{ID: 1, State: domain.ReleaseRetired, DeployedAt: time.Now().Add(-3 * time.Hour)},
+		{ID: 2, State: domain.ReleaseActive, DeployedAt: time.Now().Add(-25 * time.Hour)},
+	}
+	seedApp(t, s, app)
+	m := press(t, New(s), "n", "enter")
+	m = observe(t, m, "web-1", richSnapshot("web-1"))
+	got := ansiStrip(view(m))
+	for _, want := range []string{"mymo · 1 application", "2 releases", "last deploy 3 hours ago"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the mymo row is missing %q:\n%s", want, got)
+		}
+	}
+
+	// an unmanaged box owes no row
+	s2 := readyStore(t)
+	seedNode(t, s2, "web-2")
+	m2 := press(t, New(s2), "n", "enter")
+	m2 = observe(t, m2, "web-2", richSnapshot("web-2"))
+	if strings.Contains(ansiStrip(view(m2)), "mymo · ") {
+		t.Errorf("an unmanaged box has no mymo row:\n%s", ansiStrip(view(m2)))
 	}
 }

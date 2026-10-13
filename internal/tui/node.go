@@ -96,9 +96,44 @@ func (m Model) nodeView() string {
 		b.WriteString("\n\n")
 		b.WriteString(titledCard("LIVE", padLines(m.liveCardInner(), m.cardW())))
 	}
+	// the mymo row: what this box is to mymo, one line under the
+	// motion — applications, their releases, the last deploy
+	if nodeIsManaged(n) && m.store != nil {
+		if apps, err := m.store.AppsOnNode(n.Name); err == nil && len(apps) > 0 {
+			b.WriteString("\n\n")
+			b.WriteString(m.managedLine(apps))
+		}
+	}
 	// the verbs live in the footer and the keyboard card; the rows
 	// the menu spent stay with the page
 	return fitHeight(b.String(), m.contentHeight)
+}
+
+// managedLine renders the mymo summary under the LIVE card: the
+// applications mymo manages here, the releases behind them, and
+// when the last one moved — the box's relationship with mymo in
+// one honest row.
+func (m Model) managedLine(apps []domain.App) string {
+	releases := 0
+	var last time.Time
+	for _, a := range apps {
+		for _, r := range a.Releases {
+			releases++
+			if r.DeployedAt.After(last) {
+				last = r.DeployedAt
+			}
+		}
+	}
+	line := brandStyle.Render("mymo") + dimStyle.Render(" · ") +
+		textStyle.Render(fmt.Sprintf("%d %s", len(apps), plural("application", len(apps))))
+	if releases > 0 {
+		line += dimStyle.Render(" · ") +
+			textStyle.Render(fmt.Sprintf("%d %s", releases, plural("release", releases)))
+	}
+	if !last.IsZero() {
+		line += dimStyle.Render(" · ") + textStyle.Render("last deploy "+ago(last))
+	}
+	return line
 }
 
 // loadingView is the loading ceremony, shared by any wait mymo owes

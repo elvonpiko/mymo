@@ -352,7 +352,7 @@ func TestObservePageSectionsBreathe(t *testing.T) {
 	}
 	// air around every section — the heading breathes above the
 	// cards like everywhere else in mymo
-	for _, i := range []int{5, 12, 17} {
+	for _, i := range []int{5, 12, 18} {
 		if strings.Trim(lines[i], "\u2502 ") != "" {
 			t.Errorf("row %d should be air between sections: %q", i, lines[i])
 		}
@@ -375,8 +375,8 @@ func TestObservePageSectionsBreathe(t *testing.T) {
 			t.Errorf("SYSTEM card carries snapshot trivia: %q", r)
 		}
 	}
-	if !strings.Contains(lines[15], "UP") || !strings.Contains(lines[15], "1d 18h") {
-		t.Errorf("LIVE card lost the uptime: %q", lines[15])
+	if !strings.Contains(lines[16], "UP") || !strings.Contains(lines[16], "1d 18h") {
+		t.Errorf("LIVE card lost the uptime: %q", lines[16])
 	}
 }
 

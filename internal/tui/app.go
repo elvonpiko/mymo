@@ -78,6 +78,11 @@ type Model struct {
 	liveCPU      int // -1 until two samples allow a delta
 	liveSparkCPU []int
 	liveSparkMem []int
+	liveNetRx    float64 // bytes/s between the last two samples
+	liveNetTx    float64
+	liveDocker   []string  // running containers by name, live
+	liveDockOK   bool      // docker answered the last sample
+	liveAnim     animState // the harmonica springs behind the numbers
 
 	// preflight results for the open audit screen; re-entering the
 	// flow refreshes them
@@ -335,6 +340,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case liveSampleMsg:
 		return m.handleLiveSample(msg)
+	case animTickMsg:
+		return m.handleAnimTick(msg)
 
 	case liveErrMsg:
 		return m.handleLiveErr(msg)

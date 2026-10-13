@@ -14,6 +14,7 @@ const (
 	colLavender = "#b4befe"
 	colSky      = "#89dceb"
 	colTeal     = "#94e2d5"
+	colPeach    = "#fab387"
 	colGreen    = "#a6e3a1"
 	colYellow   = "#f9e2af"
 	colRed      = "#f38ba8"
@@ -36,6 +37,9 @@ var (
 	errStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color(colRed))
 	accentStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colTeal))
 	codeStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color(colSky))
+	inStyle      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colGreen))
+	outStyle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colPeach))
+	barStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color(colTeal))
 
 	itemStyle    = lipgloss.NewStyle()
 	itemSelStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colText))
