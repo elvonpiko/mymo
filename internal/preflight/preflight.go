@@ -651,8 +651,9 @@ func Evaluate(f facts.Node, s Audit) []Check {
 	case len(pwForeign) == 1 && pwForeign[0] == "yes":
 		checks = append(checks, Check{"sshd", "sshd", Pass, "password auth is on — hardened after key access is proven", ""})
 	case len(pwForeign) > 1:
-		checks = append(checks, Check{"sshd", "sshd", Decide, "conflicting PasswordAuthentication values in sshd configuration — resolve or let mymo verify with sshd -T at apply",
-			"sudo sshd -T | grep -i passwordauthentication shows the effective value — remove the stray override, then check again"})
+		checks = append(checks, Check{"sshd", "sshd", Decide,
+			"password authentication is declared more than once — sshd answers whichever declaration comes first, so the effective posture depends on file order; resolve the duplicates, or let mymo verify the effective value with sshd -T at apply",
+			"sudo sshd -T | grep -i passwordauthentication shows the effective value today · sudo grep -rni passwordauthentication /etc/ssh/sshd_config /etc/ssh/sshd_config.d/ names every declaration — remove the stray one, then check again"})
 	}
 
 	return checks

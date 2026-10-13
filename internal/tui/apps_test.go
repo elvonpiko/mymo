@@ -92,7 +92,7 @@ func TestAppsEnterOpensTheDetail(t *testing.T) {
 	}
 	m = press(t, m, "?")
 	out = ansiStrip(view(m))
-	for _, verb := range []string{"Live status", "Logs", "Restart", "Rollback", "Shell", "quit — it asks first"} {
+	for _, verb := range []string{"Live status", "Logs", "Restart", "Rollback", "Shell", "quit"} {
 		if !strings.Contains(out, verb) {
 			t.Errorf("the keyboard card is missing the %q verb:\n%s", verb, out)
 		}

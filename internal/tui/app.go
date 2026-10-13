@@ -1345,7 +1345,7 @@ func (m Model) helpView() string {
 	}
 	inner += faintStyle.Render("[?]") + textStyle.Render(" close    ") +
 		faintStyle.Render("[h]") + textStyle.Render(" home    ") +
-		faintStyle.Render("[q]") + textStyle.Render(" quit — it asks first\n\n")
+		faintStyle.Render("[q]") + textStyle.Render(" quit\n\n")
 	inner += faintStyle.Render("press any key to close")
 	panel := panelStyle.Render(inner)
 	return lipgloss.Place(m.contentWidth, m.contentHeight,

@@ -350,10 +350,9 @@ func TestObservePageSectionsBreathe(t *testing.T) {
 	if !strings.Contains(lines[4], "root@203.0.113.10:22") || !strings.Contains(lines[4], "agent auth") {
 		t.Errorf("heading lost the connection identity: %q", lines[4])
 	}
-	// air between the cards and the actions — the mymo state rides
-	// the heading badge, so the page affords full breathing at the
-	// 19-row floor with every action visible
-	for _, i := range []int{11, 16} {
+	// air around every section — the heading breathes above the
+	// cards like everywhere else in mymo
+	for _, i := range []int{5, 12, 17} {
 		if strings.Trim(lines[i], "\u2502 ") != "" {
 			t.Errorf("row %d should be air between sections: %q", i, lines[i])
 		}
@@ -361,7 +360,7 @@ func TestObservePageSectionsBreathe(t *testing.T) {
 	// SYSTEM and LIVE keep their titles; the heading badge carries
 	// the mymo state; the sections keep their titles at the
 	// 19-row floor, and the verb keys live in the footer's one row
-	if !strings.Contains(lines[5], "SYSTEM") || !strings.Contains(lines[12], "LIVE") {
+	if !strings.Contains(lines[6], "SYSTEM") || !strings.Contains(lines[13], "LIVE") {
 		t.Fatalf("section layout shifted:\n%s", strings.Join(lines, "\n"))
 	}
 	if !strings.Contains(lines[4], "not a mymo node") {
@@ -371,13 +370,13 @@ func TestObservePageSectionsBreathe(t *testing.T) {
 		t.Errorf("the verb keys are not in the footer's row: %q", lines[22])
 	}
 	// uptime is motion: it lives in the LIVE card, never in SYSTEM
-	for _, r := range lines[5:11] {
+	for _, r := range lines[6:12] {
 		if strings.Contains(r, "Uptime") || strings.Contains(r, "User") {
 			t.Errorf("SYSTEM card carries snapshot trivia: %q", r)
 		}
 	}
-	if !strings.Contains(lines[14], "UP") || !strings.Contains(lines[14], "1d 18h") {
-		t.Errorf("LIVE card lost the uptime: %q", lines[13])
+	if !strings.Contains(lines[15], "UP") || !strings.Contains(lines[15], "1d 18h") {
+		t.Errorf("LIVE card lost the uptime: %q", lines[15])
 	}
 }
 
@@ -399,10 +398,10 @@ func TestCardsSpanTheStage(t *testing.T) {
 		}
 		return utf8.RuneCountInString(line[:i])
 	}
-	top := colOf(lines[5], "\u256e")     // ╮
-	bottom := colOf(lines[10], "\u256f") // ╯
+	top := colOf(lines[6], "\u256e")     // ╮
+	bottom := colOf(lines[11], "\u256f") // ╯
 	if top < 0 || top != bottom {
-		t.Errorf("card corners misaligned: top=%d bottom=%d\n%s", top, bottom, lines[4]+"\n"+lines[9])
+		t.Errorf("card corners misaligned: top=%d bottom=%d\n%s", top, bottom, lines[6]+"\n"+lines[11])
 	}
 	// and the card spans the wide stage instead of hugging the old
 	// fixed width

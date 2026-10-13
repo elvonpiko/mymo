@@ -88,7 +88,7 @@ func (m Model) nodeView() string {
 	// keeps every row it had
 	b.WriteString("\n")
 	b.WriteString(m.nodeHeadingLine(n))
-	b.WriteString("\n")
+	b.WriteString("\n\n")
 	b.WriteString(m.systemCard(n))
 	// the LIVE card exists only once something is there to sample,
 	// and spans the same width as the SYSTEM card beside it
