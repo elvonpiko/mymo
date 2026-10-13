@@ -226,7 +226,7 @@ func TestAuditBorrowsTheLiveConnectionSafely(t *testing.T) {
 
 	// the audit borrows the connection: sampling pauses, the
 	// connection stays open for the audit to use
-	m = press(t, m, "p")
+	m = press(t, m, "I")
 	if m.live || !m.livePaused || m.liveClient == nil {
 		t.Fatalf("audit did not pause sampling cleanly: live=%v paused=%v client=%v",
 			m.live, m.livePaused, m.liveClient != nil)
@@ -266,7 +266,7 @@ func TestEscDuringAuditWaitsForTheAuditToLand(t *testing.T) {
 	seedNode(t, s, "web-1")
 	m := press(t, New(s), "n", "enter")
 	m = observe(t, m, "web-1", richSnapshot("web-1"))
-	m = press(t, m, "p")
+	m = press(t, m, "I")
 
 	// the user walks home while the audit still runs in the
 	// background: no resume until the connection is free again
@@ -292,7 +292,7 @@ func TestPlanFlowPausesSamplingToo(t *testing.T) {
 	snap := richSnapshot("web-1")
 	snap.Docker = ""
 	m = observe(t, m, "web-1", snap)
-	m = press(t, m, "p")
+	m = press(t, m, "I")
 	m = step(t, m, pfDoneMsg{node: "web-1", snap: snap, audit: cannedAudit()})
 
 	m = press(t, m, "enter")

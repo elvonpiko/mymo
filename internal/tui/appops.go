@@ -11,7 +11,6 @@ import (
 	"github.com/elvonpiko/mymo/internal/deploy"
 	"github.com/elvonpiko/mymo/internal/facts"
 
-	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
@@ -33,35 +32,19 @@ func appActionDefs(app domain.App) []actionItem {
 	}
 	defs := []actionItem{
 		{actAppStatus, "Live status",
-			"is " + rel.Container + " running right now"},
+			"is " + rel.Container + " running right now", "s", "plain"},
 		{actAppLogs, "Logs",
-			"the active release's last 100 lines"},
+			"the active release's last 100 lines", "l", "plain"},
 		{actAppRestart, "Restart",
-			"docker restart on the active release"},
+			"docker restart on the active release", "r", "warn"},
 	}
 	if _, hasTarget := app.RollbackTarget(); hasTarget {
 		defs = append(defs, actionItem{actAppRollback, "Rollback",
-			"make the previous release live — typed name confirms"})
+			"make the previous release live — typed name confirms", "b", "warn"})
 	}
 	return append(defs,
 		actionItem{actAppShell, "Shell",
-			"a real shell inside " + rel.Container})
-}
-
-// newAppActionsList builds the app page's operations list.
-func newAppActionsList(app domain.App) list.Model {
-	defs := appActionDefs(app)
-	items := make([]list.Item, 0, len(defs))
-	for _, a := range defs {
-		items = append(items, a)
-	}
-	l := list.New(items, actionDelegate{}, 80, len(defs))
-	l.SetShowTitle(false)
-	l.SetShowStatusBar(false)
-	l.SetShowHelp(false)
-	l.SetShowPagination(false)
-	l.SetFilteringEnabled(false)
-	return l
+			"a real shell inside " + rel.Container, "e", "plain"})
 }
 
 // appLiveState is the last live probe's answer about the active
@@ -319,16 +302,21 @@ func (m Model) appDetailView(s screen) string {
 		facts = append(facts, row)
 	}
 
-	// the verbs take the page's scroll verb, like every list in
-	// mymo; the record answers the space it is given. A record
-	// that cannot fit folds its oldest rows — the fold says so,
-	// and the active release never folds
-	verbs := strings.TrimSuffix(m.appActions.View(), "\n")
+	// the verbs live in the footer and the keyboard card; the
+	// record answers all the space the page has. A record that
+	// cannot fit folds its oldest rows — the fold says so, and the
+	// active release never folds
 	if len(appActionDefs(app)) == 0 {
-		verbs = faintStyle.Render("nothing to operate — this app has no active release")
+		budget := m.contentHeight - lipgloss.Height(head) - len(facts) - 2
+		if budget < 1 {
+			budget = 1
+		}
+		inner := head + strings.Join(facts, "\n") + "\n\n" +
+			strings.Join(appReleaseRows(app, w-12, budget), "\n") + "\n" +
+			faintStyle.Render("nothing to operate — this app has no active release")
+		return fitHeight(padLines(inner, w), m.contentHeight)
 	}
-	budget := m.contentHeight - lipgloss.Height(head) - len(facts) -
-		(len(appActionDefs(app)) + 4) // opening air, OPERATIONS label, its air, the final air
+	budget := m.contentHeight - lipgloss.Height(head) - len(facts) - 2
 	if budget < 1 {
 		budget = 1
 	}
@@ -336,8 +324,7 @@ func (m Model) appDetailView(s screen) string {
 
 	inner := head
 	inner += strings.Join(facts, "\n") + "\n\n"
-	inner += strings.Join(releases, "\n") + "\n\n"
-	inner += sectionLabelStyle.Render("OPERATIONS") + "\n" + verbs + "\n"
+	inner += strings.Join(releases, "\n")
 	return fitHeight(padLines(inner, w), m.contentHeight)
 }
 
@@ -476,13 +463,12 @@ func (m *Model) openApp(a domain.App) {
 	m.appLive = appLiveState{}
 	m.appLogs = nil
 	m.logsScroll = 0
-	m.appActions = newAppActionsList(a)
-	m.appActions.SetSize(m.stageW, len(appActionDefs(a))+1)
 	m.push(screen{kind: scAppDetail, node: a.Node, app: a.Name})
 }
 
-// updateAppDetailKeys walks the verbs and runs the picked one;
-// while an operation runs, the ceremony owns the keys.
+// updateAppDetailKeys runs one verb per key — the same verbs the
+// keyboard card names; while an operation runs, the ceremony owns
+// the keys.
 func (m Model) updateAppDetailKeys(s screen, str string) (tea.Model, tea.Cmd) {
 	if m.loading.active {
 		switch str {
@@ -494,25 +480,32 @@ func (m Model) updateAppDetailKeys(s screen, str string) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	switch str {
-	case "up", "k":
-		var cmd tea.Cmd
-		m.appActions, cmd = m.appActions.Update(tea.KeyPressMsg{Code: tea.KeyUp})
-		return m, cmd
-	case "down", "j":
-		var cmd tea.Cmd
-		m.appActions, cmd = m.appActions.Update(tea.KeyPressMsg{Code: tea.KeyDown})
-		return m, cmd
-	case "enter":
-		item, ok := m.appActions.SelectedItem().(actionItem)
+	app, node, ok := m.findScreenApp(s)
+	if !ok && str != "esc" && str != "?" {
+		return m, m.notify(s.app+" is not in the record — it may have been removed", toastErr)
+	}
+	run := func(id actionID) (tea.Model, tea.Cmd) {
 		if !ok {
 			return m, nil
 		}
-		app, node, ok := m.findScreenApp(s)
-		if !ok {
-			return m, m.notify(s.app+" is not in the record — it may have been removed", toastErr)
+		return m.runAppAction(actionItem{id: id}, app, node)
+	}
+	switch str {
+	case "s":
+		return run(actAppStatus)
+	case "l":
+		return run(actAppLogs)
+	case "r":
+		return run(actAppRestart)
+	case "b":
+		if ok {
+			if _, hasTarget := app.RollbackTarget(); hasTarget {
+				return run(actAppRollback)
+			}
 		}
-		return m.runAppAction(item, app, node)
+		return m, nil
+	case "e":
+		return run(actAppShell)
 	case "esc":
 		m.pop()
 		return m, nil

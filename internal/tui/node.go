@@ -2,13 +2,10 @@ package tui
 
 import (
 	"fmt"
-	"io"
 	"strconv"
 	"strings"
 	"time"
 
-	"charm.land/bubbles/v2/list"
-	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	"github.com/elvonpiko/mymo/internal/baseline"
@@ -49,75 +46,37 @@ func actionDefs(n domain.Node) []actionItem {
 	defs := make([]actionItem, 0, 5)
 	if !nodeIsManaged(n) {
 		defs = append(defs, actionItem{actSetup, "Initial setup",
-			"check · plan · apply — a mymo node, ready to deploy apps"})
+			"check · plan · apply — a mymo node, ready to deploy apps",
+			"I", "accent"})
 	}
-	// SSH leads the managed list, and applications slot in after it
-	// — the same position setup hands them to. Applications are what
-	// mymo manages on a box, and it manages nothing on a box it
-	// never set up: the action arrives with the setup that earns it
-	rest := []actionItem{
-		{actSSH, "SSH", "open an interactive session on the node"},
-		{actInspect, "Inspect record", "the full stored state for this node"},
-		{actRemove, "Remove", "remove this node from mymo"},
-	}
+	// Applications are what mymo manages on a box, and it manages
+	// nothing on a box it never set up: the verb arrives with the
+	// setup that earns it
 	if nodeIsManaged(n) {
-		rest = append(rest[:1], append([]actionItem{{actApps, "Applications", "list applications on this node"}}, rest[1:]...)...)
+		defs = append(defs, actionItem{actApps, "Applications",
+			"list the applications mymo manages here", "a", "plain"})
 	}
-	return append(defs, rest...)
+	return append(defs,
+		actionItem{actSSH, "SSH", "open an interactive session on the node", "s", "plain"},
+		actionItem{actInspect, "Inspect record", "the full stored state for this node", "i", "plain"},
+		actionItem{actRemove, "Remove", "forget this box — locally only; the box is not touched", "x", "warn"},
+	)
 }
 
-// actionItem adapts a node action for the actions list.
+// actionItem is one verb: the key that runs it, the words that
+// name it, and the tone it wears in the keyboard card.
 type actionItem struct {
 	id          actionID
 	title, desc string
+	key         string
+	tone        string // accent | warn | plain
 }
 
 // FilterValue makes actions filterable by title.
 func (a actionItem) FilterValue() string { return a.title }
 
-// actionDelegate renders action rows: title plus a muted description.
-type actionDelegate struct{}
-
-func (actionDelegate) Height() int                             { return 1 }
-func (actionDelegate) Spacing() int                            { return 0 }
-func (actionDelegate) Update(_ tea.Msg, _ *list.Model) tea.Cmd { return nil }
-
-func (actionDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
-	a, ok := item.(actionItem)
-	if !ok {
-		return
-	}
-	cursor := "  "
-	titleStyle := itemStyle
-	if m.Index() == index {
-		cursor = "> "
-		titleStyle = itemSelStyle
-	}
-	if a.id == actSetup {
-		// the one action that will not be here forever is the one
-		// the eye must find first
-		titleStyle = accentStyle
-	}
-	fmt.Fprint(w, cursor+titleStyle.Width(18).Render(a.title)+dimStyle.Render(a.desc))
-}
-
 // newActionsList builds the node actions list for the node being
 // opened — the offered actions belong to the box, not the app.
-func newActionsList(n domain.Node) list.Model {
-	defs := actionDefs(n)
-	items := make([]list.Item, 0, len(defs))
-	for _, a := range defs {
-		items = append(items, a)
-	}
-	l := list.New(items, actionDelegate{}, 80, len(defs))
-	l.SetShowTitle(false)
-	l.SetShowStatusBar(false)
-	l.SetShowHelp(false)
-	l.SetShowPagination(false)
-	l.SetFilteringEnabled(false)
-	return l
-}
-
 // nodeView renders the observe page: health heading, the SYSTEM and
 // LIVE cards, and the node's actions.
 func (m Model) nodeView() string {
@@ -137,8 +96,8 @@ func (m Model) nodeView() string {
 		b.WriteString("\n\n")
 		b.WriteString(titledCard("LIVE", padLines(m.liveCardInner(), m.cardW())))
 	}
-	b.WriteString("\n\n")
-	b.WriteString(m.actions.View())
+	// the verbs live in the footer and the keyboard card; the rows
+	// the menu spent stay with the page
 	return fitHeight(b.String(), m.contentHeight)
 }
 

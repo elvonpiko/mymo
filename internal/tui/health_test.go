@@ -314,10 +314,9 @@ func TestInspectShowsRecordAndFacts(t *testing.T) {
 	nodeWithFacts(t, s, "web-1")
 	m := press(t, New(s), "n", "enter")
 	m = observe(t, m, "web-1", richSnapshot("web-1"))
-	// two downs land on Inspect record (third action — setup leads
-	// the list on an unmanaged box, and Applications waits for the
-	// setup that earns it)
-	m = press(t, m, "down", "down", "enter")
+	// i opens the inspect record — the observe page's verbs are
+	// keys now, and their words live in the keyboard card
+	m = press(t, m, "i")
 	got := view(m)
 	for _, want := range []string{
 		"Stored record", "Discovered", "Ubuntu 24.04.5 LTS", "just now", "last check", "OK just now",
@@ -360,15 +359,16 @@ func TestObservePageSectionsBreathe(t *testing.T) {
 		}
 	}
 	// SYSTEM and LIVE keep their titles; the heading badge carries
-	// the mymo state; all four actions survive the 19-row floor
+	// the mymo state; the sections keep their titles at the
+	// 19-row floor, and the verb keys live in the footer's one row
 	if !strings.Contains(lines[5], "SYSTEM") || !strings.Contains(lines[12], "LIVE") {
 		t.Fatalf("section layout shifted:\n%s", strings.Join(lines, "\n"))
 	}
 	if !strings.Contains(lines[4], "not a mymo node") {
 		t.Errorf("the heading lost the mymo state: %q", lines[4])
 	}
-	if !strings.Contains(lines[20], "Remove") {
-		t.Errorf("last action clipped at the floor: %q", lines[20])
+	if !strings.Contains(ansiStrip(lines[22]), "I setup") || !strings.Contains(ansiStrip(lines[22]), "x remove") {
+		t.Errorf("the verb keys are not in the footer's row: %q", lines[22])
 	}
 	// uptime is motion: it lives in the LIVE card, never in SYSTEM
 	for _, r := range lines[5:11] {

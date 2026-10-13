@@ -82,13 +82,22 @@ func TestAppsEnterOpensTheDetail(t *testing.T) {
 			t.Errorf("detail page missing %q:\n%s", want, out)
 		}
 	}
-	// the page is operational now: the verbs are on it, not
-	// behind a CLI hint — rollback appears because r1 is kept
-	for _, verb := range []string{"OPERATIONS", "Live status", "Logs", "Restart", "Rollback", "Shell"} {
+	// the page is key-first now: the verbs sit in the footer as
+	// keys — rollback appears because r1 is kept — and their
+	// words live in the keyboard card
+	for _, verb := range []string{"s status", "l logs", "r restart", "b rollback", "e shell"} {
 		if !strings.Contains(out, verb) {
-			t.Errorf("detail page missing the %q verb:\n%s", verb, out)
+			t.Errorf("detail page footer missing the %q verb:\n%s", verb, out)
 		}
 	}
+	m = press(t, m, "?")
+	out = ansiStrip(view(m))
+	for _, verb := range []string{"Live status", "Logs", "Restart", "Rollback", "Shell", "quit — it asks first"} {
+		if !strings.Contains(out, verb) {
+			t.Errorf("the keyboard card is missing the %q verb:\n%s", verb, out)
+		}
+	}
+	m = press(t, m, "x") // any key closes the card
 
 	// esc returns to the list
 	m, _ = drive(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
@@ -104,9 +113,9 @@ func TestNodeAppsPageFiltersToOneNode(t *testing.T) {
 	seedApp(t, s, sampleApp("api", "web-1"))
 	seedApp(t, s, sampleApp("celery", "web-2"))
 
-	// the applications action exists only where mymo set the box
-	// up: make web-1 a managed node, then the probe answers and the
-	// ACTIONS list — down once past SSH, into Applications
+	// the applications verb exists only where mymo set the box up:
+	// make web-1 a managed node, then the probe answers and the
+	// page's a key opens its applications
 	if n, err := s.GetNode("web-1"); err == nil {
 		n.Bootstrap.State = domain.BootstrapReady
 		if err := s.UpdateNode(n); err != nil {
@@ -115,10 +124,7 @@ func TestNodeAppsPageFiltersToOneNode(t *testing.T) {
 	}
 	m := press(t, New(s), "n", "enter")
 	m = observe(t, m, "web-1", richSnapshot("web-1"))
-	m = driveKeys(t, m,
-		tea.KeyPressMsg{Code: tea.KeyDown},
-		tea.KeyPressMsg{Code: tea.KeyEnter},
-	)
+	m = press(t, m, "a")
 	out := ansiStrip(view(m))
 	if !strings.Contains(out, "api") {
 		t.Errorf("web-1's apps missing api:\n%s", out)

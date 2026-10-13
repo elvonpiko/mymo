@@ -60,9 +60,9 @@ func TestFleetRemoveShortcut(t *testing.T) {
 	seedNode(t, s, "web-1")
 	m := press(t, New(s), "n")
 
-	m = press(t, m, "R")
+	m = press(t, m, "x")
 	if !m.confirmRemove {
-		t.Fatal("R did not open the removal gate from the fleet")
+		t.Fatal("x did not open the removal gate from the fleet")
 	}
 	got := view(m)
 	if !strings.Contains(got, "Remove web-1 from the fleet?") || !strings.Contains(got, "not touched") {
@@ -75,7 +75,7 @@ func TestFleetRemoveShortcut(t *testing.T) {
 	}
 
 	// y forgets it: still on the fleet, the list refreshed
-	m = press(t, m, "R")
+	m = press(t, m, "x")
 	m = press(t, m, "y")
 	if m.cur().kind != scFleet {
 		t.Fatalf("removal left the fleet: %v", m.cur().kind)

@@ -33,7 +33,7 @@ func TestPreflightFromObservePage(t *testing.T) {
 	m = observe(t, m, "web-1", snap)
 
 	// p starts the audit under the loading ceremony
-	m = press(t, m, "p")
+	m = press(t, m, "I")
 	if m.cur().kind != scNodePreflight {
 		t.Fatalf("p did not open the preflight screen: %v", m.cur().kind)
 	}
@@ -89,7 +89,7 @@ func TestPreflightDecideShowsBlockedPath(t *testing.T) {
 	snap := richSnapshot("web-1")
 	m = observe(t, m, "web-1", snap)
 
-	m = press(t, m, "p")
+	m = press(t, m, "I")
 	audit := cannedAudit()
 	audit.Listeners = map[int]string{80: "nginx"} // the classic conflict
 	snap.Docker = ""
@@ -118,7 +118,7 @@ func TestPreflightFailureToastsAndReturns(t *testing.T) {
 	m := press(t, New(s), "n", "enter")
 	m = observe(t, m, "web-1", richSnapshot("web-1"))
 
-	m = press(t, m, "p")
+	m = press(t, m, "I")
 	m = step(t, m, pfDoneMsg{node: "web-1", err: errString("connection lost")})
 
 	if m.cur().kind != scNode {
@@ -138,7 +138,7 @@ func TestPreflightLeavingDuringAuditStillRecords(t *testing.T) {
 	m := press(t, New(s), "n", "enter")
 	m = observe(t, m, "web-1", richSnapshot("web-1"))
 
-	m = press(t, m, "p")
+	m = press(t, m, "I")
 	m = press(t, m, "esc") // impatient user leaves mid-audit
 	if m.cur().kind != scNode {
 		t.Fatalf("esc did not cancel the audit visit: %v", m.cur().kind)
@@ -173,7 +173,7 @@ func TestPreflightNeverRevertsDeeperStates(t *testing.T) {
 
 	m := press(t, New(s), "n", "enter")
 	m = observe(t, m, "web-1", richSnapshot("web-1"))
-	m = press(t, m, "p")
+	m = press(t, m, "I")
 	m = step(t, m, pfDoneMsg{node: "web-1", snap: richSnapshot("web-1"), audit: cannedAudit()})
 
 	n, err := s.GetNode("web-1")
@@ -211,7 +211,7 @@ func TestPlanFromClearedPreflight(t *testing.T) {
 	snap := richSnapshot("web-1")
 	snap.Docker = ""
 	m = observe(t, m, "web-1", snap)
-	m = press(t, m, "p")
+	m = press(t, m, "I")
 	m = step(t, m, pfDoneMsg{node: "web-1", snap: snap, audit: cannedAudit()})
 
 	// enter continues a cleared audit into the plan flow
@@ -272,7 +272,7 @@ func TestPlanBlockedByDecisionsToasts(t *testing.T) {
 	snap := richSnapshot("web-1")
 	snap.Docker = ""
 	m = observe(t, m, "web-1", snap)
-	m = press(t, m, "p")
+	m = press(t, m, "I")
 	audit := cannedAudit()
 	audit.Listeners = map[int]string{80: "nginx"}
 	m = step(t, m, pfDoneMsg{node: "web-1", snap: snap, audit: audit})
@@ -294,7 +294,7 @@ func TestPlanRefusalKeepsLifecycleAndToasts(t *testing.T) {
 	snap := richSnapshot("web-1")
 	snap.Docker = ""
 	m = observe(t, m, "web-1", snap)
-	m = press(t, m, "p")
+	m = press(t, m, "I")
 	m = step(t, m, pfDoneMsg{node: "web-1", snap: snap, audit: cannedAudit()})
 	m = press(t, m, "enter")
 
@@ -345,13 +345,20 @@ func TestWideTerminalCentersTheStage(t *testing.T) {
 	// the page's own rows share one gutter: the opening air, then
 	// heading, then the system card — a centered block, not
 	// line-by-line scattering
-	heading, card, actions := leadSpaces(lines[4]), leadSpaces(lines[5]), leadSpaces(lines[17])
-	if heading == 0 || heading != card || heading != actions {
-		t.Errorf("stage not one centered block: heading=%d card=%d actions=%d", heading, card, actions)
+	heading, card := leadSpaces(lines[4]), leadSpaces(lines[5])
+	if heading == 0 || heading != card {
+		t.Errorf("stage not one centered block: heading=%d card=%d", heading, card)
 	}
-	// the footer centers with it
-	if got := leadSpaces(lines[28]); got < 10 {
-		t.Errorf("footer not centered at 120 cols: gutter=%d", got)
+	// the footer centers with it — the row that carries the verbs
+	footer := -1
+	for _, l := range lines {
+		if strings.Contains(l, "setup") && strings.Contains(l, "remove") {
+			footer = leadSpaces(l)
+			break
+		}
+	}
+	if footer < 10 {
+		t.Errorf("footer not centered at 120 cols: gutter=%d", footer)
 	}
 }
 
@@ -362,7 +369,7 @@ func TestToastRidesTheFooterRow(t *testing.T) {
 	snap := richSnapshot("web-1")
 	snap.Docker = ""
 	m = observe(t, m, "web-1", snap)
-	m = press(t, m, "p")
+	m = press(t, m, "I")
 	audit := cannedAudit()
 	audit.Listeners = map[int]string{80: "nginx"}
 	m = step(t, m, pfDoneMsg{node: "web-1", snap: snap, audit: audit})
@@ -393,7 +400,7 @@ func TestAbortVerdictToastsTheTruth(t *testing.T) {
 	snap := richSnapshot("web-1")
 	snap.Docker = ""
 	m = observe(t, m, "web-1", snap)
-	m = press(t, m, "p")
+	m = press(t, m, "I")
 	audit := cannedAudit()
 	audit.UID = 1000
 	audit.Sudo = false
@@ -426,7 +433,7 @@ func TestOverflowingCheckScrollsInsteadOfClipping(t *testing.T) {
 	snap := richSnapshot("web-1")
 	m = observe(t, m, "web-1", snap)
 
-	m = press(t, m, "p")
+	m = press(t, m, "I")
 	audit := cannedAudit()
 	// enough held ports and proxies to make the card taller than
 	// the floor: the rows must walk, the verdict must stay

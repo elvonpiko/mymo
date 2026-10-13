@@ -81,7 +81,7 @@ func newFleetKeymap() fleetKeymap {
 		navigate: key.NewBinding(key.WithKeys("up", "down"), key.WithHelp("↑↓", "navigate")),
 		open:     key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open")),
 		add:      key.NewBinding(key.WithKeys("N"), key.WithHelp("N", "add node")),
-		remove:   key.NewBinding(key.WithKeys("R"), key.WithHelp("R", "remove")),
+		remove:   key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "remove")),
 		back:     key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "home")),
 		filter:   key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter")),
 		settings: key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "settings")),
@@ -206,9 +206,11 @@ func (k applyReportKeymap) FullHelp() [][]key.Binding {
 // the app-host preflight.
 type nodeKeymap struct {
 	navigate key.Binding
-	open     key.Binding
 	ssh      key.Binding
 	setup    key.Binding
+	apps     key.Binding
+	inspect  key.Binding
+	remove   key.Binding
 	back     key.Binding
 	help     key.Binding
 	quit     key.Binding
@@ -217,10 +219,12 @@ type nodeKeymap struct {
 func newNodeKeymap() nodeKeymap {
 	return nodeKeymap{
 		navigate: key.NewBinding(key.WithKeys("up", "down"), key.WithHelp("↑↓", "navigate")),
-		open:     key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "select")),
 		ssh:      key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "ssh")),
-		setup:    key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "setup")),
-		back:     key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
+		setup:    key.NewBinding(key.WithKeys("I"), key.WithHelp("I", "setup")),
+		apps:     key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "apps")),
+		inspect:  key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "record")),
+		remove:   key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "remove")),
+		back:     key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "home")),
 		help:     key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 		quit:     key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
 	}
@@ -229,12 +233,12 @@ func newNodeKeymap() nodeKeymap {
 // ShortHelp keeps only the page's distinctive keys; everything else
 // waits behind ?.
 func (k nodeKeymap) ShortHelp() []key.Binding {
-	return []key.Binding{k.open, k.ssh, k.setup, k.back, k.help, k.quit}
+	return []key.Binding{k.setup, k.ssh, k.apps, k.inspect, k.remove, k.help, k.quit}
 }
 
 func (k nodeKeymap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.navigate, k.open, k.ssh, k.setup},
+		{k.navigate, k.ssh, k.setup, k.apps, k.inspect, k.remove},
 		{k.back},
 		{k.help, k.quit},
 	}
@@ -277,34 +281,42 @@ func (k appsKeymap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{{k.up, k.down, k.enter}, {k.back, k.help, k.quit}}
 }
 
-// appDetailKeymap: the verbs are the page's list — j/k walks them,
-// enter runs one; the record above folds honestly when long.
+// appDetailKeymap: the verbs are keys, one letter each — the
+// record above folds honestly when long, and the rows the menu
+// spent belong to it again.
 type appDetailKeymap struct {
-	up   key.Binding
-	down key.Binding
-	open key.Binding
-	back key.Binding
-	help key.Binding
-	quit key.Binding
+	status   key.Binding
+	logs     key.Binding
+	restart  key.Binding
+	rollback key.Binding
+	shell    key.Binding
+	back     key.Binding
+	help     key.Binding
+	quit     key.Binding
 }
 
 func newAppDetailKeymap() appDetailKeymap {
 	return appDetailKeymap{
-		up:   key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
-		down: key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
-		open: key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "run")),
-		back: key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
-		help: key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
-		quit: key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
+		status:   key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "status")),
+		logs:     key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "logs")),
+		restart:  key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "restart")),
+		rollback: key.NewBinding(key.WithKeys("b"), key.WithHelp("b", "rollback")),
+		shell:    key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "shell")),
+		back:     key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
+		help:     key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
+		quit:     key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
 	}
 }
 
 func (k appDetailKeymap) ShortHelp() []key.Binding {
-	return []key.Binding{k.up, k.down, k.open, k.back, k.help, k.quit}
+	return []key.Binding{k.status, k.logs, k.restart, k.rollback, k.shell, k.help, k.quit}
 }
 
 func (k appDetailKeymap) FullHelp() [][]key.Binding {
-	return [][]key.Binding{{k.up, k.down, k.open}, {k.back, k.help, k.quit}}
+	return [][]key.Binding{
+		{k.status, k.logs, k.restart, k.rollback, k.shell},
+		{k.back, k.help, k.quit},
+	}
 }
 
 // appLogsKeymap: one scrollable target — the tail — and the way out.

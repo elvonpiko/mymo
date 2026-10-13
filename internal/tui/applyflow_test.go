@@ -121,7 +121,7 @@ func atPlanScreenNamed(t *testing.T, runner preflight.Runner, prover apply.Prove
 	snap.Docker = ""
 	snap.Caddy = ""
 	m = observe(t, m, name, snap)
-	m = press(t, m, "p")
+	m = press(t, m, "I")
 	m = step(t, m, pfDoneMsg{node: name, snap: snap, audit: cannedAudit()})
 	m = press(t, m, "enter")
 	m = step(t, m, planMsg{node: name, steps: testPlanSteps()})

@@ -34,7 +34,6 @@ type Model struct {
 
 	stack    []screen
 	fleet    list.Model
-	actions  list.Model
 	help     help.Model
 	fullHelp help.Model
 
@@ -51,6 +50,7 @@ type Model struct {
 
 	helpOpen      bool
 	confirmRemove bool
+	confirmQuit   bool
 	// nodeCheckErr holds why the latest probe failed while the
 	// node's page is open — non-empty renders the unreachable page
 	// instead of a dashboard that would read as live
@@ -125,7 +125,6 @@ type Model struct {
 	dpResult      deploy.Result
 	dpDoneErr     string // the run's fatal error, stated on the report
 
-	appActions  list.Model       // the app detail page's operations
 	loadingApp  string           // the app an in-flight operation belongs to
 	rbTyped     string           // the typed-name gate for a rollback
 	appProgress chan string      // the rollback engine's live progress pump
@@ -247,7 +246,8 @@ func New(store *state.Store) Model {
 	// typing; a first-timer meets the intro first.
 	m.descAnim = m.introDone
 	m.fleet = newFleetList(m.nodes)
-	m.actions = newActionsList(domain.Node{})
+	// the observe page's verbs are keys; the keyboard card carries
+	// their words
 	m.spinner = newCheckSpinner()
 	m.liveCPU = -1
 	applyHelpPalette(&m.help)
@@ -463,6 +463,27 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// to inputActive and inherits the rule for free.
 	if m.inputActive() {
 		return m.updateScreenKeys(msg, str)
+	}
+
+	// the quit gate owns every key while it is up: y answers it,
+	// anything else keeps the session
+	if m.confirmQuit {
+		switch str {
+		case "y", "Y", "enter":
+			return m, tea.Quit
+		case "esc", "n", "N", "q", "?", "h":
+			m.confirmQuit = false
+			return m, nil
+		}
+		return m, nil
+	}
+
+	// q is the one exit, and it asks first: a session is easy to
+	// close by accident and the fleet keeps running without it. A
+	// gate already in flight keeps its own keys
+	if str == "q" && !m.confirmRemove && !m.helpOpen {
+		m.confirmQuit = true
+		return m, nil
 	}
 
 	// h is home from anywhere: one fixed way back, on every page —
@@ -738,9 +759,9 @@ func (m Model) updateFleetKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 		return m, nil
-	case "R":
-		// the same removal gate the node page offers, opened from
-		// the list: y forgets the box, esc keeps it
+	case "x":
+		// the same removal gate every page offers under the same
+		// key: y forgets the box, esc keeps it
 		if item, ok := m.fleet.SelectedItem().(fleetItem); ok {
 			m.selNode = item.node
 			m.confirmRemove = true
@@ -773,18 +794,26 @@ func (m Model) updateNodeKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "s":
 		return m.runSSH()
-	case "p":
-		// the shortcut exists exactly when the action does: a
-		// managed node has no setup to offer and no p to press
+	case "I":
+		// the key exists exactly when the action does: a managed
+		// node has no setup to offer and no I to press
 		if !nodeIsManaged(m.selNode) {
 			return m.runPreflight()
 		}
 		return m, nil
-	case "enter":
-		if a, ok := m.actions.SelectedItem().(actionItem); ok {
-			return m.runAction(a)
+	case "a":
+		// applications are what mymo manages here, and it manages
+		// nothing on a box it never set up
+		if nodeIsManaged(m.selNode) {
+			m.reloadApps()
+			m.appCursor = 0
+			m.push(screen{kind: scNodeApps, node: m.selNode.Name})
 		}
 		return m, nil
+	case "i":
+		return m.runAction(actionItem{id: actInspect})
+	case "x":
+		return m.runAction(actionItem{id: actRemove})
 	}
 	return m.forward(msg)
 }
@@ -877,9 +906,6 @@ func (m *Model) openNode(n domain.Node) tea.Cmd {
 	m.stopLive()
 	m.selNode = n
 	m.nodeCheckErr = ""
-	m.actions = newActionsList(n)
-	// the rebuilt list must be sized to the window, not its default
-	m.actions.SetSize(m.contentWidth, len(actionDefs(n))+1)
 	m.push(screen{kind: scNode, node: n.Name})
 	m.loading = loadingState{
 		active: true,
@@ -907,8 +933,6 @@ func (m Model) forward(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m.cur().kind {
 	case scFleet:
 		m.fleet, cmd = m.fleet.Update(msg)
-	case scNode:
-		m.actions, cmd = m.actions.Update(msg)
 	}
 	return m, cmd
 }
@@ -961,9 +985,6 @@ func (m *Model) layout() {
 		fleetH = 1
 	}
 	m.fleet.SetSize(m.cardW(), fleetH)
-	// the list's own length is the truth: setup adds and removes a
-	// row as the box's state changes
-	m.actions.SetSize(m.stageW, len(m.actions.Items())+1)
 	m.help.SetWidth(m.stageW)
 	m.fullHelp.SetWidth(max(10, m.stageW-8))
 	if m.addNode.form != nil {
@@ -995,8 +1016,22 @@ func (m Model) View() tea.View {
 	return v
 }
 
+// quitConfirmView asks before closing the session: mymo's records
+// are already written; the fleet keeps running either way.
+func (m Model) quitConfirmView() string {
+	inner := warnStyle.Render("Quit mymo?") + "\n\n" +
+		textStyle.Render("The fleet keeps running — mymo just closes.") + "\n\n" +
+		accentStyle.Render("[y]") + textStyle.Render(" quit    ") +
+		accentStyle.Render("[esc]") + textStyle.Render(" stay")
+	return lipgloss.Place(m.contentWidth, m.contentHeight,
+		lipgloss.Center, lipgloss.Center, dangerCardStyle.Render(inner))
+}
+
 // workspaceView renders the current screen inside the frame.
 func (m Model) workspaceView() string {
+	if m.confirmQuit {
+		return m.quitConfirmView()
+	}
 	var content string
 	if m.helpOpen {
 		content = m.helpView()
@@ -1237,6 +1272,9 @@ func (m Model) keymap() help.KeyMap {
 		}
 		km := newNodeKeymap()
 		km.setup.SetEnabled(!nodeIsManaged(m.selNode))
+		// applications are a mymo-node's verb: the key exists
+		// exactly when the action does
+		km.apps.SetEnabled(nodeIsManaged(m.selNode))
 		return km
 	case scNodePreflight:
 		if m.loading.active {
@@ -1269,7 +1307,17 @@ func (m Model) keymap() help.KeyMap {
 	case scApps, scNodeApps:
 		return newAppsKeymap()
 	case scAppDetail:
-		return newAppDetailKeymap()
+		km := newAppDetailKeymap()
+		// rollback exists exactly when a previous release to return
+		// to does: the key exists exactly when the action does
+		if app, _, ok := m.findScreenApp(m.cur()); ok {
+			if _, hasTarget := app.RollbackTarget(); !hasTarget {
+				km.rollback.SetEnabled(false)
+			}
+		} else {
+			km.rollback.SetEnabled(false)
+		}
+		return km
 	case scAppLogs:
 		return newAppLogsKeymap()
 	case scAppRollback:
@@ -1284,11 +1332,87 @@ func (m Model) keymap() help.KeyMap {
 // helpView renders the expanded per-screen help overlay.
 func (m Model) helpView() string {
 	k := m.keymap()
-	inner := titleStyle.Render("Keyboard help") + "\n\n" + m.fullHelp.View(k) +
-		"\n\n" + faintStyle.Render("press any key to close")
+	inner := titleStyle.Render("Keyboard help") + "\n\n"
+	// the verbs come first, wearing their keys and their words —
+	// this card is where the menu lives now
+	for _, row := range m.helpVerbRows() {
+		inner += row + "\n"
+	}
+	if len(m.helpVerbRows()) > 0 {
+		inner += "\n"
+	} else {
+		inner += m.fullHelp.View(k) + "\n\n"
+	}
+	inner += faintStyle.Render("[?]") + textStyle.Render(" close    ") +
+		faintStyle.Render("[h]") + textStyle.Render(" home    ") +
+		faintStyle.Render("[q]") + textStyle.Render(" quit — it asks first\n\n")
+	inner += faintStyle.Render("press any key to close")
 	panel := panelStyle.Render(inner)
 	return lipgloss.Place(m.contentWidth, m.contentHeight,
 		lipgloss.Center, lipgloss.Center, panel)
+}
+
+// helpVerbRows renders this page's verbs for the keyboard card:
+// the key it runs on, colored by what it does, the words that name
+// it, and what it means — the description wraps whole, never
+// clipped. Pages without verbs show the plain key list instead.
+func (m Model) helpVerbRows() []string {
+	s := m.cur()
+	var rows []string
+	add := func(key, title, desc, tone string) {
+		rows = append(rows, verbRows(key, title, desc, tone, m.contentWidth-22)...)
+	}
+	switch s.kind {
+	case scFleet:
+		add("N", "Add node", "name, address, auth — mymo installs a key and checks", "accent")
+		add("x", "Remove", "forget this box, locally only — it is not touched", "warn")
+		add("a", "Apps", "every application mymo manages", "plain")
+		add("d", "Deploy", "build, ship, and verify a release", "plain")
+		add("/", "Filter", "find a box by name", "plain")
+		add("enter", "Open", "observe the highlighted box", "plain")
+	case scNode:
+		for _, a := range actionDefs(m.selNode) {
+			add(a.key, a.title, a.desc, a.tone)
+		}
+	case scAppDetail:
+		if app, _, ok := m.findScreenApp(s); ok {
+			for _, a := range appActionDefs(app) {
+				add(a.key, a.title, a.desc, a.tone)
+			}
+		}
+	case scHome:
+		add("n", "Fleet", "the boxes mymo reaches", "plain")
+		add("a", "Apps", "what runs where", "plain")
+		add("d", "Deploy", "the whole ceremony, walked", "plain")
+		add("s", "Settings", "where mymo's own state lives", "plain")
+	case scApps, scNodeApps:
+		add("enter", "Open", "the application's record — releases, facts, verbs", "plain")
+	}
+	return rows
+}
+
+// verbRows renders one keyboard-card verb: the key in its tone,
+// the title in its column, and the description wrapped whole
+// beneath it — the menu's honest row, kept to the last word.
+func verbRows(k, title, desc, tone string, w int) []string {
+	keyStyle := accentStyle
+	switch tone {
+	case "warn":
+		keyStyle = warnStyle
+	case "plain":
+		keyStyle = textStyle
+	}
+	prefix := "  " + keyStyle.Render("["+k+"]") + " " + textStyle.Width(15).Render(title) + " "
+	budget := w - lipgloss.Width(prefix)
+	if budget < 16 {
+		budget = 16
+	}
+	lines := wrapPlain(desc, budget)
+	rows := []string{prefix + dimStyle.Render(lines[0])}
+	for _, line := range lines[1:] {
+		rows = append(rows, strings.Repeat(" ", lipgloss.Width(prefix))+dimStyle.Render(line))
+	}
+	return rows
 }
 
 // fitHeight pads (or clips) a rendered block to exactly h lines.

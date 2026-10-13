@@ -64,7 +64,7 @@ func TestAppLiveStatusLandsOnThePage(t *testing.T) {
 	m = press(t, m, "a")
 	m = press(t, m, "enter") // the api app is the only row
 
-	m, msgs := drive(t, m, tea.KeyPressMsg{Code: tea.KeyEnter}) // the first verb: Live status
+	m, msgs := drive(t, m, tea.KeyPressMsg{Code: 's'}) // the status verb
 	m = drain(t, m, msgs)
 
 	out := ansiStrip(view(m))
@@ -93,7 +93,7 @@ func TestAppLiveStatusSaysNotRunning(t *testing.T) {
 	m.appRunner = &cannedAppRunner{running: false}
 	m = press(t, m, "a")
 	m = press(t, m, "enter")
-	m, msgs := drive(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, msgs := drive(t, m, tea.KeyPressMsg{Code: 's'})
 	m = drain(t, m, msgs)
 
 	out := ansiStrip(view(m))
@@ -116,8 +116,7 @@ func TestAppLogsOpenInTheirOwnPage(t *testing.T) {
 	m.appRunner = &cannedAppRunner{logs: b.String()}
 	m = press(t, m, "a")
 	m = press(t, m, "enter")
-	m = press(t, m, "j") // walk to Logs
-	m, msgs := drive(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, msgs := drive(t, m, tea.KeyPressMsg{Code: 'l'}) // the logs verb
 	m = drain(t, m, msgs)
 
 	if m.cur().kind != scAppLogs {
@@ -164,8 +163,7 @@ func TestAppRestartTellsTheOutcome(t *testing.T) {
 	m.appRunner = &cannedAppRunner{}
 	m = press(t, m, "a")
 	m = press(t, m, "enter")
-	m = press(t, m, "j", "j") // walk to Restart
-	m, msgs := drive(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, msgs := drive(t, m, tea.KeyPressMsg{Code: 'r'}) // the restart verb
 	m = drain(t, m, msgs)
 
 	if !strings.Contains(m.toast.text, "restarted") {
@@ -193,8 +191,7 @@ func TestAppVerbsRefuseOnUnverifiedNode(t *testing.T) {
 	m.appRunner = runner
 	m = press(t, m, "a")
 	m = press(t, m, "enter")
-	m = press(t, m, "j", "j") // Restart
-	m = press(t, m, "enter")
+	m = press(t, m, "r") // the restart verb
 
 	if strings.Contains(m.toast.text, "restarted") {
 		t.Errorf("restart ran on an unverified node: %q", m.toast.text)
@@ -234,9 +231,9 @@ func TestAppRecordFoldsLongHistoriesHonestly(t *testing.T) {
 	seedNode(t, s, "web-1")
 	app := sampleApp("api", "web-1")
 	app.Releases = app.Releases[:1]
-	for i := 2; i <= 9; i++ {
+	for i := 2; i <= 17; i++ {
 		st := domain.ReleaseRetired
-		if i == 9 {
+		if i == 17 {
 			st = domain.ReleaseActive
 		}
 		app.Releases = append(app.Releases, domain.Release{
@@ -253,7 +250,7 @@ func TestAppRecordFoldsLongHistoriesHonestly(t *testing.T) {
 	if !strings.Contains(out, "folded — mymo app status api lists every one") {
 		t.Errorf("the fold should state itself and where the whole truth lives:\n%s", out)
 	}
-	if !strings.Contains(out, "r9") || !strings.Contains(out, "r8") {
+	if !strings.Contains(out, "r17") || !strings.Contains(out, "r16") {
 		t.Errorf("the active and recent releases should stay:\n%s", out)
 	}
 	if strings.Contains(out, "r2") {
@@ -276,8 +273,7 @@ func TestAppRollbackWantsTheExactName(t *testing.T) {
 	m.appRunner = &cannedAppRunner{}
 	m = press(t, m, "a")
 	m = press(t, m, "enter")
-	m = press(t, m, "j", "j", "j") // walk to Rollback
-	m = press(t, m, "enter")
+	m = press(t, m, "b") // the rollback verb
 	if m.cur().kind != scAppRollback {
 		t.Fatalf("the rollback gate did not open: %d", m.cur().kind)
 	}
@@ -344,8 +340,7 @@ func TestAppRollbackRefusesUnverifiedNodes(t *testing.T) {
 	m.appRunner = runner
 	m = press(t, m, "a")
 	m = press(t, m, "enter")
-	m = press(t, m, "j", "j", "j")
-	m = press(t, m, "enter")
+	m = press(t, m, "b") // the rollback verb, refused
 	if m.cur().kind == scAppRollback {
 		t.Errorf("the gate opened on an unverified node")
 	}
@@ -370,8 +365,7 @@ func TestAppRollbackEscAborts(t *testing.T) {
 	m.appRunner = &cannedAppRunner{}
 	m = press(t, m, "a")
 	m = press(t, m, "enter")
-	m = press(t, m, "j", "j", "j")
-	m = press(t, m, "enter")
+	m = press(t, m, "b")      // open the rollback gate
 	m = press(t, m, "a", "p") // half a name, then out
 	m = press(t, m, "esc")
 	if m.cur().kind != scAppDetail {

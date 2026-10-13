@@ -31,7 +31,7 @@ func TestHomeKeyReturnsFromEverywhere(t *testing.T) {
 	// (an unmanaged box has no applications action to walk into)
 	m = press(t, m, "n", "enter")
 	m = observe(t, m, "web-1", richSnapshot("web-1"))
-	m = press(t, m, "down", "down", "enter") // open Inspect record
+	m = press(t, m, "i") // open Inspect record
 	if m.cur().kind != scNodeInspect {
 		t.Fatalf("not on the inspect screen: %v", m.cur().kind)
 	}

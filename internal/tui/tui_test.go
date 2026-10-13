@@ -228,7 +228,7 @@ func TestNavigationStack(t *testing.T) {
 		client: ssh.New(domain.Node{}, ""),
 		seq:    m.checkSeq,
 	})
-	if got := view(m); !strings.Contains(got, "Initial setup") {
+	if got := ansiStrip(view(m)); !strings.Contains(got, "I setup") {
 		t.Fatalf("observe page did not open after the probe:\n%s", got)
 	}
 	m = press(t, m, "esc")
@@ -257,28 +257,28 @@ func TestNodeActionsNavigation(t *testing.T) {
 		snap:   facts.Node{Hostname: "web-1", CollectedAt: time.Now()},
 		client: ssh.New(domain.Node{}, ""),
 	})
-	if got := view(m); !strings.Contains(got, "Initial setup") {
+	if got := ansiStrip(view(m)); !strings.Contains(got, "I setup") {
 		t.Fatalf("an unmanaged box must offer setup first:\n%s", got)
 	}
-	if got := view(m); strings.Contains(got, "Applications") {
+	if got := ansiStrip(view(m)); strings.Contains(got, "a apps") {
 		t.Fatalf("an unmanaged box has no mymo applications to list:\n%s", got)
 	}
 
-	m = press(t, m, "down", "down", "enter") // action 2: Inspect record
+	m = press(t, m, "i") // the inspect-record verb
 	if got := view(m); !strings.Contains(got, "Stored record") {
 		t.Fatalf("inspect action missing:\n%s", got)
 	}
 	m = press(t, m, "esc")
-	if got := view(m); !strings.Contains(got, "Inspect record") {
+	if got := ansiStrip(view(m)); !strings.Contains(got, "i record") {
 		t.Fatalf("esc did not return to the observe page:\n%s", got)
 	}
 
-	m = press(t, m, "down", "enter") // action 3: Remove (index preserved at 2 → 3)
+	m = press(t, m, "x") // the remove verb
 	if got := view(m); !strings.Contains(got, "not touched") {
 		t.Fatalf("remove confirmation missing:\n%s", got)
 	}
 	m = press(t, m, "n") // cancel
-	if got := view(m); !strings.Contains(got, "Inspect record") {
+	if got := ansiStrip(view(m)); !strings.Contains(got, "i record") {
 		t.Fatalf("n did not cancel removal:\n%s", got)
 	}
 }
@@ -296,9 +296,8 @@ func TestRemoveNodeFlow(t *testing.T) {
 		snap:   facts.Node{Hostname: "web-1", CollectedAt: time.Now()},
 		client: ssh.New(domain.Node{}, ""),
 	})
-	// four actions for an unmanaged box: Set up, SSH, Inspect,
-	// Remove — three downs land on Remove.
-	m = press(t, m, "down", "down", "down", "enter")
+	// the verbs are keys now: x opens the removal gate
+	m = press(t, m, "x")
 	// the card states everything the goodbye forgets, by name
 	if got := view(m); !strings.Contains(got, "api") || !strings.Contains(got, "nothing running on any box changes") {
 		t.Fatalf("the removal card must name the applications:\n%s", got)
@@ -426,9 +425,14 @@ func TestAddNodeWorkflowTypedCompletion(t *testing.T) {
 
 func TestQuitFromFleet(t *testing.T) {
 	m := New(readyStore(t))
-	_, cmd := m.Update(keyMsg("q"))
+	mm, _ := m.Update(keyMsg("q"))
+	m = mm.(Model)
+	if !m.confirmQuit {
+		t.Fatal("q did not open the quit gate")
+	}
+	_, cmd := m.Update(keyMsg("y"))
 	if cmd == nil {
-		t.Fatal("q returned no command")
+		t.Fatal("y returned no command")
 	}
 	if _, ok := cmd().(tea.QuitMsg); !ok {
 		t.Fatalf("q returned %T, want tea.QuitMsg", cmd())
