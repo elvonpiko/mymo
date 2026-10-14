@@ -60,7 +60,9 @@ func TestParseRefusesWhatItCannotMean(t *testing.T) {
 		{"missing type", "name: a\nport: 80\n", "type is required"},
 		{"missing port", "name: a\ntype: image\nimage: i\n", "port is required"},
 		{"image type without image", "name: a\ntype: image\nport: 80\n", "requires an image"},
-		{"unsupported type", "name: a\ntype: compose\nport: 80\n", "unsupported"},
+		{"unsupported type", "name: a\ntype: kubernetes\nport: 80\n", "unsupported"},
+		{"compose without a file", "name: a\ntype: compose\nservice: api\nport: 80\n", "requires compose:"},
+		{"compose without a service", "name: a\ntype: compose\ncompose: compose.yaml\nport: 80\n", "requires service:"},
 		{"port not a number", "name: a\ntype: image\nimage: i\nport: http\n", "not a number"},
 		{"a line without colon", "name: a\ntype: image\nport\n", "expected key: value"},
 	}
@@ -118,5 +120,54 @@ func TestDiscover(t *testing.T) {
 	_, _, _, err = Discover(dir)
 	if err == nil || !strings.Contains(err.Error(), "port is required") {
 		t.Errorf("broken manifest: err = %v", err)
+	}
+}
+
+// the compose manifest carries two more keys than the others: the
+// file, and the service caddy routes to — neither is ever guessed
+func TestParseAcceptsCompose(t *testing.T) {
+	m, err := Parse("name: web\ntype: compose\ncompose: compose.yaml\nservice: api\nport: 8080\ndomain: web.example.com\nhealth: /healthz\n")
+	if err != nil {
+		t.Fatalf("a complete compose manifest should parse: %v", err)
+	}
+	if m.Type != "compose" || m.Compose != "compose.yaml" || m.Service != "api" {
+		t.Errorf("parsed = %+v", m)
+	}
+	if m.Port != 8080 || m.Domain != "web.example.com" || m.Health != "/healthz" {
+		t.Errorf("the shared keys lost their meaning: %+v", m)
+	}
+}
+
+// discovery: a compose project earns a draft that names the file
+// it found, and says the service is the operator's to name
+func TestDiscoverDraftsForCompose(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte("services: {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m, draft, found, err := Discover(dir)
+	if err != nil || m.Name != "" || draft == "" || found != "compose.yaml" {
+		t.Fatalf("discover = (%+v, %q, %q, %v)", m, draft, found, err)
+	}
+	if !strings.Contains(draft, "compose: compose.yaml") || !strings.Contains(draft, "service: app") {
+		t.Errorf("the draft must carry the file and the service to name:\n%s", draft)
+	}
+	if !strings.Contains(draft, "never guesses") {
+		t.Errorf("the draft must say mymo never guesses the service:\n%s", draft)
+	}
+}
+
+// a directory with both a Dockerfile and a compose file is
+// ambiguous — mymo deploys one, not both, and refuses to choose
+func TestDiscoverRefusesTheAmbiguousDirectory(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte("FROM scratch\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "compose.yml"), []byte("services: {}\n"), 0o644)
+	_, _, _, err := Discover(dir)
+	if err == nil {
+		t.Fatal("a Dockerfile beside a compose file must refuse")
+	}
+	if !strings.Contains(err.Error(), "both a Dockerfile and compose.yml") || !strings.Contains(err.Error(), "mymo.yaml") {
+		t.Errorf("the refusal must name the ambiguity and the way out: %v", err)
 	}
 }

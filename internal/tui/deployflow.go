@@ -119,6 +119,7 @@ type walkEntry struct {
 	this, up   bool // the current directory, and the way out
 	manifest   bool
 	dockerfile bool
+	compose    bool
 }
 
 // dpLoadWalk reads the walker's directory and marks every entry
@@ -151,8 +152,16 @@ func (m *Model) dpLoadWalk() {
 		sub := filepath.Join(dir, name)
 		if _, err := os.Stat(filepath.Join(sub, manifest.FileName)); err == nil {
 			e.manifest = true
-		} else if _, err := os.Stat(filepath.Join(sub, "Dockerfile")); err == nil {
-			e.dockerfile = true
+		} else {
+			if _, err := os.Stat(filepath.Join(sub, "Dockerfile")); err == nil {
+				e.dockerfile = true
+			}
+			for _, cf := range deploy.ComposeFileNames {
+				if _, err := os.Stat(filepath.Join(sub, cf)); err == nil {
+					e.compose = true
+					break
+				}
+			}
 		}
 		entries = append(entries, e)
 	}
@@ -343,7 +352,7 @@ func (m Model) discoverProject() (tea.Model, tea.Cmd) {
 		m.dpDraft = ""
 		m.dpFound = ""
 		if errors.Is(err, manifest.ErrNoSource) {
-			m.dpErr = "no mymo.yaml and no Dockerfile here — mymo does not guess"
+			m.dpErr = "no mymo.yaml, no Dockerfile, no compose file here — mymo does not guess"
 			m.dpFound = "none"
 		}
 		return m, nil
@@ -417,6 +426,21 @@ func (m Model) enterDeployConfirm(nodeName string) (tea.Model, tea.Cmd) {
 	app.Port = m.dpMan.Port
 	app.Domain = m.dpMan.Domain
 	app.Health = m.dpMan.Health
+	if app.Type == domain.SourceCompose {
+		raw, rerr := os.ReadFile(filepath.Join(m.dpDir, m.dpMan.Compose))
+		if rerr != nil {
+			m.dpErr = shorten(rerr.Error(), m.stageW-12)
+			return m, nil
+		}
+		if _, perr := deploy.ParseCompose(string(raw)); perr != nil {
+			// the vet runs before the node pick, before the dial —
+			// a model breaker never reaches a box
+			m.dpErr = shorten(perr.Error(), m.stageW-12)
+			return m, m.notify(shorten(perr.Error(), 44), toastErr)
+		}
+		app.Compose = string(raw)
+		app.Service = m.dpMan.Service
+	}
 	if err := app.Validate(); err != nil {
 		m.dpErr = shorten(err.Error(), m.stageW-12)
 		return m, nil
@@ -502,6 +526,21 @@ func (m Model) runDeployEngine() (tea.Model, tea.Cmd) {
 				return deployDoneMsg{app: name, node: node.Name, fatal: "the project directory is not resolved"}
 			}
 			buildCtx, cerr := deploy.ResolveBuildContext(m.dpDir, app.Dockerfile)
+			if cerr != nil {
+				close(progress)
+				return deployDoneMsg{app: name, node: node.Name, fatal: cerr.Error()}
+			}
+			opts.BuildContext = buildCtx
+		}
+		if app.Type == domain.SourceCompose {
+			if m.dpDir == "" {
+				close(progress)
+				return deployDoneMsg{app: name, node: node.Name, fatal: "the project directory is not resolved"}
+			}
+			// the compose file's directory is the build context:
+			// build: . resolves beside the file, exactly where the
+			// engine's -f pair stands
+			buildCtx, cerr := deploy.ResolveBuildContext(m.dpDir, m.dpMan.Compose)
 			if cerr != nil {
 				close(progress)
 				return deployDoneMsg{app: name, node: node.Name, fatal: cerr.Error()}
@@ -633,8 +672,12 @@ func (m Model) walkRow(e walkEntry, selected bool, w int) string {
 	switch {
 	case e.manifest:
 		marker = okStyle.Render("mymo.yaml")
+	case e.dockerfile && e.compose:
+		marker = warnStyle.Render("Dockerfile + compose — say which in mymo.yaml")
 	case e.dockerfile:
 		marker = subtextStyle.Render("Dockerfile — draft")
+	case e.compose:
+		marker = subtextStyle.Render("compose — draft")
 	case e.up:
 		marker = faintStyle.Render("up one")
 	}
@@ -685,6 +728,13 @@ func (m Model) deployConfirmView() string {
 	artifact := app.Image
 	if app.Type == domain.SourceDockerfile {
 		artifact = "Dockerfile in " + app.Dockerfile
+	}
+	if app.Type == domain.SourceCompose {
+		if cf, err := deploy.ParseCompose(app.Compose); err == nil {
+			artifact = app.Service + " exposed · " + fmt.Sprintf("%d services: %s", len(cf.Services), strings.Join(cf.Services, ", "))
+		} else {
+			artifact = app.Service + " exposed"
+		}
 	}
 
 	inner := titleStyle.Render("Deploy") + " " +

@@ -15,6 +15,7 @@ import (
 	"github.com/elvonpiko/mymo/internal/manifest"
 	"github.com/elvonpiko/mymo/internal/ssh"
 	"github.com/elvonpiko/mymo/internal/state"
+	"path/filepath"
 )
 
 // deployConfirmIn is the confirmation prompt's input; a var so
@@ -86,6 +87,7 @@ func runDeploy(ctx context.Context, args []string, stdout, stderr io.Writer) int
 			fmt.Fprintln(stderr, "\nsupported deployment modes:")
 			fmt.Fprintln(stderr, "  mymo.yaml with type: image       — deploy an existing OCI image")
 			fmt.Fprintln(stderr, "  mymo.yaml with type: dockerfile — build the project's Dockerfile on the node")
+			fmt.Fprintln(stderr, "  mymo.yaml with type: compose    — run a vetted compose file, one exposed service")
 		}
 		return exitErr
 	}
@@ -143,6 +145,21 @@ func runDeploy(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	app.Port = m.Port
 	app.Domain = m.Domain
 	app.Health = m.Health
+	if app.Type == domain.SourceCompose {
+		raw, rerr := os.ReadFile(filepath.Join(cwd, m.Compose))
+		if rerr != nil {
+			fmt.Fprintf(stderr, "mymo deploy: %v\n", rerr)
+			return exitErr
+		}
+		if _, perr := deploy.ParseCompose(string(raw)); perr != nil {
+			// the vet runs before the dial — a model breaker never
+			// reaches a box
+			fmt.Fprintf(stderr, "mymo deploy: %s\n", perr)
+			return exitErr
+		}
+		app.Compose = string(raw)
+		app.Service = m.Service
+	}
 	if err := app.Validate(); err != nil {
 		fmt.Fprintf(stderr, "mymo deploy: %v\n", err)
 		return exitErr
@@ -162,6 +179,13 @@ func runDeploy(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	artifact := app.Image
 	if app.Type == domain.SourceDockerfile {
 		artifact = "Dockerfile in " + app.Dockerfile
+	}
+	if app.Type == domain.SourceCompose {
+		if cf, err := deploy.ParseCompose(app.Compose); err == nil {
+			artifact = fmt.Sprintf("%s exposed · %d services: %s", app.Service, len(cf.Services), strings.Join(cf.Services, ", "))
+		} else {
+			artifact = app.Service + " exposed"
+		}
 	}
 	fmt.Fprintf(stdout, "deploy · %s → %s\n", app.Name, app.Node)
 	fmt.Fprintf(stdout, "  type     %s · %s\n", app.Type, artifact)
@@ -206,6 +230,15 @@ func runDeploy(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		// "." means the project itself, a file means its directory,
 		// and outside is refused before anything streams
 		opts.BuildContext, err = deploy.ResolveBuildContext(cwd, app.Dockerfile)
+		if err != nil {
+			fmt.Fprintf(stderr, "mymo deploy: %v\n", err)
+			return exitErr
+		}
+	}
+	if app.Type == domain.SourceCompose {
+		// the compose file's directory is the build context:
+		// build: . resolves beside the file
+		opts.BuildContext, err = deploy.ResolveBuildContext(cwd, m.Compose)
 		if err != nil {
 			fmt.Fprintf(stderr, "mymo deploy: %v\n", err)
 			return exitErr

@@ -26,6 +26,8 @@ const (
 	keyType       = "type"
 	keyImage      = "image"
 	keyDockerfile = "dockerfile"
+	keyCompose    = "compose"
+	keyService    = "service"
 	keyPort       = "port"
 	keyDomain     = "domain"
 	keyHealth     = "health"
@@ -35,9 +37,11 @@ const (
 // absent; Dockerfile defaults to the manifest's own directory.
 type Manifest struct {
 	Name       string
-	Type       string // "image" or "dockerfile"
+	Type       string // "image", "dockerfile", or "compose"
 	Image      string
 	Dockerfile string
+	Compose    string // type compose: the compose file, relative to the manifest
+	Service    string // type compose: the one exposed service caddy routes to
 	Port       int
 	Domain     string
 	Health     string
@@ -67,7 +71,7 @@ func Parse(text string) (Manifest, error) {
 		}
 		seen[key] = true
 		switch key {
-		case keyName, keyType, keyImage, keyDomain, keyHealth:
+		case keyName, keyType, keyImage, keyDomain, keyHealth, keyCompose, keyService:
 			// strings keep their meaning verbatim; quotes are
 			// tolerated but stripped as decoration
 			value = strings.Trim(value, `"'`)
@@ -82,6 +86,10 @@ func Parse(text string) (Manifest, error) {
 				m.Domain = value
 			case keyHealth:
 				m.Health = value
+			case keyCompose:
+				m.Compose = value
+			case keyService:
+				m.Service = value
 			}
 		case keyDockerfile:
 			m.Dockerfile = strings.Trim(value, `"'`)
@@ -92,7 +100,7 @@ func Parse(text string) (Manifest, error) {
 			}
 			m.Port = port
 		default:
-			return Manifest{}, fmt.Errorf("mymo.yaml:%d: unknown key %q — the schema is: name, type, image, dockerfile, port, domain, health", lineNo+1, key)
+			return Manifest{}, fmt.Errorf("mymo.yaml:%d: unknown key %q — the schema is: name, type, image, dockerfile, compose, service, port, domain, health", lineNo+1, key)
 		}
 	}
 
@@ -120,8 +128,15 @@ func Parse(text string) (Manifest, error) {
 		if m.Dockerfile == "" {
 			m.Dockerfile = "." // the manifest's own directory
 		}
+	case "compose":
+		if m.Compose == "" {
+			return Manifest{}, fmt.Errorf("mymo.yaml: type compose requires compose: — the compose file, relative to the manifest")
+		}
+		if m.Service == "" {
+			return Manifest{}, fmt.Errorf("mymo.yaml: type compose requires service: — the one service caddy routes to; mymo never guesses it")
+		}
 	default:
-		return Manifest{}, fmt.Errorf("mymo.yaml: type %q is unsupported — supported: image, dockerfile", m.Type)
+		return Manifest{}, fmt.Errorf("mymo.yaml: type %q is unsupported — supported: image, dockerfile, compose", m.Type)
 	}
 	return m, nil
 }
@@ -145,16 +160,39 @@ func Discover(dir string) (m Manifest, draft string, found string, err error) {
 		return Manifest{}, "", "", fmt.Errorf("read %s: %w", FileName, readErr)
 	}
 
-	if _, statErr := os.Stat(filepath.Join(dir, "Dockerfile")); statErr == nil {
+	hasDocker := statExists(filepath.Join(dir, "Dockerfile"))
+	composeFile := ""
+	for _, name := range deployComposeFileNames {
+		if statExists(filepath.Join(dir, name)) {
+			composeFile = name
+			break
+		}
+	}
+	if hasDocker && composeFile != "" {
+		return Manifest{}, "", "", fmt.Errorf("this directory holds both a Dockerfile and %s — mymo deploys one, not both: say which in mymo.yaml (type: dockerfile, or type: compose)", composeFile)
+	}
+	if hasDocker {
 		return Manifest{}, Draft(filepath.Base(dir)), "Dockerfile", nil
+	}
+	if composeFile != "" {
+		return Manifest{}, DraftCompose(filepath.Base(dir), composeFile), composeFile, nil
 	}
 
 	return Manifest{}, "", "", ErrNoSource
 }
 
+// deployComposeFileNames mirrors the engine's accepted compose
+// file names; the walker and discovery must agree on what counts.
+var deployComposeFileNames = []string{"compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"}
+
+func statExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
 // ErrNoSource is returned when a directory holds nothing mymo can
 // deploy from.
-var ErrNoSource = fmt.Errorf("no supported deployment source in this directory — supported: a mymo.yaml manifest, or a Dockerfile mymo can draft one for")
+var ErrNoSource = fmt.Errorf("no supported deployment source in this directory — supported: a mymo.yaml manifest, a Dockerfile, or a compose file mymo can draft one for")
 
 // Draft renders the manifest mymo would start from for a Dockerfile
 // project. It is a starting point for the operator to finish, never
@@ -171,5 +209,24 @@ func Draft(name string) string {
 	fmt.Fprintf(&b, "%s: 8080\n", keyPort)
 	fmt.Fprintf(&b, "# %s: %s   # uncomment for public HTTP through caddy\n", keyDomain, "app.example.com")
 	fmt.Fprintf(&b, "# %s: %s       # uncomment when the app has a health endpoint\n", keyHealth, "/healthz")
+	return b.String()
+}
+
+// DraftCompose renders the manifest a compose project starts from.
+// The service is the one thing mymo refuses to guess — the draft
+// says so where the operator cannot miss it.
+func DraftCompose(name, composeFile string) string {
+	var b strings.Builder
+	b.WriteString("# mymo application manifest\n")
+	fmt.Fprintf(&b, "# mymo deploys exactly what this file says — nothing is guessed.\n")
+	fmt.Fprintf(&b, "%s: %s\n", keyName, name)
+	fmt.Fprintf(&b, "%s: compose\n", keyType)
+	fmt.Fprintf(&b, "%s: %s\n", keyCompose, composeFile)
+	fmt.Fprintf(&b, "# service is the ONE service caddy routes to. mymo never guesses it —\n")
+	fmt.Fprintf(&b, "# every other service stays private on the network.\n")
+	fmt.Fprintf(&b, "%s: app\n", keyService)
+	fmt.Fprintf(&b, "%s: 8080\n", keyPort)
+	fmt.Fprintf(&b, "# %s: %s   # uncomment for public HTTP through caddy\n", keyDomain, "app.example.com")
+	fmt.Fprintf(&b, "# %s: %s       # uncomment when the exposed service has a health endpoint\n", keyHealth, "/healthz")
 	return b.String()
 }

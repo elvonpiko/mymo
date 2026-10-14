@@ -105,8 +105,15 @@ func (a App) Validate() error {
 		}
 	case SourceDockerfile:
 		// context defaults to the manifest's own directory
+	case SourceCompose:
+		if strings.TrimSpace(a.Compose) == "" {
+			return fmt.Errorf("app %q is type compose but carries no compose file", a.Name)
+		}
+		if strings.TrimSpace(a.Service) == "" {
+			return fmt.Errorf("app %q is type compose but names no service — the one caddy routes to; mymo never guesses it", a.Name)
+		}
 	default:
-		return fmt.Errorf("app %q has unsupported type %q (supported: image, dockerfile)", a.Name, a.Type)
+		return fmt.Errorf("app %q has unsupported type %q (supported: image, dockerfile, compose)", a.Name, a.Type)
 	}
 	if a.Port < 1 || a.Port > 65535 {
 		return fmt.Errorf("app %q port %d is out of range", a.Name, a.Port)
