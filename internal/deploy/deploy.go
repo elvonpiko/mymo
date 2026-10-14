@@ -223,6 +223,14 @@ func Deploy(ctx context.Context, r Runner, app domain.App, o Options) Result {
 		net.State, net.Note = StepKept, NetworkName+" already exists"
 	}
 
+	// the compose app is a whole lifecycle of its own: files
+	// instead of one image, up instead of a staged container,
+	// rollback by replaying the filed pair. The network above is
+	// shared; the rest branches.
+	if app.Type == domain.SourceCompose {
+		return deployCompose(ctx, r, app, o, &res, id, step)
+	}
+
 	// 2 — the artifact: pull a registry image, or build on the node
 	imageRef := app.Image
 	digest := ""
@@ -438,6 +446,12 @@ func Rollback(ctx context.Context, r Runner, app domain.App, o Options) Result {
 		return fail(s, "there is no retired release to roll back to", "rollback")
 	}
 	current, hasCurrent := app.ActiveRelease()
+
+	// a compose release rolls back by replaying its filed pair —
+	// no container to start, no image to rebuild
+	if app.Type == domain.SourceCompose {
+		return rollbackCompose(ctx, r, app, o, &res, target, step, fail)
+	}
 
 	start := step("rollback", "release r"+fmt.Sprint(target.ID))
 	if out, code, err := runW(ctx, r, o, "docker", "start", target.Container); err != nil || code != 0 {
@@ -678,10 +692,24 @@ func shortDigest(d string) string {
 
 // sourceLine records where the artifact came from.
 func sourceLine(app domain.App, o Options) string {
-	if app.Type == domain.SourceImage {
+	switch app.Type {
+	case domain.SourceImage:
 		return "image " + app.Image
+	case domain.SourceCompose:
+		if cf, err := ParseCompose(app.Compose); err == nil {
+			return fmt.Sprintf("compose · %d %s: %s", len(cf.Services), plural("service", len(cf.Services)), strings.Join(cf.Services, ", "))
+		}
+		return "compose"
+	default:
+		return "dockerfile " + app.Dockerfile
 	}
-	return "dockerfile " + app.Dockerfile
+}
+
+func plural(word string, n int) string {
+	if n == 1 {
+		return word
+	}
+	return word + "s"
 }
 
 // capReleases keeps the history bounded: the last 10 records stay,

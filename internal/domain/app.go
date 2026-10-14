@@ -17,6 +17,9 @@ const (
 	SourceImage AppSource = "image"
 	// SourceDockerfile builds a local Dockerfile on the target node.
 	SourceDockerfile AppSource = "dockerfile"
+	// SourceCompose runs a vetted compose file on the target node:
+	// many services, one release, one app record.
+	SourceCompose AppSource = "compose"
 )
 
 // ReleaseState is a release's standing. A release is immutable
@@ -45,8 +48,11 @@ type Release struct {
 	DeployedAt time.Time    `json:"deployed_at,omitempty"`
 }
 
-// App is a single-container application mymo manages on one node:
-// what it is, how it is exposed, and every release it has had.
+// App is an application mymo manages on one node: what it is, how
+// it is exposed, and every release it has had. A single-container
+// app runs one container per release; a compose app runs a vetted
+// compose file — many services, one release identity, the file's
+// digest.
 //
 // Exposure follows the networking model: the container joins mymo's
 // docker network under the app's name and is reached as
@@ -59,6 +65,8 @@ type App struct {
 	Type       AppSource `json:"type"`
 	Image      string    `json:"image,omitempty"`      // type image: the registry reference
 	Dockerfile string    `json:"dockerfile,omitempty"` // type dockerfile: the build context, "" = .
+	Compose    string    `json:"compose,omitempty"`    // type compose: the file's content — the release's configuration
+	Service    string    `json:"service,omitempty"`    // type compose: the one exposed service caddy routes to
 	Port       int       `json:"port"`                 // the container's internal port
 	Domain     string    `json:"domain,omitempty"`     // "" = internal only
 	Health     string    `json:"health,omitempty"`     // path, "" = none declared
