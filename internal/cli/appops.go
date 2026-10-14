@@ -114,17 +114,17 @@ func runAppStatus(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	}
 	defer closeFn()
 	sudo := operatorIsNotRoot(ctx, runner)
-	out, code, err := runSudo(ctx, runner, sudo, "docker", "ps", "--filter", "name="+rel.Container,
-		"--filter", "status=running", "--format", "{{.Names}}")
+	ops := app.Ops(rel)
+	out, code, err := runSudo(ctx, runner, sudo, ops.Status[0], ops.Status[1:]...)
 	switch {
 	case err != nil:
 		fmt.Fprintf(stdout, "  live     unknown — the node did not answer (%v)\n", err)
 	case code != 0:
 		fmt.Fprintf(stdout, "  live     unknown — docker refused\n")
-	case strings.TrimSpace(out) == rel.Container:
-		fmt.Fprintf(stdout, "  live     %s is running right now\n", rel.Container)
+	case statusLineSays(out, ops.StatusAnswer):
+		fmt.Fprintf(stdout, "  live     %s is running right now\n", ops.StatusAnswer)
 	default:
-		fmt.Fprintf(stdout, "  live     %s is NOT running\n", rel.Container)
+		fmt.Fprintf(stdout, "  live     %s is NOT running\n", ops.StatusAnswer)
 	}
 	return exitOK
 }
@@ -185,7 +185,15 @@ func runAppLogs(ctx context.Context, args []string, stdout, stderr io.Writer) in
 		return exitErr
 	}
 	defer closeFn()
-	out, code, err := runSudo(ctx, runner, operatorIsNotRoot(ctx, runner), "docker", "logs", "--tail", tail, rel.Container)
+	// the tail count is the operator's, not the verb's: swap the
+	// baked-in 100 for whatever was asked
+	ops := app.Ops(rel)
+	for i := range ops.Logs {
+		if ops.Logs[i] == "100" {
+			ops.Logs[i] = tail
+		}
+	}
+	out, code, err := runSudo(ctx, runner, operatorIsNotRoot(ctx, runner), ops.Logs[0], ops.Logs[1:]...)
 	if err != nil || code != 0 {
 		fmt.Fprintf(stderr, "mymo app logs: the node refused (exit %d)\n", code)
 		return exitErr
@@ -314,7 +322,8 @@ func runAppShell(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	sudo := operatorIsNotRoot(ctx, runner)
 	closeFn()
 
-	cmd, err := ssh.ExecCommand(node, ssh.InteractiveKnownHostsPath(store.Dir()), sudo, "docker", "exec", "-it", rel.Container, "sh")
+	ops := app.Ops(rel)
+	cmd, err := ssh.ExecCommand(node, ssh.InteractiveKnownHostsPath(store.Dir()), sudo, append([]string{ops.Shell[0]}, ops.Shell[1:]...)...)
 	if err != nil {
 		fmt.Fprintf(stderr, "mymo app shell: %v\n", err)
 		return exitErr
@@ -365,4 +374,15 @@ func firstLine(s string) string {
 		s = s[:i]
 	}
 	return strings.TrimSpace(s)
+}
+
+// statusLineSays reports whether the status command's output
+// carries the expected answer as one of its lines.
+func statusLineSays(out, want string) bool {
+	for _, line := range strings.Split(out, "\n") {
+		if strings.TrimSpace(line) == want {
+			return true
+		}
+	}
+	return false
 }

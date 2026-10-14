@@ -132,17 +132,16 @@ func (m Model) runAppStatus(app domain.App, node domain.Node) tea.Cmd {
 		}
 		defer closeFn()
 		rel, _ := app.ActiveRelease()
+		ops := app.Ops(rel)
 		sudo := appNeedsRoot(ctx, r)
-		out, code, err := appRunW(ctx, r, sudo, "docker", "ps",
-			"--filter", "name="+rel.Container, "--filter", "status=running",
-			"--format", "{{.Names}}")
+		out, code, err := appRunW(ctx, r, sudo, ops.Status...)
 		live := appLiveState{Container: rel.Container}
 		switch {
 		case err != nil:
 			live.Note = "the node did not answer (" + err.Error() + ")"
 		case code != 0:
 			live.Note = "docker refused"
-		case strings.TrimSpace(out) == rel.Container:
+		case lineSays(out, ops.StatusAnswer):
 			live.Probed, live.Running = true, true
 		default:
 			live.Probed, live.Running = true, false
@@ -164,8 +163,9 @@ func (m Model) runAppLogs(app domain.App, node domain.Node) tea.Cmd {
 		}
 		defer closeFn()
 		rel, _ := app.ActiveRelease()
+		ops := app.Ops(rel)
 		sudo := appNeedsRoot(ctx, r)
-		out, code, err := appRunW(ctx, r, sudo, "docker", "logs", "--tail", "100", rel.Container)
+		out, code, err := appRunW(ctx, r, sudo, ops.Logs...)
 		if err != nil || code != 0 {
 			return appLogsDoneMsg{node: node.Name, app: name, fatal: fmt.Sprintf("the node refused (exit %d)", code)}
 		}
@@ -191,8 +191,9 @@ func (m Model) runAppRestart(app domain.App, node domain.Node) tea.Cmd {
 		}
 		defer closeFn()
 		rel, _ := app.ActiveRelease()
+		ops := app.Ops(rel)
 		sudo := appNeedsRoot(ctx, r)
-		out, code, err := appRunW(ctx, r, sudo, "docker", "restart", rel.Container)
+		out, code, err := appRunW(ctx, r, sudo, ops.Restart...)
 		if err != nil || code != 0 {
 			note := strings.TrimSpace(out)
 			if i := strings.IndexByte(note, '\n'); i > 0 {
@@ -220,8 +221,9 @@ func (m Model) runAppShell(app domain.App, node domain.Node) (tea.Model, tea.Cmd
 	}
 	sudo := appNeedsRoot(ctx, r)
 	closeFn()
+	ops := app.Ops(rel)
 	cmd, err := ssh.ExecCommand(node, ssh.InteractiveKnownHostsPath(m.store.Dir()), sudo,
-		"docker", "exec", "-it", rel.Container, "sh")
+		append([]string{ops.Shell[0]}, ops.Shell[1:]...)...)
 	if err != nil {
 		return m, m.notify("app shell: "+shorten(err.Error(), 44), toastErr)
 	}
@@ -839,4 +841,15 @@ func (m Model) rollbackView(s screen) string {
 		accentStyle.Render("> ") + textStyle.Render(typed) + cursor
 
 	return m.wizardPanelFit(padLines(inner, m.stageW))
+}
+
+// lineSays reports whether the command's output carries the
+// expected answer as one of its lines.
+func lineSays(out, want string) bool {
+	for _, line := range strings.Split(out, "\n") {
+		if strings.TrimSpace(line) == want {
+			return true
+		}
+	}
+	return false
 }

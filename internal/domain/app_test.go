@@ -82,3 +82,38 @@ func TestReleaseBookkeeping(t *testing.T) {
 		t.Error("a failed release is not a rollback target")
 	}
 }
+
+// the verbs never differ; the commands do — a compose application
+// is addressed by its project and service, a single container by
+// its name
+func TestOpsNamesTheRightCommands(t *testing.T) {
+	single := App{Name: "api", Node: "web-1", Type: SourceImage, Image: "img:1", Port: 8080}
+	rel := Release{ID: 2, Container: "mymo-api-r2", State: ReleaseActive}
+	ops := single.Ops(rel)
+	if strings.Join(ops.Status, " ") != "docker ps --filter name=mymo-api-r2 --filter status=running --format {{.Names}}" {
+		t.Errorf("single status = %v", ops.Status)
+	}
+	if ops.StatusAnswer != "mymo-api-r2" || strings.Join(ops.Shell, " ") != "docker exec -it mymo-api-r2 sh" {
+		t.Errorf("single ops = %+v", ops)
+	}
+
+	comp := App{Name: "web", Node: "web-1", Type: SourceCompose, Service: "api", Port: 8080,
+		Compose: "services:\n  api:\n    image: x\n"}
+	rel = Release{ID: 1, Container: "mymo-web", State: ReleaseActive}
+	ops = comp.Ops(rel)
+	if strings.Join(ops.Status, " ") != "docker compose -p mymo-web ps --status running --format {{.Service}} api" {
+		t.Errorf("compose status = %v", ops.Status)
+	}
+	if ops.StatusAnswer != "api" {
+		t.Errorf("compose answer = %q", ops.StatusAnswer)
+	}
+	if strings.Join(ops.Logs, " ") != "docker compose -p mymo-web logs --tail 100 api" {
+		t.Errorf("compose logs = %v", ops.Logs)
+	}
+	if strings.Join(ops.Restart, " ") != "docker compose -p mymo-web restart api" {
+		t.Errorf("compose restart = %v", ops.Restart)
+	}
+	if strings.Join(ops.Shell, " ") != "docker compose -p mymo-web exec api sh" {
+		t.Errorf("compose shell = %v", ops.Shell)
+	}
+}

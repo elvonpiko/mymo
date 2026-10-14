@@ -82,6 +82,45 @@ type App struct {
 	Releases []Release `json:"releases,omitempty"`
 }
 
+// AppOps is the box's command set for one release's verbs: status,
+// logs, restart, shell. The commands differ by source — a single
+// container is addressed by its name, a compose application by its
+// project and service — but the verbs never differ: the operator
+// asks the same things of every app.
+type AppOps struct {
+	Status       []string // prints StatusAnswer when the release runs
+	StatusAnswer string   // the line the status command must carry
+	Logs         []string
+	Restart      []string
+	Shell        []string
+}
+
+// Ops names the command set for one release. A compose release's
+// container record is its compose project; the service the record
+// names is the one the verbs address.
+func (a App) Ops(rel Release) AppOps {
+	if a.Type == SourceCompose && rel.Container != "" {
+		proj := rel.Container
+		argv := func(args ...string) []string {
+			return append([]string{"docker", "compose", "-p", proj}, args...)
+		}
+		return AppOps{
+			Status:       argv("ps", "--status", "running", "--format", "{{.Service}}", a.Service),
+			StatusAnswer: a.Service,
+			Logs:         argv("logs", "--tail", "100", a.Service),
+			Restart:      argv("restart", a.Service),
+			Shell:        argv("exec", a.Service, "sh"),
+		}
+	}
+	return AppOps{
+		Status:       []string{"docker", "ps", "--filter", "name=" + rel.Container, "--filter", "status=running", "--format", "{{.Names}}"},
+		StatusAnswer: rel.Container,
+		Logs:         []string{"docker", "logs", "--tail", "100", rel.Container},
+		Restart:      []string{"docker", "restart", rel.Container},
+		Shell:        []string{"docker", "exec", "-it", rel.Container, "sh"},
+	}
+}
+
 // ValidateAppName applies the same rules as node names: one word,
 // letters/digits/dashes, not the empty word.
 func ValidateAppName(name string) error {
