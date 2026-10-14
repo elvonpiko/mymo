@@ -30,18 +30,21 @@ $InstallDir = if ($env:MYMO_INSTALL_DIR) { $env:MYMO_INSTALL_DIR } else {
     Join-Path $env:LOCALAPPDATA "Programs\mymo"
 }
 
-# 1 - the architecture, from the processor's own report
-$Arch = switch ($env:PROCESSOR_ARCHITECTURE) {
-    "AMD64" { "amd64" }
-    "ARM64" { "arm64" }
-    default { throw "mymo install: unsupported architecture '$($env:PROCESSOR_ARCHITECTURE)' - mymo builds amd64 and arm64" }
+# 1 - the architecture, from the runtime's own report. .NET names
+# it where PowerShell runs: Windows, or anywhere else.
+$ProcArch = [string][System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture
+$Arch = switch ($ProcArch) {
+    "X64" { "amd64" }
+    "Arm64" { "arm64" }
+    "X86" { "amd64" }   # a 32-bit shell on a 64-bit Windows
+    default { throw "mymo install: unsupported architecture '$ProcArch' - mymo builds amd64 and arm64" }
 }
 
 Write-Host "mymo install: $Version for windows/$Arch"
 
 # 2 - the release and its checksums
 $Archive = "mymo-$Version-windows-$Arch.zip"
-$Tmp = New-Item -ItemType Directory -Force -Path (Join-Path $env:TEMP "mymo-install-$([guid]::NewGuid())")
+$Tmp = New-Item -ItemType Directory -Force -Path (Join-Path ([System.IO.Path]::GetTempPath()) "mymo-install-$([guid]::NewGuid())")
 
 $web = New-Object System.Net.WebClient
 try {
