@@ -9,9 +9,13 @@ func TestMatchesOS(t *testing.T) {
 	}{
 		{"Ubuntu 24.04.2 LTS", true},
 		{"Ubuntu 22.04.5 LTS", true},
+		{"Ubuntu 26.04 LTS", true},
 		{"Debian GNU/Linux 12 (bookworm)", true},
+		{"Debian GNU/Linux 13 (trixie)", true},
 		{"Ubuntu 25.10", false},
-		{"Debian GNU/Linux 13", false},
+		// Debian 11 is refused on purpose: its LTS ended August
+		// 2026, and mymo does not manage unpatched boxes
+		{"Debian GNU/Linux 11 (bullseye)", false},
 		{"Alpine Linux v3.20", false},
 		{"", false},
 		{"CentOS Stream 9", false},

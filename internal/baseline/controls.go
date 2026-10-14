@@ -18,7 +18,7 @@ import "fmt"
 
 // SSHDropin is the sshd configuration mymo owns on an app host. mymo
 // never rewrites /etc/ssh/sshd_config — it writes a drop-in, which
-// Ubuntu 22.04+/Debian 12 load first through their Include line, and
+// every supported release loads first through its Include line, and
 // removes it wholesale on rollback. sshd reads its configuration
 // first-match-wins: whichever file sorts earliest in sshd_config.d
 // claims each directive, and a cloud image's 50-cloud-init.conf with

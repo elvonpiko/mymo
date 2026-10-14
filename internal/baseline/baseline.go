@@ -47,16 +47,22 @@ const MymoUser = "mymo"
 const StateDir = "/var/lib/mymo"
 
 // SupportedOS lists the distribution versions baseline 0.1 is tested
-// against, matched against the PRETTY_NAME of /etc/os-release.
+// against, matched against the PRETTY_NAME of /etc/os-release: the
+// last three Ubuntu LTS releases and the Debian releases still
+// inside their support window. Debian 11 bullseye is absent on
+// purpose — its LTS ended in August 2026, and a box that no longer
+// receives security updates is not one mymo will manage.
 var SupportedOS = []string{
 	"Ubuntu 22.04",
 	"Ubuntu 24.04",
+	"Ubuntu 26.04",
 	"Debian GNU/Linux 12",
+	"Debian GNU/Linux 13",
 }
 
 // SupportedOSShort is the display form of the supported list for
 // verdict details: short, the same truth, no version-suffix drift.
-const SupportedOSShort = "Ubuntu 22.04/24.04 · Debian 12"
+const SupportedOSShort = "Ubuntu 22.04/24.04/26.04 · Debian 12/13"
 
 // SupportedArch lists the package-repository names of the
 // architectures with official Docker and Caddy packages; kernels

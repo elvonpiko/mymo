@@ -462,6 +462,26 @@ func TestGenerateDebianPaths(t *testing.T) {
 	}
 }
 
+// Debian 13 rides the same live-codename path, its docker source
+// pointing at the trixie repository the box itself names.
+func TestGenerateDebian13TrixiePaths(t *testing.T) {
+	r := ubuntuRunner()
+	r.responses[`sh -c . /etc/os-release && echo "$ID $VERSION_CODENAME"`] = "debian trixie"
+	snap := cleanSnapshot()
+	snap.OS = "Debian GNU/Linux 13 (trixie)"
+	steps, err := Generate(context.Background(), r, cleanNode(), snap, cleanAudit(), false)
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	for _, s := range steps {
+		if s.Control == "docker" && len(s.Files) > 0 {
+			if !strings.Contains(s.Files[0].Content, "https://download.docker.com/linux/debian trixie stable") {
+				t.Errorf("trixie docker source wrong: %q", s.Files[0].Content)
+			}
+		}
+	}
+}
+
 func TestGenerateRefusesUnknownCodename(t *testing.T) {
 	r := ubuntuRunner()
 	r.responses[`sh -c . /etc/os-release && echo "$ID $VERSION_CODENAME"`] = ""
