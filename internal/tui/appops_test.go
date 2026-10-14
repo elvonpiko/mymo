@@ -847,3 +847,88 @@ func TestInternalDeployStatesTheAddressAndTheDomainPath(t *testing.T) {
 		t.Errorf("a domained app is not internal-only:\n%s", out)
 	}
 }
+
+// The record follows the box. When the probe asks about the active
+// release and docker answers that it is not running there, the
+// record says gone — and says it in the store, not just on the
+// page. A release removed by hand stops being a claim mymo makes.
+func TestStatusReconcilesTheRecordWithTheBox(t *testing.T) {
+	s := readyStore(t)
+	seedNode(t, s, "web-1")
+	seedApp(t, s, sampleApp("api", "web-1"))
+	runner := &cannedAppRunner{running: false}
+	m := New(s)
+	m.appRunner = runner
+	m = press(t, m, "a")
+	m = press(t, m, "enter")
+
+	m, msgs := drive(t, m, tea.KeyPressMsg{Code: 's'})
+	m = drain(t, m, msgs)
+
+	// the store — not just the page — carries the reconciliation
+	app, err := s.GetApp("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if app.Releases[1].State != domain.ReleaseGone {
+		t.Errorf("the record still claims r2 %q; the box said gone", app.Releases[1].State)
+	}
+	if !strings.Contains(app.Releases[1].Health, "gone from the box") {
+		t.Errorf("the health note should say why: %q", app.Releases[1].Health)
+	}
+	out := ansiStrip(view(m))
+	if !strings.Contains(out, "record follows the box") {
+		t.Errorf("the toast should state the reconciliation:\n%s", out)
+	}
+
+	// the box wins both ways: a container started back by hand is
+	// seen running again, and the record follows it back
+	runner.running = true
+	m, msgs = drive(t, m, tea.KeyPressMsg{Code: 's'})
+	m = drain(t, m, msgs)
+	app, err = s.GetApp("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if app.Releases[1].State != domain.ReleaseActive {
+		t.Errorf("r2 runs again; the record should say active, says %q", app.Releases[1].State)
+	}
+	out = ansiStrip(view(m))
+	if !strings.Contains(out, "the record follows") {
+		t.Errorf("the return should be stated:\n%s", out)
+	}
+}
+
+// A gone release is still the one the verbs address — a
+// hand-stopped container has logs to read and a restart can
+// recover it; the page keeps offering the verbs, and the row says
+// gone where it said active.
+func TestGoneReleaseKeepsItsVerbsAndItsRow(t *testing.T) {
+	s := readyStore(t)
+	seedNode(t, s, "web-1")
+	app := sampleApp("api", "web-1")
+	app.Releases[1].State = domain.ReleaseGone
+	if err := s.AddApp(app); err != nil {
+		t.Fatal(err)
+	}
+	m := New(s)
+	m.appRunner = &cannedAppRunner{running: false}
+	m = press(t, m, "a")
+	m = press(t, m, "enter")
+
+	out := ansiStrip(view(m))
+	if !strings.Contains(out, "gone") {
+		t.Errorf("the row should state gone:\n%s", out)
+	}
+	// the verbs are still offered — the verbs are how a hand-
+	// stopped container comes back
+	m, msgs := drive(t, m, tea.KeyPressMsg{Code: 's'})
+	m = drain(t, m, msgs)
+	app, err := s.GetApp("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if app.Releases[1].State != domain.ReleaseGone {
+		t.Errorf("a gone release probed as still gone should stay gone, says %q", app.Releases[1].State)
+	}
+}

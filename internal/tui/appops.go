@@ -22,11 +22,14 @@ import (
 // verbs below. The CLI's exact commands run over the same transport
 // — the TUI surfaces them, it does not reimplement them.
 
-// appActionDefs lists the verbs an app's active release earns. An
-// app with nothing live has nothing to operate — the card says so
+// appActionDefs lists the verbs an app's current release earns —
+// active, or gone: a gone release is still the one the verbs
+// address, because the box can be asked again and a hand-stopped
+// container can be recovered by the verbs themselves. An app with
+// no current release has nothing to operate — the card says so
 // instead of offering verbs that cannot work.
 func appActionDefs(app domain.App) []actionItem {
-	rel, hasActive := app.ActiveRelease()
+	rel, hasActive := app.CurrentRelease()
 	if !hasActive {
 		return nil
 	}
@@ -54,6 +57,7 @@ type appLiveState struct {
 	Running   bool
 	Container string
 	Note      string
+	RelID     int
 }
 
 // appStatusDoneMsg carries the live probe's answer.
@@ -131,11 +135,15 @@ func (m Model) runAppStatus(app domain.App, node domain.Node) tea.Cmd {
 			return appStatusDoneMsg{node: node.Name, app: name, fatal: err.Error()}
 		}
 		defer closeFn()
-		rel, _ := app.ActiveRelease()
+		rel, hasCurrent := app.CurrentRelease()
+		if !hasCurrent {
+			return appStatusDoneMsg{node: node.Name, app: name,
+				live: appLiveState{Note: "no release to ask about — nothing is active"}}
+		}
 		ops := app.Ops(rel)
 		sudo := appNeedsRoot(ctx, r)
 		out, code, err := appRunW(ctx, r, sudo, ops.Status...)
-		live := appLiveState{Container: rel.Container}
+		live := appLiveState{Container: rel.Container, RelID: rel.ID}
 		switch {
 		case err != nil:
 			live.Note = "the node did not answer (" + err.Error() + ")"
@@ -209,9 +217,9 @@ func (m Model) runAppRestart(app domain.App, node domain.Node) tea.Cmd {
 // runAppShell hands the operator's terminal to docker exec through
 // ssh — a real shell, not an emulation.
 func (m Model) runAppShell(app domain.App, node domain.Node) (tea.Model, tea.Cmd) {
-	rel, hasActive := app.ActiveRelease()
-	if !hasActive {
-		return m, m.notify(app.Name+" has no active release to shell into", toastErr)
+	rel, hasCurrent := app.CurrentRelease()
+	if !hasCurrent {
+		return m, m.notify(app.Name+" has no release to shell into", toastErr)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), appOpsTimeout)
 	defer cancel()
@@ -377,6 +385,8 @@ func appReleaseRow(r domain.Release, w int) string {
 		state, stateStyle = "kept", subtextStyle
 	case domain.ReleaseFailed:
 		state, stateStyle = "failed", errStyle
+	case domain.ReleaseGone:
+		state, stateStyle = "gone", errStyle
 	}
 	digest := shortAppDigest(r.Digest)
 	age := "unknown when"
@@ -573,11 +583,43 @@ func (m Model) handleAppStatusDone(msg appStatusDoneMsg) (tea.Model, tea.Cmd) {
 	if m.loading.active && m.loadingApp == msg.app {
 		m.loading = loadingState{}
 	}
+	if msg.fatal != "" && m.cur().kind == scAppDetail && m.cur().app == msg.app {
+		return m, m.notify(shorten(msg.fatal, 44), toastErr)
+	}
 	if m.cur().kind == scAppDetail && m.cur().app == msg.app {
-		if msg.fatal != "" {
-			return m, m.notify(shorten(msg.fatal, 44), toastErr)
-		}
 		m.appLive = msg.live
+	}
+	// the record follows the box — the reconciliation is the point
+	// of the probe. Only an authoritative answer moves the record:
+	// docker answered, and the release the record claims is not
+	// running there (or, started back by hand, is again).
+	if msg.live.Probed {
+		for i := range m.apps {
+			if m.apps[i].Name != msg.app {
+				continue
+			}
+			app := &m.apps[i]
+			for j := range app.Releases {
+				r := &app.Releases[j]
+				if r.ID != msg.live.RelID {
+					continue
+				}
+				switch {
+				case r.State == domain.ReleaseActive && !msg.live.Running:
+					r.State = domain.ReleaseGone
+					r.Health = "gone from the box at " + time.Now().UTC().Format(time.RFC3339)
+					if err := m.store.UpdateApp(*app); err == nil {
+						return m, m.notify(shorten(fmt.Sprintf("record follows the box — r%d is gone; a redeploy is the recovery", r.ID), 44), toastWarn)
+					}
+				case r.State == domain.ReleaseGone && msg.live.Running:
+					r.State = domain.ReleaseActive
+					r.Health = "back on the box at " + time.Now().UTC().Format(time.RFC3339)
+					if err := m.store.UpdateApp(*app); err == nil {
+						return m, m.notify(shorten(fmt.Sprintf("r%d runs again — the record follows", r.ID), 44), toastOK)
+					}
+				}
+			}
+		}
 	}
 	return m, nil
 }

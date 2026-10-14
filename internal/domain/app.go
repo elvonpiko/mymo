@@ -32,6 +32,14 @@ const (
 	ReleaseActive  ReleaseState = "active"
 	ReleaseRetired ReleaseState = "retired"
 	ReleaseFailed  ReleaseState = "failed"
+	// ReleaseGone is the box's own answer, accepted: the release's
+	// containers are not running there — a docker rm, a project
+	// down, a rebuilt box. The record follows the box: this state
+	// is what the box said when asked, and the release keeps its
+	// identity for history. A gone release is not a rollback
+	// target — its container claim is false; a redeploy is the
+	// honest recovery.
+	ReleaseGone ReleaseState = "gone"
 )
 
 // Release is one immutable deployment record: what ran, from what
@@ -183,6 +191,22 @@ func (a App) ActiveRelease() (Release, bool) {
 // RollbackTarget is the release a rollback would select: the most
 // recent release that was retired healthy. Failed releases are never
 // destinations.
+// CurrentRelease is the release the verbs address: the newest one
+// that is active, or gone. Gone keeps its claim on the verbs so
+// the box can be asked again — and so a container started back by
+// hand can be seen running again, and the record follow it.
+func (a App) CurrentRelease() (Release, bool) {
+	for i := len(a.Releases) - 1; i >= 0; i-- {
+		if a.Releases[i].State == ReleaseActive || a.Releases[i].State == ReleaseGone {
+			return a.Releases[i], true
+		}
+	}
+	return Release{}, false
+}
+
+// RollbackTarget selects the most recent retired release. A gone
+// release is never a target: the box said its containers are not
+// there, and a rollback that cannot start is a false promise.
 func (a App) RollbackTarget() (Release, bool) {
 	for i := len(a.Releases) - 1; i >= 0; i-- {
 		if a.Releases[i].State == ReleaseRetired {

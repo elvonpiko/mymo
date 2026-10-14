@@ -76,6 +76,13 @@ func runAppStatus(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	if app.Type == domain.SourceDockerfile {
 		artifact = "Dockerfile in " + app.Dockerfile
 	}
+	if app.Type == domain.SourceCompose {
+		if cf, err := deploy.ParseCompose(app.Compose); err == nil {
+			artifact = fmt.Sprintf("%s exposed · %d services: %s", app.Service, len(cf.Services), strings.Join(cf.Services, ", "))
+		} else {
+			artifact = app.Service + " exposed"
+		}
+	}
 	fmt.Fprintf(stdout, "%s · node %s\n", app.Name, node.Name)
 	fmt.Fprintf(stdout, "  type     %s · %s\n", app.Type, artifact)
 	if app.Domain != "" {
@@ -98,13 +105,16 @@ func runAppStatus(ctx context.Context, args []string, stdout, stderr io.Writer) 
 			state = "kept for rollback"
 		case domain.ReleaseFailed:
 			state = "failed"
+		case domain.ReleaseGone:
+			state = "gone from the box"
 		}
 		fmt.Fprintf(stdout, "    r%-3d %-16s %s\n", r.ID, state, releaseLine(r))
 	}
 
-	// the live word: the container, running or not
-	rel, _ := app.ActiveRelease()
-	if rel.ID == 0 {
+	// the live word: the release the record claims, asked of the
+	// box — and the record follows the box's authoritative answer
+	rel, hasCurrent := app.CurrentRelease()
+	if !hasCurrent {
 		return exitOK
 	}
 	runner, closeFn, err := opsDial(ctx, node, store, dialNarrator(stderr))
@@ -116,6 +126,11 @@ func runAppStatus(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	sudo := operatorIsNotRoot(ctx, runner)
 	ops := app.Ops(rel)
 	out, code, err := runSudo(ctx, runner, sudo, ops.Status[0], ops.Status[1:]...)
+	reconciled := func(newApp domain.App) {
+		if err := store.UpdateApp(newApp); err != nil {
+			fmt.Fprintf(stderr, "mymo app status: reconciling the record: %v\n", err)
+		}
+	}
 	switch {
 	case err != nil:
 		fmt.Fprintf(stdout, "  live     unknown — the node did not answer (%v)\n", err)
@@ -123,8 +138,32 @@ func runAppStatus(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		fmt.Fprintf(stdout, "  live     unknown — docker refused\n")
 	case statusLineSays(out, ops.StatusAnswer):
 		fmt.Fprintf(stdout, "  live     %s is running right now\n", ops.StatusAnswer)
+		if rel.State == domain.ReleaseGone {
+			// a container started back by hand: the box wins both
+			// ways, and the record follows it back
+			for i := range app.Releases {
+				if app.Releases[i].ID == rel.ID {
+					app.Releases[i].State = domain.ReleaseActive
+					app.Releases[i].Health = "back on the box at " + time.Now().UTC().Format(time.RFC3339)
+				}
+			}
+			reconciled(app)
+			fmt.Fprintf(stdout, "  record   r%d runs again — the record follows the box\n", rel.ID)
+		}
 	default:
 		fmt.Fprintf(stdout, "  live     %s is NOT running\n", ops.StatusAnswer)
+		if rel.State == domain.ReleaseActive {
+			// docker answered authoritatively: the release the
+			// record claims is not on the box — the record follows
+			for i := range app.Releases {
+				if app.Releases[i].ID == rel.ID {
+					app.Releases[i].State = domain.ReleaseGone
+					app.Releases[i].Health = "gone from the box at " + time.Now().UTC().Format(time.RFC3339)
+				}
+			}
+			reconciled(app)
+			fmt.Fprintf(stdout, "  record   r%d is marked gone — the record follows the box; a redeploy is the recovery\n", rel.ID)
+		}
 	}
 	return exitOK
 }
@@ -174,9 +213,9 @@ func runAppLogs(ctx context.Context, args []string, stdout, stderr io.Writer) in
 	if !ok {
 		return exitErr
 	}
-	rel, hasActive := app.ActiveRelease()
-	if !hasActive {
-		fmt.Fprintf(stderr, "mymo app logs: %s has no active release to read logs from\n", app.Name)
+	rel, hasCurrent := app.CurrentRelease()
+	if !hasCurrent {
+		fmt.Fprintf(stderr, "mymo app logs: %s has no release to read logs from\n", app.Name)
 		return exitErr
 	}
 	runner, closeFn, err := opsDial(ctx, node, store, dialNarrator(stderr))
@@ -214,9 +253,9 @@ func runAppLifecycle(ctx context.Context, verb, name string, stdout, stderr io.W
 	if !ok {
 		return exitErr
 	}
-	rel, hasActive := app.ActiveRelease()
-	if !hasActive {
-		fmt.Fprintf(stderr, "mymo app %s: %s has no active release\n", verb, app.Name)
+	rel, hasCurrent := app.CurrentRelease()
+	if !hasCurrent {
+		fmt.Fprintf(stderr, "mymo app %s: %s has no release to address\n", verb, app.Name)
 		return exitErr
 	}
 	runner, closeFn, err := opsDial(ctx, node, store, dialNarrator(stderr))
@@ -255,7 +294,7 @@ func runAppRollback(ctx context.Context, args []string, stdout, stderr io.Writer
 		fmt.Fprintf(stderr, "mymo app rollback: %s has no retired release to roll back to\n", app.Name)
 		return exitErr
 	}
-	current, _ := app.ActiveRelease()
+	current, _ := app.CurrentRelease()
 
 	fmt.Fprintf(stdout, "rollback · %s · release %d → release %d\n", app.Name, current.ID, target.ID)
 	fmt.Fprintf(stdout, "  restoring %s from %s\n", target.Container, shortDigest(target.Digest))
@@ -307,9 +346,9 @@ func runAppShell(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	if !ok {
 		return exitErr
 	}
-	rel, hasActive := app.ActiveRelease()
-	if !hasActive {
-		fmt.Fprintf(stderr, "mymo app shell: %s has no active release to shell into\n", app.Name)
+	rel, hasCurrent := app.CurrentRelease()
+	if !hasCurrent {
+		fmt.Fprintf(stderr, "mymo app shell: %s has no release to shell into\n", app.Name)
 		return exitErr
 	}
 

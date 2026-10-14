@@ -411,7 +411,7 @@ func TestAppShellRefusesWithoutAnActiveRelease(t *testing.T) {
 	}
 
 	code, _, errb := s.run(t, "app", "shell", "api")
-	if code != exitErr || !strings.Contains(errb, "no active release") {
+	if code != exitErr || !strings.Contains(errb, "no release") {
 		t.Fatalf("shell: code %d errb %q", code, errb)
 	}
 }

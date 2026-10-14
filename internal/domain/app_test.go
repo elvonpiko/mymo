@@ -117,3 +117,31 @@ func TestOpsNamesTheRightCommands(t *testing.T) {
 		t.Errorf("compose shell = %v", ops.Shell)
 	}
 }
+
+// the current release is the one the verbs address: active, or
+// gone — gone keeps its claim so the box can be asked again
+func TestCurrentReleaseAddressesActiveOrGone(t *testing.T) {
+	a := App{Name: "api", Node: "web-1", Type: SourceImage, Image: "i:1", Port: 80}
+	a.Releases = []Release{
+		{ID: 1, State: ReleaseRetired},
+		{ID: 2, State: ReleaseFailed},
+	}
+	if _, ok := a.CurrentRelease(); ok {
+		t.Error("no active and no gone release means no current release")
+	}
+	a.Releases = append(a.Releases, Release{ID: 3, State: ReleaseGone})
+	cur, ok := a.CurrentRelease()
+	if !ok || cur.ID != 3 {
+		t.Fatalf("current = r%d (ok=%v), want the gone r3", cur.ID, ok)
+	}
+	// a gone release is never a rollback target: the box said its
+	// containers are not there, and a rollback that cannot start
+	// is a false promise
+	if target, ok := a.RollbackTarget(); !ok || target.ID != 1 {
+		t.Errorf("rollback target = r%d (ok=%v), want the retired r1", target.ID, ok)
+	}
+	a.Releases = append(a.Releases, Release{ID: 4, State: ReleaseActive})
+	if cur, _ := a.CurrentRelease(); cur.ID != 4 {
+		t.Error("active outranks gone when both exist")
+	}
+}
