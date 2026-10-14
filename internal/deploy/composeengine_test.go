@@ -315,3 +315,72 @@ func TestComposeDeployRefusesUnknownExposedService(t *testing.T) {
 		t.Errorf("the refusal must name the service")
 	}
 }
+
+// A build that fails because the node's disk is full names the
+// disk and its fix — the technical reason rides behind the
+// ownership, not instead of it
+func TestBuildFailureNamesTheFullDisk(t *testing.T) {
+	app := composeApp()
+	r := composeRunner()
+	build := "docker compose -p mymo-web -f /tmp/mymo-build/web-r1/mymo-release.yaml -f /tmp/mymo-build/web-r1/mymo-release.mymo.yaml build"
+	r.codes[build] = 1
+	r.responses[build] = "#10 writing image sha256:abc\ncopying files: failed to copy files: write /var/lib/docker/tmp/...: no space left on device"
+
+	res := Deploy(context.Background(), r, app, composeOpts(t, &fakeCopier{}))
+	if res.OK {
+		t.Fatal("a disk-full build must fail the deploy")
+	}
+	if res.FailedAt != "build" {
+		t.Errorf("failure = %s, want build", res.FailedAt)
+	}
+	rel := res.App.Releases[len(res.App.Releases)-1]
+	if !strings.Contains(rel.Health, "the node's disk is full") {
+		t.Errorf("the refusal should name the disk and its fix: %q", rel.Health)
+	}
+	if !strings.Contains(rel.Health, "no space left on device") {
+		t.Errorf("the technical reason should ride along: %q", rel.Health)
+	}
+	if r.called("caddy validate") {
+		t.Error("the route must never learn about a failed release")
+	}
+}
+
+// An interrupted compose deploy is recovered by the next attempt:
+// the attempt that never recorded a release hands the same id
+// back, the pair is rewritten, and up recreates what it finds —
+// compose's own recovery, not a new one mymo invents
+func TestComposeDeployRecoversTheInterruptedAttempt(t *testing.T) {
+	app := composeApp()
+	r := composeRunner()
+	up := "docker compose -p mymo-web -f /tmp/mymo-build/web-r1/mymo-release.yaml -f /tmp/mymo-build/web-r1/mymo-release.mymo.yaml up -d --wait --remove-orphans --quiet-pull"
+	r.codes[up] = 1
+	r.responses[up] = "Error response from daemon: container command interrupted"
+
+	res := Deploy(context.Background(), r, app, composeOpts(t, &fakeCopier{}))
+	if res.OK {
+		t.Fatal("the first attempt must fail here")
+	}
+	if res.App.Releases[len(res.App.Releases)-1].State != domain.ReleaseFailed {
+		t.Fatal("the interrupted attempt files its failure")
+	}
+
+	// the operator runs again: the failed attempt is history the
+	// next deploy reads from the record, exactly as the store
+	// carries it
+	app = res.App
+	r.codes[up] = 0
+	res = Deploy(context.Background(), r, app, composeOpts(t, &fakeCopier{}))
+	if !res.OK {
+		t.Fatalf("the recovery failed at %s:\n%s", res.FailedAt, r.callList())
+	}
+	rel := res.App.Releases[len(res.App.Releases)-1]
+	if rel.ID != 2 {
+		t.Errorf("the recovered deploy should be r2, got r%d — a failed attempt consumes its id", rel.ID)
+	}
+	if rel.State != domain.ReleaseActive {
+		t.Errorf("the recovered release should be active, says %q", rel.State)
+	}
+	if !r.wrote("image: mymo/web-api:r2") {
+		t.Error("the recovered deploy builds its own release tag")
+	}
+}

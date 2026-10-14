@@ -13,6 +13,14 @@ import (
 // operator needs the lines that say something, not the first line
 // BuildKit ever printed.
 func buildFailNote(out string) string {
+	// a full disk is the box's, and the fix is the operator's:
+	// named before the technical reason — the line that says it —
+	// so the reason is not mistaken for a mystery
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "no space left on device") {
+			return "the node's disk is full — free space on it or grow it, then deploy again; " + strings.TrimSpace(line)
+		}
+	}
 	lines := strings.Split(out, "\n")
 	errLine := ""
 	errIdx := -1

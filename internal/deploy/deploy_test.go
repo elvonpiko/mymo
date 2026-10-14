@@ -807,3 +807,59 @@ func TestUnremovableLeftoverRefusesBeforeStarting(t *testing.T) {
 		t.Fatal("a second container was started on top of a stuck leftover")
 	}
 }
+
+// A pull that fails refuses the deploy before anything is staged,
+// and files the failure with the registry's own reason — the
+// record says what the box said, never less
+func TestImagePullFailureRefusesBeforeStaging(t *testing.T) {
+	app := imageApp()
+	r := nodeRunner()
+	r.codes["docker pull ghcr.io/x/api:1.2.3"] = 1
+	r.responses["docker pull ghcr.io/x/api:1.2.3"] = "Error response from daemon: manifest for ghcr.io/x/api:1.2.3 not found"
+
+	res := Deploy(context.Background(), r, app, goodOpts())
+	if res.OK {
+		t.Fatal("a failed pull must fail the deploy")
+	}
+	if res.FailedAt != "pull" {
+		t.Errorf("failure = %s, want pull", res.FailedAt)
+	}
+	if r.called("docker run") {
+		t.Error("nothing may be staged after a failed pull")
+	}
+	rel := res.App.Releases[len(res.App.Releases)-1]
+	if rel.State != domain.ReleaseFailed {
+		t.Errorf("the failed attempt must be filed, says %q", rel.State)
+	}
+	if !strings.Contains(rel.Health, "manifest for ghcr.io/x/api:1.2.3 not found") {
+		t.Errorf("the record should carry the registry's reason: %q", rel.Health)
+	}
+}
+
+// A dockerfile build that fills the node's disk names the disk and
+// its fix — the same diagnosis the compose path carries
+func TestDockerfileBuildFailureNamesTheFullDisk(t *testing.T) {
+	app := imageApp()
+	app.Type = domain.SourceDockerfile
+	app.Image = ""
+	app.Dockerfile = "."
+	r := nodeRunner()
+	r.codes["docker build -t mymo/api:r1 /tmp/mymo-build/api-r1"] = 1
+	r.responses["docker build -t mymo/api:r1 /tmp/mymo-build/api-r1"] = "#9 0.31 writing layers\ncopying files: write /var/lib/docker/overlay2/.../diff/x: no space left on device"
+
+	opts := goodOpts()
+	opts.Copier = &fakeCopier{}
+	opts.BuildContext = t.TempDir()
+
+	res := Deploy(context.Background(), r, app, opts)
+	if res.OK {
+		t.Fatal("a disk-full build must fail the deploy")
+	}
+	if res.FailedAt != "build" {
+		t.Errorf("failure = %s, want build", res.FailedAt)
+	}
+	rel := res.App.Releases[len(res.App.Releases)-1]
+	if !strings.Contains(rel.Health, "the node's disk is full") {
+		t.Errorf("the refusal should name the disk: %q", rel.Health)
+	}
+}
