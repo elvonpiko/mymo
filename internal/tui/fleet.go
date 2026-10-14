@@ -51,11 +51,14 @@ func (fleetDelegate) Render(w io.Writer, m list.Model, index int, item list.Item
 		status, statusStyle = healthLabel(it.node)
 	}
 	// the columns budget to the card's inner width exactly — a row
-	// wider than its card would push the frame's border out of true
+	// wider than its card would push the frame's border out of true.
+	// Each column shortens its content two characters shy of its
+	// width, so a full column still breathes before the next —
+	// separation is structural, never an accident of length
 	line := cursor +
 		statusStyle.Render("● ") +
-		nameStyle.Width(17).Render(shorten(it.node.Name, 17)) +
-		dimStyle.Width(25).Render(shorten(addr, 25)) +
+		nameStyle.Width(17).Render(shortenMiddle(it.node.Name, 15)) +
+		dimStyle.Width(25).Render(shorten(addr, 23)) +
 		modeBadge(it.node.Mode) +
 		"  " + statusStyle.Render(shorten(status, 16))
 	fmt.Fprint(w, line)

@@ -646,3 +646,38 @@ func TestFleetListRidesInACard(t *testing.T) {
 		t.Errorf("the footer must carry the apps key:\n%s", joined)
 	}
 }
+
+// Long names shorten from the middle — family prefix and sibling
+// index both survive — and every column carries its own air, so a
+// full column never touches its neighbor.
+func TestFleetRowColumnsBreathe(t *testing.T) {
+	long := shortenMiddle("ubuntu-hrly-chsrv-02", 15)
+	if long != "ubuntu-…hsrv-02" {
+		t.Errorf("middle shorten = %q, want ubuntu-…hsrv-02", long)
+	}
+	// the separation is structural: a full column still ends two
+	// characters short of its width
+	if n := utf8.RuneCountInString(long); n > 15 {
+		t.Errorf("shortened name is %d wide, want at most 15", n)
+	}
+	if shortenMiddle("web-1", 15) != "web-1" {
+		t.Error("a short name must not be touched")
+	}
+	// the row itself: a long-named node renders with air between
+	// the name column and the address column
+	s := readyStore(t)
+	seedNode(t, s, "ubuntu-hrly-chsrv-02")
+	m := press(t, New(s), "n")
+	out := ansiStrip(view(m))
+	if !strings.Contains(out, "ubuntu-…hsrv-02") {
+		t.Errorf("the long name did not shorten readably:\n%s", out)
+	}
+	for _, bad := range []string{"…root@", "…amir@"} {
+		if strings.Contains(out, bad) {
+			t.Errorf("the name column touches the address column (%q):\n%s", bad, out)
+		}
+	}
+	if !strings.Contains(out, "[observe]") {
+		t.Errorf("the mode badge lost its place:\n%s", out)
+	}
+}

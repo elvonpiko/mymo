@@ -394,6 +394,23 @@ func shorten(s string, n int) string {
 	return strings.TrimSpace(string(r[:n-1])) + "…"
 }
 
+// shortenMiddle trims long identifiers from the middle — the Finder
+// convention — because a node's family prefix and its sibling
+// index are both what an operator scans for, and a tail cut hides
+// the one that separates a box from its sisters.
+func shortenMiddle(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	if n < 5 {
+		return shorten(s, n)
+	}
+	head := (n - 1) / 2
+	tail := (n - 1) - head
+	return strings.TrimSpace(string(r[:head])) + "…" + string(r[len(r)-tail:])
+}
+
 // factsPanel renders a bordered key/value panel for selected node fields.
 // Empty values are omitted.
 func factsPanel(n domain.Node, fields ...string) string {
