@@ -290,8 +290,31 @@ func (m Model) handleVerifyDone(msg verifyDoneMsg) (tea.Model, tea.Cmd) {
 		m.reopenBootstrap(msg.node, "verify failed — preflight again to resume")
 		return m, m.notify("the baseline ran but did not verify — mymo will not call this node ready", toastErr)
 	}
+	m.adoptMymoAccess(msg.node)
 	m.advanceBootstrap(msg.node, domain.BootstrapReady, "ready")
 	return m, m.notify("mymo security baseline applied and verified", toastOK)
+}
+
+// adoptMymoAccess rewrites the node's connection to the access the
+// verified baseline created: the mymo user, the mymo key. The door
+// mymo came in through — root, or a provider user with password
+// auth — is exactly what the hardening closes, so a record still
+// naming it knocks as a stranger on the very next visit. Only a
+// verified success adopts: a failed or unverified run keeps the
+// original access, because that is the door still standing.
+func (m *Model) adoptMymoAccess(name string) {
+	if m.store == nil {
+		return
+	}
+	n, err := m.store.GetNode(name)
+	if err != nil {
+		return
+	}
+	n.User = baseline.MymoUser
+	n.Auth = domain.AuthKey
+	n.KeyPath = mymoTUIKeyPath(m.store, name)
+	n.Facts.User = baseline.MymoUser
+	_ = m.store.UpdateNode(n)
 }
 
 // advanceBootstrap moves the node's lifecycle record forward — never

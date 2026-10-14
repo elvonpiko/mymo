@@ -330,4 +330,16 @@ func TestApplyVerifiesAndReachesReady(t *testing.T) {
 	if n.Mode != domain.ModeObserve {
 		t.Fatal("a verified node was implicitly promoted — promotion must stay explicit")
 	}
+	// the record now names the access the baseline created: the
+	// mymo user with the mymo key — the original door was the one
+	// the hardening closed
+	if n.User != baseline.MymoUser || n.Auth != domain.AuthKey {
+		t.Fatalf("the record still knocks as the old user: user=%s auth=%s", n.User, n.Auth)
+	}
+	if n.KeyPath != mymoTUIKeyPath(m.store, "web-1") {
+		t.Fatalf("the record kept the old key path: %s", n.KeyPath)
+	}
+	if n.Facts.User != baseline.MymoUser {
+		t.Fatalf("the facts still name the old user: %s", n.Facts.User)
+	}
 }

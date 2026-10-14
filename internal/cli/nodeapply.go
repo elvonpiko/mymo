@@ -179,6 +179,13 @@ func runNodeApply(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	}
 
 	node.Bootstrap = domain.Bootstrap{State: domain.BootstrapReady, Baseline: baseline.Version, Verdict: "ready", At: time.Now()}
+	// the record now names the access the baseline created — the
+	// original user is the door the hardening closed, and a record
+	// still naming it strands mymo outside its own box
+	node.User = baseline.MymoUser
+	node.Auth = domain.AuthKey
+	node.KeyPath = keyPath
+	node.Facts.User = baseline.MymoUser
 	if err := store.UpdateNode(node); err != nil {
 		fmt.Fprintf(stderr, "mymo node apply: %v\n", err)
 		return exitErr
