@@ -27,17 +27,30 @@ One binary on your workstation. No mymo server, no cloud, no accounts.
 
 ## Status
 
-mymo is in early development. Implemented so far:
+mymo implements the MVP. The whole path works:
 
 - Local state store (`~/.mymo`, JSON, restrictive permissions)
 - Node model: connection metadata, observe mode, validation
-- CLI: `mymo node list / add / inspect / rm`, `mymo version`
-- TUI: a full-window workspace — home hub with an animated
-  description, fleet, node overview and actions, settings, add-node
-  workflow, first-run intro, toasts, and per-screen key help
+- SSH transport with known-hosts trust; discovery, live facts,
+  and a live status page
+- App-host preflight with honest verdicts (PASS, ADOPT, DECIDE,
+  ABORT) and a decision gate — mymo applies nothing past an
+  undecided audit unless you decide
+- A pinned, versioned baseline: SSH hardening, UFW, Docker with
+  the buildx and compose plugins, Caddy — applied with plan and
+  resume, verified, and re-verified on demand
+- Deployment of three sources — existing images, local
+  Dockerfiles built on the node, and vetted Docker Compose files
+  (see [the deployment model](docs/deployment-model.md))
+- The release lifecycle: staging, health gating, Caddy route
+  activation, rollback, releases history, logs, shell, restart
+- Drift reconciliation: when the box's answer disagrees with the
+  record, the record follows the box
+- CLI and TUI over the same engines, so a command and a keypress
+  do the same thing the same way
 
-SSH discovery, node bootstrap, and application deployment land in the next
-phases.
+What is deliberately out of scope is listed in
+[the supported environments](docs/supported-environments.md).
 
 ## Install
 
