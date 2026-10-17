@@ -30,14 +30,33 @@ $InstallDir = if ($env:MYMO_INSTALL_DIR) { $env:MYMO_INSTALL_DIR } else {
     Join-Path $env:LOCALAPPDATA "Programs\mymo"
 }
 
-# 1 - the architecture, from the runtime's own report. .NET names
-# it where PowerShell runs: Windows, or anywhere else.
-$ProcArch = [string][System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture
-$Arch = switch ($ProcArch) {
-    "X64" { "amd64" }
-    "Arm64" { "arm64" }
-    "X86" { "amd64" }   # a 32-bit shell on a 64-bit Windows
-    default { throw "mymo install: unsupported architecture '$ProcArch' - mymo builds amd64 and arm64" }
+# 1 - the architecture, layered. The runtime's own report first;
+# the operating system's own environment variable beneath it.
+# Windows PowerShell 5.1 - what `irm ... | iex` runs in by default -
+# may not carry the .NET type at all, and PowerShell on another
+# operating system may not carry the variable. One of the two
+# always answers on a real Windows machine.
+$archName = ""
+try {
+    $archName = [string][System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture
+} catch {
+    $archName = ""
+}
+if ($archName -eq "" -or $archName -eq "Unknown") {
+    $archName = $env:PROCESSOR_ARCHITECTURE
+    if ($archName -eq "x86" -and $env:PROCESSOR_ARCHITEW6432) {
+        # a 32-bit shell on a 64-bit Windows reports the host
+        $archName = $env:PROCESSOR_ARCHITEW6432
+    }
+}
+# The switch matches case-insensitively: "Arm64" covers the
+# operating system's "ARM64" spelling on its own, and a duplicate
+# case would fire too — $Arch an array, the download URL wrong.
+$Arch = switch ("$archName") {
+    "X64"   { "amd64" }   # the .NET runtime's report
+    "AMD64" { "amd64" }   # the operating system's spelling
+    "Arm64" { "arm64" }   # both spellings, by case-insensitivity
+    default { throw "mymo install: unsupported architecture '$archName' - mymo builds amd64 and arm64" }
 }
 
 Write-Host "mymo install: $Version for windows/$Arch"
