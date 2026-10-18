@@ -1168,9 +1168,16 @@ func (m Model) frame(page, footer string) string {
 	b.WriteString(m.topBorder(innerW))
 	b.WriteString("\n")
 	if m.showHeader() {
-		b.WriteString(m.headerRow(innerW))
+		// the header centers on the frame's full width, the same axis
+		// as the borders and the divider — not on the content band
+		// one column left of it
+		b.WriteString(m.headerRow(max(1, m.width)))
 		b.WriteString("\n")
-		b.WriteString(dividerStyle.Render(strings.Repeat("─", innerW)))
+		// the divider runs edge to edge like the borders above and
+		// below it — the header band is the one place the frame's
+		// side columns are open, so the divider owns the full width
+		// or it pokes past one corner and falls short of the other
+		b.WriteString(dividerStyle.Render(strings.Repeat("─", max(1, m.width))))
 		b.WriteString("\n")
 	}
 	for _, line := range fitLines(centerBlock(page, innerW), innerW, pageH) {
@@ -1194,8 +1201,9 @@ func (m Model) topBorder(w int) string {
 	return frameStyle.Render("╭" + strings.Repeat("─", w) + "╮")
 }
 
-// headerRow renders the sticky header: mymo's icon and brand with the
-// breadcrumb of the current screen, centered like the stage below it.
+// headerRow renders the sticky header: mymo's icon and brand with
+// the breadcrumb of the current screen, centered on the frame's own
+// axis — the full width the top border and the divider below share.
 // The icon sits one cell in from the frame so its blocks never touch
 // the border.
 func (m Model) headerRow(w int) string {

@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/elvonpiko/mymo/internal/domain"
 	"github.com/elvonpiko/mymo/internal/facts"
@@ -679,5 +680,29 @@ func TestFleetRowColumnsBreathe(t *testing.T) {
 	}
 	if !strings.Contains(out, "[observe]") {
 		t.Errorf("the mode badge lost its place:\n%s", out)
+	}
+}
+
+// TestHeaderDividerRunsEdgeToEdge pins the header band's geometry:
+// every row the frame emits shares one width, and the divider under
+// the header is a plain rail that meets both frame edges exactly —
+// never poking past a corner, never falling short of one.
+func TestHeaderDividerRunsEdgeToEdge(t *testing.T) {
+	s := readyStore(t)
+	seedNode(t, s, "web-1")
+	m := press(t, New(s), "n")
+
+	lines := strings.Split(view(m), "\n")
+	if len(lines) != 24 {
+		t.Fatalf("the page is %d rows, want 24 at the floor", len(lines))
+	}
+	for i, ln := range lines {
+		if w := lipgloss.Width(ln); w != 80 {
+			t.Errorf("row %d is %d columns wide, want the frame's 80:\n%q", i, w, ln)
+		}
+	}
+	div := ansiStrip(lines[2])
+	if div != strings.Repeat("─", 80) {
+		t.Errorf("the divider is not a plain full-width rail:\n%q", div)
 	}
 }
