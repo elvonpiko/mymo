@@ -1173,11 +1173,10 @@ func (m Model) frame(page, footer string) string {
 		// one column left of it
 		b.WriteString(m.headerRow(max(1, m.width)))
 		b.WriteString("\n")
-		// the divider runs edge to edge like the borders above and
-		// below it — the header band is the one place the frame's
-		// side columns are open, so the divider owns the full width
-		// or it pokes past one corner and falls short of the other
-		b.WriteString(dividerStyle.Render(strings.Repeat("─", max(1, m.width))))
+		// the divider hangs inside the frame, one column in from
+		// each edge — its rail mirrors the top border's dash span
+		// exactly, ends hovering just inside the corners
+		b.WriteString(" " + dividerStyle.Render(strings.Repeat("─", innerW)) + " ")
 		b.WriteString("\n")
 	}
 	for _, line := range fitLines(centerBlock(page, innerW), innerW, pageH) {

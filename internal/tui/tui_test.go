@@ -702,7 +702,10 @@ func TestHeaderDividerRunsEdgeToEdge(t *testing.T) {
 		}
 	}
 	div := ansiStrip(lines[2])
-	if div != strings.Repeat("─", 80) {
-		t.Errorf("the divider is not a plain full-width rail:\n%q", div)
+	// the rail hangs one column inside each frame edge — exactly
+	// the top border's dash span, without the corners
+	want := " " + strings.Repeat("─", 78) + " "
+	if div != want {
+		t.Errorf("the divider is not the inset rail:\n%q\nwant %q", div, want)
 	}
 }
