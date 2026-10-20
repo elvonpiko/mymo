@@ -84,20 +84,6 @@ func homeShortcutGrid() string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, left, "    ", right)
 }
 
-// homeShortcutLine is a compact one-row key guide for the empty fleet
-// page.
-func homeShortcutLine() string {
-	parts := []string{
-		shortcutEntry("N", "add node"),
-		shortcutEntry("a", "apps"),
-		shortcutEntry("d", "deploy"),
-		shortcutEntry("s", "settings"),
-		shortcutEntry("esc", "home"),
-		shortcutEntry("?", "help"),
-	}
-	return strings.Join(parts, faintStyle.Render(" · "))
-}
-
 // homeView renders the home hub: the mark, the brand, the description
 // typing itself out, and where every key leads.
 func (m Model) homeView() string {

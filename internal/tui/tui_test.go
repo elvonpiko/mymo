@@ -195,8 +195,11 @@ func TestIntroSkippedOnSecondRun(t *testing.T) {
 
 func TestFleetEmptyState(t *testing.T) {
 	m := press(t, New(readyStore(t)), "n")
-	got := view(m)
-	for _, want := range []string{"No servers yet", "[N]", "add your first VPS"} {
+	got := ansiStrip(view(m))
+	for _, want := range []string{
+		"No servers yet",
+		"and mymo remembers it from then on",
+	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("empty fleet missing %q:\n%s", want, got)
 		}
@@ -549,25 +552,40 @@ func TestDescriptionTypewriter(t *testing.T) {
 	}
 }
 
-func TestEmptyFleetShowsDescriptionAndShortcuts(t *testing.T) {
+// The empty fleet is one honest card, not home's understudy: no
+// typewritten monologue, no second key guide — the keys live in the
+// footer below, said once, and only the ones that work.
+func TestEmptyFleetIsOneHonestCard(t *testing.T) {
 	s := readyStore(t)
 	m := press(t, New(s), "n")
-	if !m.descAnim {
-		t.Fatal("empty fleet did not restart the typewriter")
+	// the tick that arrives off home is the typewriter's last: the
+	// performance ends when the performer leaves
+	m = step(t, m, descTickMsg{})
+	if m.descAnim {
+		t.Fatal("home's typewriter still runs after leaving home")
 	}
-	for m.descAnim {
-		next, _ := m.Update(descTickMsg{})
-		m = next.(Model)
-	}
-	got := view(m)
+	got := ansiStrip(view(m))
 	for _, want := range []string{
-		"opinionated window onto your fleet:",
 		"No servers yet",
-		"esc", "home",
+		"and mymo remembers it from then on",
+		"N add node", // the footer still says the way out
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("empty fleet missing %q:\n%s", want, got)
 		}
+	}
+	for _, dead := range []string{
+		"opinionated window onto your fleet:", // home's monologue
+		"add your first VPS",                  // the card's old key hint
+		"enter open",                          // no rows: dead keys
+		"x remove",
+	} {
+		if strings.Contains(got, dead) {
+			t.Errorf("empty fleet still shows %q:\n%s", dead, got)
+		}
+	}
+	if n := strings.Count(got, "add node"); n != 1 {
+		t.Errorf("the way out is said %d times, want once — the footer:\n%s", n, got)
 	}
 }
 

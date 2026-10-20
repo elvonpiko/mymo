@@ -315,10 +315,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case descTickMsg:
-		if m.descAnim {
+		// the typewriter is home's: a tick that arrives anywhere
+		// else ends the animation, not the performance
+		if m.descAnim && m.cur().kind == scHome {
 			cmd := m.advanceDesc()
 			return m, cmd
 		}
+		m.descAnim = false
 		return m, nil
 
 	case spinner.TickMsg:
@@ -708,10 +711,6 @@ func (m Model) updateHomeKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "n":
 		m.push(screen{kind: scFleet})
-		if m.fleetEmpty() {
-			cmd := m.beginDesc()
-			return m, cmd
-		}
 		return m, nil
 	case "N":
 		return m.addNodeScreen()
@@ -1278,7 +1277,17 @@ func (m Model) keymap() help.KeyMap {
 		if m.loadErr != nil {
 			return newSimpleKeymap()
 		}
-		return newFleetKeymap()
+		km := newFleetKeymap()
+		if m.fleetEmpty() {
+			// keys exist exactly when actions do: with no rows
+			// there is nothing to open, remove, or filter — the
+			// footer says only what works
+			km.open.SetEnabled(false)
+			km.remove.SetEnabled(false)
+			km.filter.SetEnabled(false)
+			km.navigate.SetEnabled(false)
+		}
+		return km
 	case scNode:
 		if m.loading.active {
 			return newLoadingKeymap()
