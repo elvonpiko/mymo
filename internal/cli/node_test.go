@@ -20,10 +20,16 @@ import (
 // successive commands share the same local state.
 type session struct{}
 
-// newSession pins HOME to a fresh directory for the current test.
+// newSession pins the home directory to a fresh directory for the
+// current test. Windows resolves the home directory from
+// USERPROFILE before it ever looks at HOME — both must name this
+// session's directory, or every test shares one real profile and
+// sees each other's nodes.
 func newSession(t *testing.T) *session {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	return &session{}
 }
 

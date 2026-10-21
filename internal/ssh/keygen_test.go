@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -19,9 +20,13 @@ func TestGenerateEd25519CreatesAndReuses(t *testing.T) {
 	if !strings.HasPrefix(pub, "ssh-ed25519 ") {
 		t.Fatalf("unexpected public key: %q", pub)
 	}
-	info, err := os.Stat(key)
-	if err != nil || info.Mode().Perm() != 0o600 {
-		t.Errorf("private key missing or too open: %v %v", err, info)
+	if runtime.GOOS != "windows" {
+		// unix: the key is 0600. windows protects it by the
+		// profile's ACLs instead — mode bits say nothing there
+		info, err := os.Stat(key)
+		if err != nil || info.Mode().Perm() != 0o600 {
+			t.Errorf("private key missing or too open: %v %v", err, info)
+		}
 	}
 
 	// a second apply reuses the pair — authorized_keys never churns

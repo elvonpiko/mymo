@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -43,6 +44,9 @@ func TestSaveMetaFilePermissions(t *testing.T) {
 	fi, err := os.Stat(filepath.Join(s.Dir(), metaFile))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("windows carries no mode bits to check")
 	}
 	if perm := fi.Mode().Perm(); perm != filePerm {
 		t.Fatalf("file perms = %o, want %o", perm, filePerm)

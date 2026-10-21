@@ -194,24 +194,40 @@ func TestReadmeDemoRecording(t *testing.T) {
 	frames := newFrameDumper(t)
 	m := New(s)
 
-	frames.dump(t, m, "home")
+	// home lands typing: a frame every six letters of the real
+	// 28ms cadence, so the GIF plays the typing at true speed
+	for m.descAnim {
+		next, _ := m.Update(descTickMsg{})
+		m = next.(Model)
+		if m.descShown%6 == 0 {
+			frames.dump(t, m, "home-type")
+		}
+	}
+	frames.dump(t, m, "home-type")
+
 	m = press(t, m, "n")
 	frames.dump(t, m, "fleet")
-	for range 3 {
-		m = press(t, m, "down")
-		frames.dump(t, m, "fleet-walk")
+	for _, k := range []string{"down", "down", "up", "up"} {
+		m = press(t, m, k)
+		frames.dump(t, m, "walk")
 	}
-	m = press(t, m, "up")
-	m = press(t, m, "up")
-	m = press(t, m, "up")
 	if got := ansiStrip(view(m)); !strings.Contains(got, "> ● ubuntu-…cago-01") {
 		t.Fatalf("the cursor did not come home to the app host:\n%s", got)
 	}
-	m = press(t, m, "enter")
-	frames.dump(t, m, "loading")
-	m = observe(t, m, "ubuntu-hrly-chicago-01", chicagoSnapshot(t))
 
-	// the gauges tell a small honest story: the box under load
+	m = press(t, m, "enter")
+	// the ceremony, spinning as it really spins
+	for range 5 {
+		next, _ := m.Update(m.spinner.Tick())
+		m = next.(Model)
+		frames.dump(t, m, "load")
+	}
+	m = observe(t, m, "ubuntu-hrly-chicago-01", chicagoSnapshot(t))
+	frames.dump(t, m, "land")
+
+	// the gauges tell a small honest story under load — a frame
+	// every two ticks, so the springs play their easing in the
+	// open instead of jump-cutting between settled states
 	base := time.Now()
 	for i, busy := range []uint64{64000, 96000, 51000, 118000, 74000} {
 		m = step(t, m, liveSampleMsg{seq: m.liveSeq, s: liveSample{
@@ -221,15 +237,17 @@ func TestReadmeDemoRecording(t *testing.T) {
 			rxBytes: uint64(300000 + i*120000), txBytes: uint64(90000 + i*30000),
 			at: base.Add(time.Duration(i) * time.Second),
 		}, dockOK: true, dockers: []string{"mymo-simple-go-web-r2", "caddy"}})
-		for range 14 {
+		for j := 0; j < 10; j++ {
 			next, _ := m.Update(animTickMsg{seq: m.liveSeq})
 			m = next.(Model)
+			if j%2 == 1 {
+				frames.dump(t, m, "live")
+			}
 		}
 		got := ansiStrip(view(m))
 		if !strings.Contains(got, "2 running: mymo-simple-go-web-r2 caddy") {
 			t.Errorf("beat %d lost the dock row:\n%s", i, got)
 		}
-		frames.dump(t, m, "live")
 	}
 }
 

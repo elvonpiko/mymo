@@ -15,10 +15,8 @@
   <img src="https://img.shields.io/badge/platforms-linux%20%C2%B7%20windows-B4BEFE.svg" alt="platforms: linux · windows">
 </p>
 
-![the fleet](screenshots/fleet.png)
-![a node, live](screenshots/node.png)
-
-In motion — the fleet, a node opened, the gauges carrying numbers:
+mymo in motion — home, the fleet, a node opened live, the gauges
+carrying numbers, recorded from the real interface:
 
 ![demo](screenshots/demo.gif)
 

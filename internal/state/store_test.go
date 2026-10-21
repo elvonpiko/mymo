@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -35,6 +36,12 @@ func openTestStore(t *testing.T) *Store {
 }
 
 func TestOpenDirCreatesStoreWithRestrictedPerms(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// windows protects files by the profile's ACLs, not mode
+		// bits — Go reports 0666 for everything, so the bits say
+		// nothing there
+		t.Skip("windows carries no mode bits to check")
+	}
 	dir := filepath.Join(t.TempDir(), ".mymo")
 	if _, err := OpenDir(dir); err != nil {
 		t.Fatalf("OpenDir() = %v, want nil", err)
@@ -153,8 +160,12 @@ func TestNodeLastCheckRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.LastCheck != (domain.CheckState{At: at, Error: "unreachable: connection refused"}) {
-		t.Fatalf("last check round trip:\ngot  %+v", got.LastCheck)
+	want := domain.CheckState{At: at, Error: "unreachable: connection refused"}
+	// instants, not struct equality: a time read back from JSON
+	// carries its own location, and == on time.Time compares
+	// locations — a machine running UTC fails a perfect round trip
+	if !got.LastCheck.At.Equal(want.At) || got.LastCheck.Error != want.Error {
+		t.Fatalf("last check round trip:\ngot  %+v\nwant %+v", got.LastCheck, want)
 	}
 
 	// a recovering check clears the error and keeps no stale state
@@ -220,6 +231,12 @@ func TestNodeFactsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !got.Facts.CollectedAt.Equal(want.CollectedAt) {
+		t.Fatalf("facts round trip lost the instant:\ngot  %v\nwant %v", got.Facts.CollectedAt, want.CollectedAt)
+	}
+	// the rest compares structurally, with the instants already
+	// checked the only way times can be checked — by instant
+	got.Facts.CollectedAt, want.CollectedAt = time.Time{}, time.Time{}
 	if got.Facts != want {
 		t.Fatalf("facts round trip mismatch:\ngot  %+v\nwant %+v", got.Facts, want)
 	}
@@ -270,6 +287,9 @@ func TestNodesFilePermissions(t *testing.T) {
 	fi, err := os.Stat(filepath.Join(s.Dir(), nodesFile))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("windows carries no mode bits to check")
 	}
 	if perm := fi.Mode().Perm(); perm != filePerm {
 		t.Fatalf("file perms = %o, want %o", perm, filePerm)
