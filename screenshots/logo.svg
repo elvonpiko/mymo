@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="260" height="64" viewBox="0 0 260 64" role="img" aria-label="mymo">
+  <!-- the TUI's own mark, cell for cell: three singles with air,
+       then the touching pair — the palette as the app wears it -->
+  <rect x="0"  y="12" width="16" height="40" fill="#CBA6F7"/>
+  <rect x="32" y="12" width="16" height="20" fill="#B4BEFE"/>
+  <rect x="64" y="12" width="16" height="40" fill="#94E2D5"/>
+  <rect x="96" y="12" width="16" height="20" fill="#B4BEFE"/>
+  <rect x="112" y="12" width="16" height="40" fill="#A6E3A1"/>
+  <text x="148" y="51" font-family="'DejaVu Sans Mono','Menlo','Consolas','Courier New',monospace"
+        font-size="46" font-weight="bold" fill="#CDD6F4">mymo</text>
+</svg>

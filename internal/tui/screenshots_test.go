@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -179,4 +180,85 @@ func chicagoSnapshot(t *testing.T) facts.Node {
 	f := chicagoFacts()
 	f.CollectedAt = time.Now()
 	return f
+}
+
+// TestReadmeDemoRecording pins the motion the readme shows: the
+// fleet, the cursor walking it, a node opened live with its gauges
+// carrying numbers. With MYMO_FRAME_DIR set, every beat of the
+// story lands there as a numbered frame for the demo GIF — the
+// recording is the same model the screenshots are, driven the
+// same way, so the GIF can never drift from the truth.
+func TestReadmeDemoRecording(t *testing.T) {
+	s := readyStore(t)
+	shotWorld(t, s)
+	frames := newFrameDumper(t)
+	m := New(s)
+
+	frames.dump(t, m, "home")
+	m = press(t, m, "n")
+	frames.dump(t, m, "fleet")
+	for range 3 {
+		m = press(t, m, "down")
+		frames.dump(t, m, "fleet-walk")
+	}
+	m = press(t, m, "up")
+	m = press(t, m, "up")
+	m = press(t, m, "up")
+	if got := ansiStrip(view(m)); !strings.Contains(got, "> ● ubuntu-…cago-01") {
+		t.Fatalf("the cursor did not come home to the app host:\n%s", got)
+	}
+	m = press(t, m, "enter")
+	frames.dump(t, m, "loading")
+	m = observe(t, m, "ubuntu-hrly-chicago-01", chicagoSnapshot(t))
+
+	// the gauges tell a small honest story: the box under load
+	base := time.Now()
+	for i, busy := range []uint64{64000, 96000, 51000, 118000, 74000} {
+		m = step(t, m, liveSampleMsg{seq: m.liveSeq, s: liveSample{
+			load: "0.18", load5: "0.22", load15: "0.24",
+			memAvail: (512 - uint64(i)*24) << 20, memTotal: 1 << 30,
+			busy: busy, idle: 257600 - busy/2, total: 257600 + busy,
+			rxBytes: uint64(300000 + i*120000), txBytes: uint64(90000 + i*30000),
+			at: base.Add(time.Duration(i) * time.Second),
+		}, dockOK: true, dockers: []string{"mymo-simple-go-web-r2", "caddy"}})
+		for range 14 {
+			next, _ := m.Update(animTickMsg{seq: m.liveSeq})
+			m = next.(Model)
+		}
+		got := ansiStrip(view(m))
+		if !strings.Contains(got, "2 running: mymo-simple-go-web-r2 caddy") {
+			t.Errorf("beat %d lost the dock row:\n%s", i, got)
+		}
+		frames.dump(t, m, "live")
+	}
+}
+
+// frameDumper writes the story's frames when MYMO_FRAME_DIR names a
+// directory; without it, the story runs as a plain test.
+type frameDumper struct {
+	dir string
+	n   int
+}
+
+func newFrameDumper(t *testing.T) frameDumper {
+	t.Helper()
+	dir := os.Getenv("MYMO_FRAME_DIR")
+	if dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return frameDumper{dir: dir}
+}
+
+func (f *frameDumper) dump(t *testing.T, m Model, beat string) {
+	t.Helper()
+	if f.dir == "" {
+		return
+	}
+	f.n++
+	name := fmt.Sprintf("%02d-%s.ansi", f.n, beat)
+	if err := os.WriteFile(filepath.Join(f.dir, name), []byte(view(m)), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
