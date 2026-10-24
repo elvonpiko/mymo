@@ -46,15 +46,25 @@ trap 'rm -rf "$TMP"' EXIT
 ARCHIVE="mymo-${VERSION}-linux-${ARCH}.tar.gz"
 
 if command -v curl >/dev/null 2>&1; then
-    fetch() { curl -fsSL "$1" -o "$2"; }
+    # progress on, silence off, connect timeout quick: a slow CDN
+    # must look like a slow download, never like a hang
+    fetch() { curl -fL --progress-bar --connect-timeout 15 "$1" -o "$2"; }
 elif command -v wget >/dev/null 2>&1; then
-    fetch() { wget -q "$1" -O "$2"; }
+    fetch() { wget -q --show-progress "$1" -O "$2"; }
 else
     fail "need curl or wget to download the release"
 fi
 
 echo "downloading ${ARCHIVE}"
-fetch "${BASE_URL}/${ARCHIVE}" "${TMP}/${ARCHIVE}" || fail "download failed — is v${VERSION} published?"
+fetch "${BASE_URL}/${ARCHIVE}" "${TMP}/${ARCHIVE}" || {
+    code=$?
+    if [ "$code" = 22 ]; then
+        # an HTTP error answered: the release question
+        fail "download failed — is v${VERSION} published?"
+    fi
+    # the network never got an answer: the path question
+    fail "download failed — the network path to github's release servers is not answering; a retry or a VPN often helps"
+}
 fetch "${BASE_URL}/SHA256SUMS" "${TMP}/SHA256SUMS" || fail "downloading SHA256SUMS failed"
 
 # 3 — verify before anything touches the disk the binary will live

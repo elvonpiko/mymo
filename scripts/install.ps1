@@ -67,11 +67,20 @@ $Tmp = New-Item -ItemType Directory -Force -Path (Join-Path ([System.IO.Path]::G
 
 $web = New-Object System.Net.WebClient
 try {
-    Write-Host "downloading $Archive"
+    # WebClient shows no progress - name the wait before it starts
+    Write-Host "downloading $Archive (this can take a minute on a slow link)"
     $web.DownloadFile("$BaseUrl/$Archive", (Join-Path $Tmp $Archive))
     $web.DownloadFile("$BaseUrl/SHA256SUMS", (Join-Path $Tmp "SHA256SUMS"))
+} catch [System.Net.WebException] {
+    $resp = $_.Exception.Response
+    if ($resp -and $resp.StatusCode -eq [System.Net.HttpStatusCode]::NotFound) {
+        # an HTTP 404 answered: the release question
+        throw "mymo install: download failed - is v$Version published?"
+    }
+    # the network never answered: the path question
+    throw "mymo install: download failed - the network path to github's release servers is not answering; a retry or a VPN often helps"
 } catch {
-    throw "mymo install: download failed - is v$Version published?"
+    throw "mymo install: download failed - $($_.Exception.Message)"
 }
 
 # 3 - verify before anything touches the directory the binary
