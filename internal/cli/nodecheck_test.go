@@ -4,6 +4,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -168,6 +169,14 @@ func TestNodeCheckUnreachableNode(t *testing.T) {
 }
 
 func TestNodeSSHExecsSystemSSH(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// the fake ssh that observes mymo's argv is a shell script,
+		// and windows cannot execute one — Go finds no ssh.bat by
+		// that name and mymo would hand the dial to the real ssh
+		// the runner ships. the escape hatch is exercised wherever
+		// scripts can run.
+		t.Skip("the fake ssh is a shell script — windows cannot execute it")
+	}
 	s := newSession(t)
 	keyPath, _ := sshtest.NewKey(t)
 	if code, _, errStr := s.run(t, "node", "add",
