@@ -101,6 +101,10 @@ refused by name rather than guessed about.
     make vet      # go vet
     make release  # build every platform into dist/
 
+## Built with
+
+mymo's terminal interface stands on [Charm](https://charm.land) — [Bubble Tea](https://github.com/charmbracelet/bubbletea), [Bubbles](https://github.com/charmbracelet/bubbles), [Lip Gloss](https://github.com/charmbracelet/lipgloss), and [Huh](https://github.com/charmbracelet/huh). Half of what mymo feels like is their craft.
+
 ## License
 
 [MIT](LICENSE)
