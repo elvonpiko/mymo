@@ -120,7 +120,14 @@ TOTAL="$( { curl -fsIL --connect-timeout 15 "${BASE_URL}/${ARCHIVE}" 2>/dev/null
 # link shows as a stalled bar, which is the truth of it
 (
     while :; do
-        now="$(wc -c < "$ARCHIVE_PATH" 2>/dev/null || echo 0)"
+        # the file exists only once the first bytes land; asking
+        # before that must stay quiet — a redirect failure prints
+        # its own noise to stderr no matter what silences follow it
+        if [ -f "$ARCHIVE_PATH" ]; then
+            now="$(wc -c < "$ARCHIVE_PATH")"
+        else
+            now=0
+        fi
         printf '\r%s  %s' "$(blue "DOWNLOAD")" "$(bar_line "$now" "$TOTAL")"
         sleep 0.2
     done
