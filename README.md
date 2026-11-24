@@ -15,8 +15,8 @@
   <img src="https://img.shields.io/badge/platforms-linux%20%C2%B7%20windows-B4BEFE.svg" alt="platforms: linux · windows">
 </p>
 
-mymo in motion — home, the fleet, a node opened live, the gauges
-carrying numbers, recorded from the real interface:
+mymo in a terminal — home, the fleet, then a node opened live.
+The gauges are the real ones, from a real SSH session:
 
 ![demo](screenshots/demo.gif)
 
