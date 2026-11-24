@@ -35,8 +35,15 @@ func (m Model) appsPage(apps []domain.App, emptyLine, emptyHint string) string {
 			[]string{emptyLine, "", emptyHint},
 			"[esc] back")
 	}
-	rows := make([]string, 0, len(apps))
-	for i, a := range apps {
+	rows := m.appsWindowRows()
+	start := followCursor(m.appCursor, m.appScroll, rows, len(apps))
+	end := start + rows
+	if end > len(apps) {
+		end = len(apps)
+	}
+	lines := make([]string, 0, end-start)
+	for i := start; i < end; i++ {
+		a := apps[i]
 		cursor, nameStyle := "  ", itemStyle
 		if i == m.appCursor {
 			cursor, nameStyle = "> ", itemSelStyle
@@ -51,15 +58,28 @@ func (m Model) appsPage(apps []domain.App, emptyLine, emptyHint string) string {
 			release = fmt.Sprintf("r%d live", r.ID)
 			relStyle = okStyle
 		}
-		rows = append(rows, cursor+
+		lines = append(lines, cursor+
 			nameStyle.Width(14).Render(shorten(a.Name, 14))+
 			dimStyle.Width(12).Render(shorten(a.Node, 12))+
 			exposeStyle.Width(24).Render(shorten(expose, 24))+
 			relStyle.Render(release))
 	}
-	inner := strings.Join(rows, "\n")
+	inner := strings.Join(lines, "\n")
+	if len(apps) > rows {
+		inner += "\n" + faintStyle.Render("j/k")
+	}
 	// the canvas opens with air, like every page
 	return fitHeight("\n"+titledCard("Applications", padLines(inner, m.cardW())), m.contentHeight)
+}
+
+// appsWindowRows is how many application rows the card can hold.
+// The frame, the card's title, and one air row are spoken for.
+func (m Model) appsWindowRows() int {
+	n := m.contentHeight - 5
+	if n < 1 {
+		return 1
+	}
+	return n
 }
 
 // shortAppDigest keeps a row honest without overflowing it.

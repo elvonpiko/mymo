@@ -6,6 +6,7 @@
 package ssh
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -304,6 +305,70 @@ func (c *Client) Run(ctx context.Context, name string, args ...string) (string, 
 		return out.String(), -1, fmt.Errorf("ssh: run %q: %v", cmd, err)
 	}
 	return out.String(), 0, nil
+}
+
+// Stream runs one command and delivers each combined stdout/stderr
+// line to onLine as it arrives. The call returns when the command
+// exits or ctx is cancelled. onLine must not call back into the
+// client: Stream holds the connection until it returns. A nil onLine
+// discards the output and only reports the exit.
+func (c *Client) Stream(ctx context.Context, onLine func(string), name string, args ...string) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.conn == nil {
+		return -1, errors.New("ssh: not connected")
+	}
+	if strings.TrimSpace(name) == "" {
+		return -1, errors.New("ssh: empty command name")
+	}
+	sess, err := c.conn.NewSession()
+	if err != nil {
+		return -1, fmt.Errorf("ssh: session: %v", err)
+	}
+	defer sess.Close()
+
+	ctxDone := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			sess.Close()
+		case <-ctxDone:
+		}
+	}()
+	defer close(ctxDone)
+
+	pr, pw := io.Pipe()
+	sess.Stdout = pw
+	sess.Stderr = pw
+	cmd := serialize(name, args)
+	if err := sess.Start(cmd); err != nil {
+		pw.Close()
+		return -1, fmt.Errorf("ssh: start %q: %v", cmd, err)
+	}
+	scanDone := make(chan struct{})
+	go func() {
+		defer close(scanDone)
+		sc := bufio.NewScanner(pr)
+		for sc.Scan() {
+			if onLine != nil {
+				onLine(sc.Text())
+			}
+		}
+	}()
+	waitErr := sess.Wait()
+	pw.Close()
+	<-scanDone
+	if waitErr != nil {
+		var exit *ssh.ExitError
+		if errors.As(waitErr, &exit) {
+			return exit.ExitStatus(), nil
+		}
+		if ctx.Err() != nil {
+			return -1, fmt.Errorf("ssh: %q: %w", cmd, ctx.Err())
+		}
+		return -1, fmt.Errorf("ssh: stream %q: %v", cmd, waitErr)
+	}
+	return 0, nil
 }
 
 // Close ends the connection and any agent socket the client opened.

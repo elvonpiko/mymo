@@ -263,12 +263,9 @@ func TestFirstContactEscDuringInstallCancels(t *testing.T) {
 	}
 }
 
-// TestFailedApplyReopensTheFlow proves the fix the second live test
-// forced: a failed apply left the record stranded at "applying",
-// every way back into the plan was gated, and the operator's only
-// recourse was removing the node and adding it again. A failed run
-// must roll the record back to preflight — the box is re-audited as
-// it is now, and mymo heals what it started.
+// TestFailedApplyReopensTheFlow proves a stopped apply stays at
+// applying and names the resume. The node page offers I for it.
+// Rewinding to preflight would claim an audit that has not been run.
 func TestFailedApplyReopensTheFlow(t *testing.T) {
 	s, err0 := state.OpenDir(t.TempDir())
 	if err0 != nil {
@@ -290,11 +287,11 @@ func TestFailedApplyReopensTheFlow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if after.Bootstrap.State != domain.BootstrapPreflight {
-		t.Fatalf("state after a failed apply = %q, want preflight", after.Bootstrap.State)
+	if after.Bootstrap.State != domain.BootstrapApplying {
+		t.Fatalf("state after a failed apply = %q, want applying", after.Bootstrap.State)
 	}
-	if !strings.Contains(after.Bootstrap.Verdict, "preflight again to resume") {
-		t.Fatalf("verdict = %q, want the resume guidance", after.Bootstrap.Verdict)
+	if !strings.Contains(after.Bootstrap.Verdict, "resume from the node") {
+		t.Fatalf("verdict = %q, want the resume", after.Bootstrap.Verdict)
 	}
 }
 

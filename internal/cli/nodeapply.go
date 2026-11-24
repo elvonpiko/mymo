@@ -15,6 +15,7 @@ import (
 	"github.com/elvonpiko/mymo/internal/baseline"
 	"github.com/elvonpiko/mymo/internal/domain"
 	"github.com/elvonpiko/mymo/internal/facts"
+	"github.com/elvonpiko/mymo/internal/lifecycle"
 	"github.com/elvonpiko/mymo/internal/plan"
 	"github.com/elvonpiko/mymo/internal/preflight"
 	"github.com/elvonpiko/mymo/internal/ssh"
@@ -71,9 +72,12 @@ func runNodeApply(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		return exitErr
 	}
 
-	if upgrading {
+	switch {
+	case upgrading:
 		fmt.Fprintf(stderr, "upgrading %s from baseline %s to %s...\n", node.Name, from, baseline.Version)
-	} else {
+	case node.Bootstrap.State == domain.BootstrapApplying:
+		fmt.Fprintf(stderr, "resuming %s — the last apply stopped\n", node.Name)
+	default:
 		fmt.Fprintf(stderr, "applying %s against baseline %s...\n", node.Name, baseline.Version)
 	}
 	client := ssh.New(node, knownHostsPath(store))
@@ -155,23 +159,9 @@ func runNodeApply(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		Progress: func(line string) { fmt.Fprintln(stderr, "  "+line) },
 	}
 
-	// the states advance only forward: confirmed, then applying.
-	// an upgrade of a node that is already prepared does not step
-	// backward through that lifecycle — a failure must not turn a
-	// ready app host back into an unfinished setup.
-	if !upgrading {
-		if node.Bootstrap.State == domain.BootstrapPlan {
-			node.Bootstrap = domain.Bootstrap{State: domain.BootstrapConfirmed, Baseline: baseline.Version, Verdict: "confirmed", At: time.Now()}
-			if err := store.UpdateNode(node); err != nil {
-				fmt.Fprintf(stderr, "mymo node apply: %v\n", err)
-				return exitErr
-			}
-		}
-		node.Bootstrap = domain.Bootstrap{State: domain.BootstrapApplying, Baseline: baseline.Version, Verdict: "applying", At: time.Now()}
-	} else {
-		node.Bootstrap.Verdict = "upgrading"
-		node.Bootstrap.At = time.Now()
-	}
+	// the lifecycle package owns the transition. an upgrade of a
+	// node that is already prepared does not step backward.
+	node = lifecycle.BeginApply(node, upgrading, time.Now())
 	node.Facts = snapshot
 	node.LastCheck = domain.CheckState{At: time.Now()}
 	if err := store.UpdateNode(node); err != nil {
@@ -181,19 +171,14 @@ func runNodeApply(ctx context.Context, args []string, stdout, stderr io.Writer) 
 
 	res := apply.Apply(ctx, client, steps, opts)
 	if res.Failed {
-		if upgrading {
-			node.Bootstrap.Verdict = "upgrade stopped at " + res.FailedAt
-		} else {
-			node.Bootstrap.Verdict = "failed at " + res.FailedAt
-		}
-		node.Bootstrap.At = time.Now()
+		node = lifecycle.StopApply(node, res.FailedAt, upgrading, time.Now())
 		if err := store.UpdateNode(node); err != nil {
 			fmt.Fprintf(stderr, "mymo node apply: the record could not be updated: %v\n", err)
 		}
 		printSetupReport(stderr, res, nil)
 		fmt.Fprintln(stderr, "\nthe steps after the failure were never attempted;")
 		fmt.Fprintln(stderr, "the operator's current access is untouched.")
-		fmt.Fprintln(stderr, "run setup again when the box is fixed — it resumes where it stopped.")
+		fmt.Fprintf(stderr, "resume it with: mymo node apply %s\n", node.Name)
 		return exitErr
 	}
 	fmt.Fprintln(stderr, "\nverifying the effective state...")
@@ -201,12 +186,7 @@ func runNodeApply(ctx context.Context, args []string, stdout, stderr io.Writer) 
 
 	printSetupReport(stdout, res, checks)
 	if !verified {
-		if upgrading {
-			node.Bootstrap.Verdict = "upgrade did not verify"
-		} else {
-			node.Bootstrap.Verdict = "verify failed"
-		}
-		node.Bootstrap.At = time.Now()
+		node = lifecycle.VerifyFailed(node, upgrading, time.Now())
 		if err := store.UpdateNode(node); err != nil {
 			fmt.Fprintf(stderr, "mymo node apply: the record could not be updated: %v\n", err)
 		}
@@ -215,7 +195,7 @@ func runNodeApply(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		return exitErr
 	}
 
-	node.Bootstrap = domain.Bootstrap{State: domain.BootstrapReady, Baseline: baseline.Version, Verdict: "ready", At: time.Now()}
+	node = lifecycle.MarkReady(node, time.Now())
 	// the record now names the access the baseline created — the
 	// original user is the door the hardening closed, and a record
 	// still naming it strands mymo outside its own box

@@ -47,7 +47,12 @@ func nodeIsManaged(n domain.Node) bool {
 // these either: entering the page is the check.
 func actionDefs(n domain.Node) []actionItem {
 	defs := make([]actionItem, 0, 5)
-	if !nodeIsManaged(n) {
+	switch {
+	case n.Bootstrap.State == domain.BootstrapApplying:
+		defs = append(defs, actionItem{actSetup, "Resume",
+			"the last apply stopped — audit, plan, and continue. the box is whatever that run left",
+			"I", "accent"})
+	case !nodeIsManaged(n):
 		defs = append(defs, actionItem{actSetup, "Initial setup",
 			"check · plan · apply — a mymo node, ready to deploy apps",
 			"I", "accent"})

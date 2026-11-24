@@ -15,6 +15,7 @@ import (
 	"github.com/elvonpiko/mymo/internal/baseline"
 	"github.com/elvonpiko/mymo/internal/domain"
 	"github.com/elvonpiko/mymo/internal/facts"
+	"github.com/elvonpiko/mymo/internal/lifecycle"
 	"github.com/elvonpiko/mymo/internal/plan"
 	"github.com/elvonpiko/mymo/internal/preflight"
 	"github.com/elvonpiko/mymo/internal/ssh"
@@ -262,7 +263,10 @@ func (m Model) runPreflight() (tea.Model, tea.Cmd) {
 	m.push(screen{kind: scNodePreflight, node: n.Name})
 	line := "auditing " + n.Name + " over SSH"
 	detail := "preflight is read-only · nothing is modified"
-	if m.upgradeFlow {
+	if m.resumeFlow {
+		line = "resuming " + n.Name + " — the last apply stopped"
+		detail = "read-only audit first · the box is whatever the stopped run left"
+	} else if m.upgradeFlow {
 		line = "auditing " + n.Name + " for an upgrade"
 		detail = "baseline " + baseline.Version + " · read-only · nothing is modified"
 	}
@@ -355,16 +359,7 @@ func (m Model) handlePreflightDone(msg pfDoneMsg) (tea.Model, tea.Cmd) {
 		if n, err := m.store.GetNode(msg.node); err == nil {
 			n.Facts = msg.snap
 			n.LastCheck = domain.CheckState{At: time.Now()}
-			// recorded while at or before the preflight step; deeper
-			// lifecycle positions are never rewound by an audit
-			if n.Bootstrap.State == domain.BootstrapNone || n.Bootstrap.State == domain.BootstrapPreflight {
-				n.Bootstrap = domain.Bootstrap{
-					State:    domain.BootstrapPreflight,
-					Baseline: baseline.Version,
-					Verdict:  verdict.String(),
-					At:       time.Now(),
-				}
-			}
+			n = lifecycle.NotePreflight(n, verdict.String(), time.Now())
 			if err := m.store.UpdateNode(n); err != nil {
 				return m, m.notify(err.Error(), toastErr)
 			}
@@ -463,14 +458,7 @@ func (m Model) handlePlanDone(msg planMsg) (tea.Model, tea.Cmd) {
 
 	if m.store != nil {
 		if n, err := m.store.GetNode(msg.node); err == nil {
-			if n.Bootstrap.State == domain.BootstrapNone || n.Bootstrap.State == domain.BootstrapPreflight || n.Bootstrap.State == domain.BootstrapPlan {
-				n.Bootstrap = domain.Bootstrap{
-					State:    domain.BootstrapPlan,
-					Baseline: baseline.Version,
-					Verdict:  "planned",
-					At:       time.Now(),
-				}
-			}
+			n = lifecycle.NotePlan(n, time.Now())
 			if err := m.store.UpdateNode(n); err != nil {
 				return m, m.notify(err.Error(), toastErr)
 			}

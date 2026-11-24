@@ -230,6 +230,7 @@ func (m Model) updateAddReview(str string) (tea.Model, tea.Cmd) {
 			password := m.addNode.vals.password
 			keyPath := node.KeyPath
 			m.addNode.stage = anInstalling
+			m.mutating = true
 			m.loading = loadingState{active: true, node: node.Name,
 				line:   "first contact with " + node.Host,
 				detail: "installing the dedicated key, proving it works",
@@ -262,6 +263,7 @@ func (m Model) handleFirstContactDone(msg firstContactDoneMsg) (tea.Model, tea.C
 	if m.addNode.stage != anInstalling {
 		return m, nil
 	}
+	m.mutating = false
 	m.loading = loadingState{}
 	m.firstContactCancel = nil
 	m.addNode.stage = anReview
@@ -318,6 +320,7 @@ func (m Model) updateInstalling(str string) (tea.Model, tea.Cmd) {
 			m.firstContactCancel()
 			m.firstContactCancel = nil
 		}
+		m.mutating = false
 		m.loading = loadingState{}
 		m.addNode.stage = anReview
 		m.addNode.err = "first contact cancelled — nothing was saved; retrying is safe, the install is idempotent"

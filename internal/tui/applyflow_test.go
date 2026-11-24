@@ -268,11 +268,11 @@ func TestApplyFailureStopsAndReportsWhere(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// a failed apply reopens the flow: the record rolls back to
-	// preflight with the resume guidance — never stranded at
-	// "applying" with no way back in
-	if n.Bootstrap.State != domain.BootstrapPreflight || !strings.Contains(n.Bootstrap.Verdict, "preflight again to resume") {
-		t.Fatalf("bootstrap = %s/%s, want preflight with the resume guidance", n.Bootstrap.State, n.Bootstrap.Verdict)
+	// a failed apply stays at applying, with the resume named.
+	// the node page offers I for it; the record is not rewound to
+	// a preflight that has not been run again.
+	if n.Bootstrap.State != domain.BootstrapApplying || !strings.Contains(n.Bootstrap.Verdict, "resume from the node") {
+		t.Fatalf("bootstrap = %s/%s, want applying with the resume", n.Bootstrap.State, n.Bootstrap.Verdict)
 	}
 	if strings.Contains(strings.Join(runner.calls, "\n"), "systemctl reload ssh") {
 		t.Fatal("a failed earlier step still reached the sshd reload")

@@ -242,12 +242,7 @@ func (m Model) dpWalkClimb() (tea.Model, tea.Cmd) {
 func (m *Model) dpWalkFollow() {
 	scrollable := len(m.dpWalkEntries) > m.dpWalkWindowRows(false)
 	w := m.dpWalkWindowRows(scrollable)
-	if m.dpWalkCursor < m.dpWalkScroll {
-		m.dpWalkScroll = m.dpWalkCursor
-	}
-	if m.dpWalkCursor >= m.dpWalkScroll+w {
-		m.dpWalkScroll = m.dpWalkCursor - w + 1
-	}
+	m.dpWalkScroll = followCursor(m.dpWalkCursor, m.dpWalkScroll, w, len(m.dpWalkEntries))
 }
 
 // updateDeployPickKeys: the verified app hosts, walked and picked.
@@ -472,6 +467,7 @@ func (m Model) runDeployEngine() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	m.mutating = true
 	m.loading = loadingState{
 		active: true,
 		line:   "deploying " + app.Name + " to " + node.Name,
@@ -571,6 +567,7 @@ func (c tuiCopier) Copy(ctx context.Context, dest string, tarball io.Reader) err
 // for failures too — history is history — and the report states
 // where it stopped and which release serves now.
 func (m Model) handleDeployDone(msg deployDoneMsg) (tea.Model, tea.Cmd) {
+	m.mutating = false
 	if m.loading.active {
 		m.loading = loadingState{}
 	}

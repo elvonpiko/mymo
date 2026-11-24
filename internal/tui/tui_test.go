@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -469,6 +470,96 @@ func TestAddNodeWorkflowTypedCompletion(t *testing.T) {
 	}
 	if m.toast == nil || !strings.Contains(m.toast.text, "prod-01") {
 		t.Fatalf("no add toast: %+v", m.toast)
+	}
+}
+
+func TestApplyingNodeOffersResume(t *testing.T) {
+	s := readyStore(t)
+	n := seedNode(t, s, "web-1")
+	n.Bootstrap = domain.Bootstrap{State: domain.BootstrapApplying, Baseline: "0.1", Verdict: "applying", At: time.Now()}
+	if err := s.UpdateNode(n); err != nil {
+		t.Fatal(err)
+	}
+	m := press(t, New(s), "n", "enter")
+	m = observe(t, m, "web-1", richSnapshot("web-1"))
+	if got := ansiStrip(view(m)); !strings.Contains(got, "I resume") {
+		t.Fatalf("a stopped apply must offer resume:\n%s", got)
+	}
+	m = press(t, m, "I")
+	if !m.resumeFlow || m.cur().kind != scNodePreflight {
+		t.Fatalf("I did not open the resume audit: flow=%v kind=%v", m.resumeFlow, m.cur().kind)
+	}
+	if !strings.Contains(m.loading.line, "resuming web-1") {
+		t.Fatalf("ceremony = %q", m.loading.line)
+	}
+}
+
+func TestCtrlCDuringMutationAsks(t *testing.T) {
+	m := New(readyStore(t))
+	m.mutating = true
+	next, cmd := m.Update(keyMsg("ctrl+c"))
+	m = next.(Model)
+	if !m.confirmQuit {
+		t.Fatal("ctrl+c quit a mutation without asking")
+	}
+	if cmd != nil {
+		t.Fatal("ctrl+c returned a command before the answer")
+	}
+	if got := ansiStrip(view(m)); !strings.Contains(got, "Resume it from the node") {
+		t.Fatalf("the quit gate did not name the resume:\n%s", got)
+	}
+	_, cmd = m.Update(keyMsg("y"))
+	if cmd == nil {
+		t.Fatal("y returned no command")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Fatalf("y returned %T, want tea.QuitMsg", cmd())
+	}
+}
+
+func TestAppsWindowFollowsTheCursor(t *testing.T) {
+	s := readyStore(t)
+	for i := 0; i < 40; i++ {
+		name := fmt.Sprintf("app-%02d", i)
+		if err := s.AddApp(domain.App{Name: name, Node: "web-1", Type: domain.SourceImage, Image: "nginx:1.27", Port: 8080}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seedNode(t, s, "web-1")
+	m := press(t, New(s), "a")
+	m.height = 24
+	m.layout()
+	m.appCursor = len(m.apps) - 1
+	m.appScroll = followCursor(m.appCursor, 0, m.appsWindowRows(), len(m.apps))
+	got := ansiStrip(view(m))
+	if !strings.Contains(got, "app-39") {
+		t.Fatalf("the last app is off the window:\n%s", got)
+	}
+	if strings.Contains(got, "app-00") {
+		t.Fatalf("the first app is still on screen with the cursor at the end:\n%s", got)
+	}
+}
+
+func TestLogFollowAppendsAndSticks(t *testing.T) {
+	m := New(readyStore(t))
+	m.appLogs = []string{"one", "two"}
+	m.logsStick = true
+	m.logsSeq = 3
+	m.logLines = make(chan string)
+	m.logsScroll = m.logsScrollMax(len(m.appLogs))
+	next, cmd := m.handleAppLogLine(appLogLineMsg{seq: 3, line: "three"})
+	m = next.(Model)
+	if len(m.appLogs) != 3 || m.appLogs[2] != "three" {
+		t.Fatalf("logs = %v", m.appLogs)
+	}
+	if m.logsScroll != m.logsScrollMax(len(m.appLogs)) {
+		t.Fatal("a stuck window did not follow the new line")
+	}
+	if cmd == nil {
+		t.Fatal("the follow did not re-arm its reader")
+	}
+	if got := followNew([]string{"docker", "logs", "--tail", "100", "web"}); strings.Join(got, " ") != "docker logs --follow --tail 0 web" {
+		t.Fatalf("follow argv = %v", got)
 	}
 }
 

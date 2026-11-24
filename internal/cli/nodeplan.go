@@ -11,6 +11,7 @@ import (
 	"github.com/elvonpiko/mymo/internal/baseline"
 	"github.com/elvonpiko/mymo/internal/domain"
 	"github.com/elvonpiko/mymo/internal/facts"
+	"github.com/elvonpiko/mymo/internal/lifecycle"
 	"github.com/elvonpiko/mymo/internal/plan"
 	"github.com/elvonpiko/mymo/internal/preflight"
 	"github.com/elvonpiko/mymo/internal/ssh"
@@ -75,15 +76,10 @@ func runNodePlan(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	if errors.As(err, &blocked) {
 		node.Facts = snapshot
 		node.LastCheck = domain.CheckState{At: time.Now()}
-		if node.Bootstrap.State == domain.BootstrapNone || node.Bootstrap.State == domain.BootstrapPreflight {
-			node.Bootstrap = domain.Bootstrap{
-				State:    domain.BootstrapPreflight,
-				Baseline: baseline.Version,
-				Verdict:  preflight.Decide.String(),
-				At:       time.Now(),
-			}
+		node = lifecycle.NotePreflight(node, preflight.Decide.String(), time.Now())
+		if err := store.UpdateNode(node); err != nil {
+			fmt.Fprintf(stderr, "mymo node plan: %v\n", err)
 		}
-		_ = store.UpdateNode(node)
 		printPlanBlocked(stdout, blocked)
 		fmt.Fprintln(stderr, "decisions are yours: resolve these on the node, or pass --decide to plan over them (apply re-verifies).")
 		return pfExitDecide
@@ -97,14 +93,7 @@ func runNodePlan(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	// confirmation. Deeper lifecycle positions are never rewound.
 	node.Facts = snapshot
 	node.LastCheck = domain.CheckState{At: time.Now()}
-	if node.Bootstrap.State == domain.BootstrapNone || node.Bootstrap.State == domain.BootstrapPreflight {
-		node.Bootstrap = domain.Bootstrap{
-			State:    domain.BootstrapPlan,
-			Baseline: baseline.Version,
-			Verdict:  "planned",
-			At:       time.Now(),
-		}
-	}
+	node = lifecycle.NotePlan(node, time.Now())
 	if err := store.UpdateNode(node); err != nil {
 		fmt.Fprintf(stderr, "mymo node plan: %v\n", err)
 		return exitErr

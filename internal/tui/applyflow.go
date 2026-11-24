@@ -14,6 +14,7 @@ import (
 	"github.com/elvonpiko/mymo/internal/apply"
 	"github.com/elvonpiko/mymo/internal/baseline"
 	"github.com/elvonpiko/mymo/internal/domain"
+	"github.com/elvonpiko/mymo/internal/lifecycle"
 	"github.com/elvonpiko/mymo/internal/preflight"
 	"github.com/elvonpiko/mymo/internal/ssh"
 )
@@ -106,17 +107,13 @@ func (m Model) runApply() (tea.Model, tea.Cmd) {
 		m.pauseLive()
 	}
 	m.auditBusy = true
+	m.mutating = true
 	// the record has to move before the box does. a failed write
 	// stops the run: the engine must not change a server whose
 	// lifecycle mymo could not record.
-	if err := m.advanceBootstrap(n.Name, domain.BootstrapConfirmed, "confirmed"); err != nil {
+	if err := m.beginApplyRecord(n.Name); err != nil {
 		m.auditBusy = false
-		m.loading = loadingState{}
-		m.pop()
-		return m, m.notify("could not record the confirmation: "+err.Error(), toastErr)
-	}
-	if err := m.advanceBootstrap(n.Name, domain.BootstrapApplying, "applying"); err != nil {
-		m.auditBusy = false
+		m.mutating = false
 		m.loading = loadingState{}
 		m.pop()
 		return m, m.notify("could not record the apply: "+err.Error(), toastErr)
@@ -203,6 +200,7 @@ func (m Model) handleApplyDone(msg applyDoneMsg) (tea.Model, tea.Cmd) {
 
 	if msg.err != nil {
 		m.auditBusy = false
+		m.mutating = false
 		m.loading = loadingState{}
 		m.layout()
 		if m.cur().kind == scNodeApplyReport {
@@ -213,13 +211,14 @@ func (m Model) handleApplyDone(msg applyDoneMsg) (tea.Model, tea.Cmd) {
 
 	if msg.res.Failed {
 		m.auditBusy = false
+		m.mutating = false
 		m.loading = loadingState{}
 		m.layout()
 		note := "the apply stopped — the report says where"
 		if m.cur().kind != scNodeApplyReport {
 			note = "the apply stopped at " + msg.res.FailedAt + " — walk back to see why"
 		}
-		if err := m.reopenBootstrap(msg.node, "apply stopped at "+msg.res.FailedAt+" — preflight again to resume"); err != nil {
+		if err := m.reopenBootstrap(msg.node, msg.res.FailedAt); err != nil {
 			note = "the apply stopped, and the record could not be updated: " + err.Error()
 		}
 		return m, m.notify(note, toastErr)
@@ -297,6 +296,7 @@ func (m Model) runVerify(node string) tea.Cmd {
 // only when every effective check passed.
 func (m Model) handleVerifyDone(msg verifyDoneMsg) (tea.Model, tea.Cmd) {
 	m.auditBusy = false
+	m.mutating = false
 	m.loading = loadingState{}
 	m.layout()
 	m.applyChecks = msg.checks
@@ -305,7 +305,7 @@ func (m Model) handleVerifyDone(msg verifyDoneMsg) (tea.Model, tea.Cmd) {
 	m.arScroll = 0
 	if !msg.ok {
 		note := "the baseline ran but did not verify — mymo will not call this node ready"
-		if err := m.reopenBootstrap(msg.node, "verify failed — preflight again to resume"); err != nil {
+		if err := m.noteVerifyFailed(msg.node); err != nil {
 			note = "verify failed, and the record could not be updated: " + err.Error()
 		}
 		return m, m.notify(note, toastErr)
@@ -354,7 +354,11 @@ func (m *Model) advanceBootstrap(name string, to domain.BootstrapState, verdict 
 	if domain.BootstrapRank(to) < domain.BootstrapRank(n.Bootstrap.State) {
 		return nil
 	}
-	n.Bootstrap = domain.Bootstrap{State: to, Baseline: baseline.Version, Verdict: verdict, At: time.Now()}
+	if to == domain.BootstrapReady {
+		n = lifecycle.MarkReady(n, time.Now())
+	} else {
+		n.Bootstrap = domain.Bootstrap{State: to, Baseline: baseline.Version, Verdict: verdict, At: time.Now()}
+	}
 	if err := m.store.UpdateNode(n); err != nil {
 		return err
 	}
@@ -365,15 +369,10 @@ func (m *Model) advanceBootstrap(name string, to domain.BootstrapState, verdict 
 	return nil
 }
 
-// reopenBootstrap rolls a failed first setup back to the start of
-// the flow. The lifecycle never steps back on success; failure of
-// a first setup is the one honest exception: an apply that stopped
-// must be re-audited, because the box is whatever it is now — and
-// preflight, not the plan, is what reads it. Without this, a failed
-// apply would strand the record at "applying" with no way back in.
-// A node that was already prepared stays prepared: an upgrade that
-// stops does not un-make the app host.
-func (m *Model) reopenBootstrap(name, verdict string) error {
+// beginApplyRecord persists the transition an apply is allowed to
+// make before the box is touched. The lifecycle package decides
+// whether that is "applying" or an in-place upgrade.
+func (m *Model) beginApplyRecord(name string) error {
 	if m.store == nil {
 		return errors.New("state store unavailable")
 	}
@@ -381,17 +380,45 @@ func (m *Model) reopenBootstrap(name, verdict string) error {
 	if err != nil {
 		return err
 	}
-	if nodeIsManaged(n) {
-		n.Bootstrap.Verdict = verdict
-		n.Bootstrap.At = time.Now()
-	} else {
-		n.Bootstrap = domain.Bootstrap{State: domain.BootstrapPreflight, Verdict: verdict, At: time.Now()}
+	n = lifecycle.BeginApply(n, m.upgradeFlow, time.Now())
+	return m.persistNode(n)
+}
+
+// reopenBootstrap records a stopped apply. A first setup stays at
+// applying so the node page can offer Resume. An upgrade stays prepared.
+func (m *Model) reopenBootstrap(name, where string) error {
+	if m.store == nil {
+		return errors.New("state store unavailable")
 	}
+	n, err := m.store.GetNode(name)
+	if err != nil {
+		return err
+	}
+	n = lifecycle.StopApply(n, where, m.upgradeFlow, time.Now())
+	return m.persistNode(n)
+}
+
+// noteVerifyFailed records a verify that did not hold, under the
+// same state rule as a stopped apply.
+func (m *Model) noteVerifyFailed(name string) error {
+	if m.store == nil {
+		return errors.New("state store unavailable")
+	}
+	n, err := m.store.GetNode(name)
+	if err != nil {
+		return err
+	}
+	n = lifecycle.VerifyFailed(n, m.upgradeFlow, time.Now())
+	return m.persistNode(n)
+}
+
+// persistNode writes a node and refreshes the fleet and the open page.
+func (m *Model) persistNode(n domain.Node) error {
 	if err := m.store.UpdateNode(n); err != nil {
 		return err
 	}
 	m.reloadFleet()
-	if m.selNode.Name == name {
+	if m.selNode.Name == n.Name {
 		m.selNode = n
 	}
 	return nil
@@ -477,7 +504,7 @@ func (m Model) arTail(w int, scrollable bool) string {
 		if m.upgradeFlow {
 			tail += faintStyle.Render("the node stays prepared — run the upgrade again when the box is fixed") + "\n"
 		} else {
-			tail += faintStyle.Render("run setup again when the box is fixed — it resumes where it stopped") + "\n"
+			tail += faintStyle.Render("resume from the node — I continues where this stopped") + "\n"
 		}
 	case len(m.applyChecks) > 0 && !everyCheckHeld(m.applyChecks):
 		// the apply finished; some live probe did not hold
@@ -563,19 +590,11 @@ func (m Model) arScrollMax() int {
 	head := m.arHead()
 	tail := m.arTail(w, true)
 	groups := m.arGroups(w)
-	window := m.arWindowRows(head, tail)
-	taken, last := 0, len(groups)-1
-	for i := len(groups) - 1; i >= 0; i-- {
-		if taken+len(groups[i]) > window {
-			break
-		}
-		taken += len(groups[i])
-		last = i
+	heights := make([]int, len(groups))
+	for i, g := range groups {
+		heights[i] = len(g)
 	}
-	if last < 0 {
-		return 0
-	}
-	return last
+	return scrollMaxHeights(heights, m.arWindowRows(head, tail))
 }
 
 // everyCheckHeld is the report's honest tally of the live probes.

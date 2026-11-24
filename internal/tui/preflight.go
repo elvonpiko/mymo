@@ -119,21 +119,13 @@ func (m Model) pfWindowRows() int {
 // counted from the tail, because findings are not the same height
 // and the last window is what the end of the list really looks
 // like.
-func (m Model) pfScrollMax(rowCount int) int {
+func (m Model) pfScrollMax(_ int) int {
 	groups := m.pfGroups()
-	window := m.pfWindowRows()
-	taken, last := 0, len(groups)-1
-	for i := len(groups) - 1; i >= 0; i-- {
-		if taken+len(groups[i]) > window {
-			break
-		}
-		taken += len(groups[i])
-		last = i
+	heights := make([]int, len(groups))
+	for i, g := range groups {
+		heights[i] = len(g)
 	}
-	if last < 0 {
-		return 0
-	}
-	return last
+	return scrollMaxHeights(heights, m.pfWindowRows())
 }
 
 // pfRow renders one check: verdict glyph, title, and detail, wrapping
@@ -215,6 +207,9 @@ func (m Model) wizardPanelFit(inner string) string {
 // setupWord is the wizard's name: an upgrade of a prepared node,
 // or the first preparation of a box that is not one yet.
 func (m Model) setupWord() string {
+	if m.resumeFlow {
+		return "Resume"
+	}
 	if m.upgradeFlow || m.pfVerdict == preflight.Upgrade {
 		return "Upgrade"
 	}

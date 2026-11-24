@@ -93,6 +93,13 @@ type Model struct {
 	// node that is already prepared, so the pages say Upgrade
 	// rather than Initial setup
 	upgradeFlow bool
+	// resumeFlow is set when the open audit continues an apply that
+	// stopped. The pages say Resume, and the record stays at applying
+	// until a new apply moves it.
+	resumeFlow bool
+	// mutating is set while an apply, deploy, rollback, or first
+	// contact is changing a box. ctrl+c asks before it kills that.
+	mutating bool
 	// pfScroll walks the check rows when the card cannot hold them
 	// all at once: the rows move, the verdict and the way forward
 	// stay pinned
@@ -113,6 +120,7 @@ type Model struct {
 	// apps pages.
 	apps      []domain.App
 	appCursor int
+	appScroll int // the apps window, kept on the selected row
 
 	// the apply flow: the typed confirmation, the engine's report,
 	// the verify rows, and the injectable pieces tests replace —
@@ -142,6 +150,10 @@ type Model struct {
 	appLive     appLiveState     // the last live probe's answer
 	appLogs     []string         // the last fetched log tail
 	logsScroll  int              // walks the logs window
+	logsStick   bool             // the window follows new lines
+	logsCancel  context.CancelFunc
+	logsSeq     int
+	logLines    chan string
 
 	applyTyped    string
 	applyResult   apply.Result
@@ -391,6 +403,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case appLogsDoneMsg:
 		return m.handleAppLogsDone(msg)
+	case appLogLineMsg:
+		return m.handleAppLogLine(msg)
+	case appLogFollowDoneMsg:
+		if msg.seq == m.logsSeq && msg.err != "" && m.cur().kind == scAppLogs {
+			return m, m.notify(shorten(msg.err, 44), toastErr)
+		}
+		return m, nil
 	case appRestartDoneMsg:
 		return m.handleAppRestartDone(msg)
 
@@ -535,6 +554,10 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if str == "ctrl+c" {
+		if m.mutating {
+			m.confirmQuit = true
+			return m, nil
+		}
 		return m, tea.Quit
 	}
 
@@ -703,11 +726,13 @@ func (m Model) updateAppsKeys(s screen, str string) (tea.Model, tea.Cmd) {
 	case "up", "k":
 		if m.appCursor > 0 {
 			m.appCursor--
+			m.appScroll = followCursor(m.appCursor, m.appScroll, m.appsWindowRows(), len(apps))
 		}
 		return m, nil
 	case "down", "j":
 		if m.appCursor < len(apps)-1 {
 			m.appCursor++
+			m.appScroll = followCursor(m.appCursor, m.appScroll, m.appsWindowRows(), len(apps))
 		}
 		return m, nil
 	case "enter":
@@ -749,6 +774,7 @@ func (m Model) updateHomeKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "a":
 		m.reloadApps()
 		m.appCursor = 0
+		m.appScroll = 0
 		m.push(screen{kind: scApps})
 		return m, nil
 	case "d":
@@ -801,6 +827,7 @@ func (m Model) updateFleetKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.abandonSweep()
 		m.reloadApps()
 		m.appCursor = 0
+		m.appScroll = 0
 		m.push(screen{kind: scApps})
 		return m, nil
 	case "d":
@@ -856,14 +883,17 @@ func (m Model) updateNodeKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.runSSH()
 	case "I":
 		// the key exists exactly when the action does: a managed
-		// node has no setup to offer and no I to press
-		if !nodeIsManaged(m.selNode) {
+		// node has no setup to offer and no I to press, unless an
+		// apply stopped and Resume is that key
+		if m.selNode.Bootstrap.State == domain.BootstrapApplying || !nodeIsManaged(m.selNode) {
+			m.resumeFlow = m.selNode.Bootstrap.State == domain.BootstrapApplying
 			m.upgradeFlow = false
 			return m.runPreflight()
 		}
 		return m, nil
 	case "U":
 		if _, ok := upgradeFrom(m.selNode); ok {
+			m.resumeFlow = false
 			m.upgradeFlow = true
 			return m.runPreflight()
 		}
@@ -874,6 +904,7 @@ func (m Model) updateNodeKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if nodeIsManaged(m.selNode) {
 			m.reloadApps()
 			m.appCursor = 0
+			m.appScroll = 0
 			m.push(screen{kind: scNodeApps, node: m.selNode.Name})
 		}
 		return m, nil
@@ -957,6 +988,7 @@ func (m Model) runAction(a actionItem) (tea.Model, tea.Cmd) {
 	case actApps:
 		m.reloadApps()
 		m.appCursor = 0
+		m.appScroll = 0
 		m.push(screen{kind: scNodeApps, node: m.selNode.Name})
 	case actInspect:
 		m.push(screen{kind: scNodeInspect, node: m.selNode.Name})
@@ -966,9 +998,11 @@ func (m Model) runAction(a actionItem) (tea.Model, tea.Cmd) {
 	case actRemove:
 		m.confirmRemove = true
 	case actSetup:
+		m.resumeFlow = m.selNode.Bootstrap.State == domain.BootstrapApplying
 		m.upgradeFlow = false
 		return m.runPreflight()
 	case actUpgrade:
+		m.resumeFlow = false
 		m.upgradeFlow = true
 		return m.runPreflight()
 	}
@@ -1096,7 +1130,11 @@ func (m Model) View() tea.View {
 // are already written; the fleet keeps running either way.
 func (m Model) quitConfirmView() string {
 	inner := warnStyle.Render("Quit mymo?") + "\n\n" +
-		textStyle.Render("The fleet keeps running — mymo just closes.") + "\n\n" +
+		textStyle.Render("The fleet keeps running — mymo just closes.") + "\n"
+	if m.mutating {
+		inner += textStyle.Render("An apply in flight stops where it is. Resume it from the node.") + "\n"
+	}
+	inner += "\n" +
 		accentStyle.Render("[y]") + textStyle.Render(" quit    ") +
 		accentStyle.Render("[esc]") + textStyle.Render(" stay")
 	return lipgloss.Place(m.contentWidth, m.contentHeight,
@@ -1370,7 +1408,12 @@ func (m Model) keymap() help.KeyMap {
 			return newUnreachKeymap()
 		}
 		km := newNodeKeymap()
-		km.setup.SetEnabled(!nodeIsManaged(m.selNode))
+		if m.selNode.Bootstrap.State == domain.BootstrapApplying {
+			km.setup.SetHelp("I", "resume")
+			km.setup.SetEnabled(true)
+		} else {
+			km.setup.SetEnabled(!nodeIsManaged(m.selNode))
+		}
 		_, upgrading := upgradeFrom(m.selNode)
 		km.upgrade.SetEnabled(upgrading)
 		// applications are a mymo-node's verb: the key exists

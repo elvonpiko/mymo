@@ -408,8 +408,12 @@ func appReleaseRow(r domain.Release, w int) string {
 // lines only, the title and the way out pinned.
 func (m Model) appLogsView(s screen) string {
 	w := m.stageW
+	mode := "the last 100 lines"
+	if m.logsCancel != nil {
+		mode = "following"
+	}
 	head := titleStyle.Render("Logs") + " " +
-		faintStyle.Render("· "+s.app+" · "+s.node+" · the last 100 lines") + "\n\n"
+		faintStyle.Render("· "+s.app+" · "+s.node+" · "+mode) + "\n\n"
 
 	max := m.logsScrollMax(len(m.appLogs))
 	tail := "\n" + faintStyle.Render("esc back") + "\n"
@@ -452,11 +456,14 @@ func (m Model) logLineStyle(i, w int) string {
 // logsScrollMax is the last line the window can start from, from
 // the tail because lines never wrap.
 func (m Model) logsScrollMax(rowCount int) int {
-	last := rowCount - m.logsWindowRows() + 1
-	if last < 0 {
-		return 0
+	rows := m.logsWindowRows()
+	// the view spends one row on "j/k" once the tail does not fit,
+	// and the scroll has to be measured against that shorter window
+	// or the last line sits just past it
+	if rowCount > rows && rows > 1 {
+		rows--
 	}
-	return last
+	return lineScrollMax(rowCount, rows)
 }
 
 // utf8Len counts runes, not bytes.
@@ -633,9 +640,14 @@ func (m Model) handleAppLogsDone(msg appLogsDoneMsg) (tea.Model, tea.Cmd) {
 		return m, m.notify(shorten(msg.fatal, 44), toastErr)
 	}
 	m.appLogs = msg.lines
+	m.logsStick = true
 	m.logsScroll = m.logsScrollMax(len(msg.lines))
 	m.push(screen{kind: scAppLogs, node: msg.node, app: msg.app})
-	return m, nil
+	app, node, ok := m.findScreenApp(m.cur())
+	if !ok {
+		return m, nil
+	}
+	return m, m.startLogFollow(node, app)
 }
 
 // handleAppRestartDone lands the restart's outcome.
@@ -660,17 +672,140 @@ func (m Model) updateAppLogsKeys(str string) (tea.Model, tea.Cmd) {
 		if m.logsScroll < m.logsScrollMax(len(m.appLogs)) {
 			m.logsScroll++
 		}
+		m.logsStick = m.logsScroll >= m.logsScrollMax(len(m.appLogs))
 		return m, nil
 	case "k", "up":
 		if m.logsScroll > 0 {
 			m.logsScroll--
 		}
+		m.logsStick = false
 		return m, nil
 	case "esc":
+		m.stopLogFollow()
 		m.pop()
 		return m, nil
 	}
 	return m.updateSimpleKeys(m.cur().kind, str)
+}
+
+// appLogLineMsg is one line from a live log follow.
+type appLogLineMsg struct {
+	seq  int
+	line string
+	done bool
+}
+
+// appLogFollowDoneMsg is the follow's exit. A cancel is not an error.
+type appLogFollowDoneMsg struct {
+	seq int
+	err string
+}
+
+// followNew turns a one-shot logs argv into a follow of lines that
+// arrive after the tail already on screen. --tail 0 does not repeat
+// the hundred lines the first fetch just showed.
+func followNew(argv []string) []string {
+	out := append([]string(nil), argv...)
+	for i := 0; i+1 < len(out); i++ {
+		if out[i] == "--tail" {
+			out[i+1] = "0"
+		}
+	}
+	for i, a := range out {
+		if a == "logs" {
+			return append(out[:i+1], append([]string{"--follow"}, out[i+1:]...)...)
+		}
+	}
+	return out
+}
+
+// startLogFollow streams new log lines on their own connection.
+// Tests inject a runner and keep the one-shot tail: a fake runner
+// cannot hold a stream open. Esc cancels the stream.
+func (m *Model) startLogFollow(node domain.Node, app domain.App) tea.Cmd {
+	if m.appRunner != nil || m.store == nil {
+		return nil
+	}
+	rel, ok := app.ActiveRelease()
+	if !ok {
+		return nil
+	}
+	m.stopLogFollow()
+	m.logsSeq++
+	seq := m.logsSeq
+	ctx, cancel := context.WithCancel(context.Background())
+	m.logsCancel = cancel
+	ch := make(chan string, 64)
+	m.logLines = ch
+	argv := followNew(app.Ops(rel).Logs)
+	known := filepath.Join(m.store.Dir(), "known_hosts.json")
+	return tea.Batch(m.logLineReader(), func() tea.Msg {
+		client := ssh.New(node, known)
+		if err := client.Dial(ctx); err != nil {
+			close(ch)
+			if ctx.Err() != nil {
+				return appLogFollowDoneMsg{seq: seq}
+			}
+			return appLogFollowDoneMsg{seq: seq, err: err.Error()}
+		}
+		defer client.Close()
+		defer close(ch)
+		run := argv
+		if appNeedsRoot(ctx, client) {
+			run = append([]string{"sudo", "-n"}, argv...)
+		}
+		_, err := client.Stream(ctx, func(line string) {
+			select {
+			case ch <- line:
+			case <-ctx.Done():
+			}
+		}, run[0], run[1:]...)
+		if err != nil && ctx.Err() == nil {
+			return appLogFollowDoneMsg{seq: seq, err: err.Error()}
+		}
+		return appLogFollowDoneMsg{seq: seq}
+	})
+}
+
+// logLineReader is the follow's read end, one line per message.
+func (m Model) logLineReader() tea.Cmd {
+	ch := m.logLines
+	seq := m.logsSeq
+	if ch == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		line, ok := <-ch
+		if !ok {
+			return appLogLineMsg{seq: seq, done: true}
+		}
+		return appLogLineMsg{seq: seq, line: line}
+	}
+}
+
+// handleAppLogLine appends one followed line. When the window was
+// sitting on the latest line it stays there; a reader who scrolled
+// up is left where they are.
+func (m Model) handleAppLogLine(msg appLogLineMsg) (tea.Model, tea.Cmd) {
+	if msg.seq != m.logsSeq || msg.done {
+		return m, nil
+	}
+	m.appLogs = append(m.appLogs, msg.line)
+	if m.logsStick {
+		m.logsScroll = m.logsScrollMax(len(m.appLogs))
+	}
+	return m, m.logLineReader()
+}
+
+// stopLogFollow cancels the stream. A line already in flight is
+// ignored because the sequence moved on.
+func (m *Model) stopLogFollow() {
+	if m.logsCancel != nil {
+		m.logsCancel()
+		m.logsCancel = nil
+	}
+	m.logsSeq++
+	m.logLines = nil
 }
 
 // logsHeadHeight is the fixed rows above the window: the title
@@ -757,6 +892,7 @@ func (m Model) updateAppRollbackKeys(s screen, str string) (tea.Model, tea.Cmd) 
 // runAppRollback runs the engine behind the loading ceremony; the
 // progress pump keeps the page narrating what the box is doing.
 func (m Model) runAppRollback(app domain.App, node domain.Node, target domain.Release) (tea.Model, tea.Cmd) {
+	m.mutating = true
 	m.loading = loadingState{
 		active: true,
 		line:   "rolling " + app.Name + " back to release " + fmt.Sprint(target.ID),
@@ -818,6 +954,7 @@ func (m Model) handleAppProgress(msg appProgressMsg) (tea.Model, tea.Cmd) {
 // written on success AND failure, the page states which release
 // serves now.
 func (m Model) handleAppRollbackDone(msg appRollbackDoneMsg) (tea.Model, tea.Cmd) {
+	m.mutating = false
 	if m.loading.active && m.loadingApp == msg.app {
 		m.loading = loadingState{}
 	}
