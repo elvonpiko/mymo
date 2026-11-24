@@ -1,9 +1,9 @@
 // Package preflight implements mymo's App Host preflight: a deep,
 // strictly read-only audit of everything the baseline will touch,
 // evaluated into per-check verdicts. Preflight never mutates; its job
-// is to say one of four things per the spec — safe to continue, safe
-// to adopt, requires a user decision, or unsupported — and to stop
-// when in doubt.
+// is to say one of five things per the spec — safe to continue, safe
+// to adopt, an explicit baseline upgrade, requires a user decision,
+// or unsupported — and to stop when in doubt.
 package preflight
 
 import (
@@ -37,6 +37,11 @@ const (
 	// Adopt means something already exists that mymo can take over
 	// as-is.
 	Adopt
+	// Upgrade means the box carries mymo's own older baseline. The
+	// plan is the delta to the pinned baseline, and nothing runs
+	// until the operator types the node name. It is not a decision
+	// about a stranger's files, and it does not block planning.
+	Upgrade
 	// Decide means the user must make a call mymo refuses to make.
 	Decide
 	// Abort means the baseline cannot proceed on this node.
@@ -50,6 +55,8 @@ func (o Outcome) String() string {
 		return "ok"
 	case Adopt:
 		return "adopt"
+	case Upgrade:
+		return "upgrade"
 	case Decide:
 		return "decide"
 	default:
@@ -608,9 +615,9 @@ func Evaluate(f facts.Node, s Audit) []Check {
 			checks = append(checks, Check{"mymo", "mymo state", Adopt,
 				"mymo's own record, baseline " + rec.Baseline + " applied — steps keep what exists", ""})
 		case marked && fingerprint:
-			checks = append(checks, Check{"mymo", "mymo state", Decide,
-				"baseline " + rec.Baseline + " is recorded; " + baseline.Version + " would supersede it — upgrades are explicit, never silent",
-				"keep the mymo that recorded this baseline, or remove the node from mymo (mymo node remove) and set it up fresh"})
+			checks = append(checks, Check{"mymo", "mymo state", Upgrade,
+				"baseline " + rec.Baseline + " is recorded; " + baseline.Version + " supersedes it — the plan is the delta, and nothing runs until the node name is typed",
+				""})
 		case marked:
 			checks = append(checks, Check{"mymo", "mymo state", Decide,
 				"the marker is mine but the sudoers rule is not — the box's rules were edited; mymo refuses to guess who did what",

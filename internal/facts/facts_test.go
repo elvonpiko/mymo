@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/elvonpiko/mymo/internal/baseline"
 )
 
 // fakeRunner answers probe commands from canned responses, recording
@@ -210,5 +212,26 @@ func TestProbeReadsTheBaselineMarker(t *testing.T) {
 	}
 	if _, ok := ParseBaselineMarker(`{"baseline": "0.1"}`); ok {
 		t.Error("a marker without appliedAt parsed as a record")
+	}
+}
+
+func TestBaselineBehindTrustsTheMarkerOverTheLocalRecord(t *testing.T) {
+	marker := func(v string) string {
+		return `{"baseline": "` + v + `", "appliedAt": "2026-02-15T10:00:00Z"}`
+	}
+	if from, behind := BaselineBehind(marker("0.0"), baseline.Version); !behind || from != "0.0" {
+		t.Errorf("old marker = %q %v, want 0.0 true", from, behind)
+	}
+	if from, behind := BaselineBehind(marker(baseline.Version), "0.0"); behind {
+		t.Errorf("a current marker must win over a stale local record, got %q", from)
+	}
+	if from, behind := BaselineBehind("", "0.0"); !behind || from != "0.0" {
+		t.Errorf("local record without a marker = %q %v", from, behind)
+	}
+	if _, behind := BaselineBehind("", baseline.Version); behind {
+		t.Error("the pinned baseline is not behind itself")
+	}
+	if _, behind := BaselineBehind("", ""); behind {
+		t.Error("an unrecorded node is not an upgrade")
 	}
 }

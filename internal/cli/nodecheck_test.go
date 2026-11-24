@@ -125,14 +125,14 @@ func TestNodeCheckNotFound(t *testing.T) {
 	}
 }
 
-func TestNodeCheckRequiresName(t *testing.T) {
+func TestNodeCheckWithNoNameAndNoNodes(t *testing.T) {
 	s := newSession(t)
 	code, _, errStr := s.run(t, "node", "check")
-	if code != exitUsage {
-		t.Fatalf("exit code = %d, want %d", code, exitUsage)
+	if code != exitOK {
+		t.Fatalf("exit code = %d, want %d (%s)", code, exitOK, errStr)
 	}
-	if !strings.Contains(errStr, "usage: mymo node check") {
-		t.Errorf("stderr = %q, want usage", errStr)
+	if !strings.Contains(errStr, "no nodes") {
+		t.Errorf("stderr = %q, want no nodes", errStr)
 	}
 }
 

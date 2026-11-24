@@ -108,14 +108,16 @@ func printPreflight(w io.Writer, name string, checks []preflight.Check, verdict 
 		switch c.Outcome {
 		case preflight.Adopt:
 			glyph = "ADOPT"
+		case preflight.Upgrade:
+			glyph = "UPGRADE"
 		case preflight.Decide:
 			glyph = "DECIDE"
 		case preflight.Abort:
 			glyph = "ABORT"
 		}
-		fmt.Fprintf(w, "  %-6s %-14s %s\n", glyph, c.Title, c.Detail)
+		fmt.Fprintf(w, "  %-7s %-14s %s\n", glyph, c.Title, c.Detail)
 		if c.Fix != "" {
-			fmt.Fprintf(w, "  %-6s %-14s fix \u00b7 %s\n", "", "", c.Fix)
+			fmt.Fprintf(w, "  %-7s %-14s fix \u00b7 %s\n", "", "", c.Fix)
 		}
 	}
 	fmt.Fprintf(w, "\nverdict: %s", verdict)
@@ -124,6 +126,8 @@ func printPreflight(w io.Writer, name string, checks []preflight.Check, verdict 
 		fmt.Fprintln(w, " — the path is clear; preparing continues with a plan to review")
 	case preflight.Adopt:
 		fmt.Fprintln(w, " — existing components can be adopted; the plan says exactly what changes")
+	case preflight.Upgrade:
+		fmt.Fprintln(w, " — this is an upgrade to baseline "+baseline.Version+"; the plan is the delta, and nothing runs until the node name is typed")
 	case preflight.Decide:
 		fmt.Fprintln(w, " — follow the fixes above, then check again")
 	default:

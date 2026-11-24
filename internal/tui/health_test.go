@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -429,6 +430,106 @@ func TestNodeHeadingCarriesTheRecordedBaseline(t *testing.T) {
 	m = observe(t, m, "web-1", snap)
 	if out := ansiStrip(view(m)); !strings.Contains(out, "mymo pins "+baseline.Version) {
 		t.Errorf("heading missing the drift warning:\n%s", out)
+	}
+}
+
+func TestFleetCheckWalksOneNodeAtATime(t *testing.T) {
+	s := readyStore(t)
+	seedNode(t, s, "web-1")
+	seedNode(t, s, "web-2")
+	m := press(t, New(s), "n", "c")
+	if !m.sweeping || len(m.sweepRest) != 1 || m.sweepRest[0] != "web-2" {
+		t.Fatalf("sweep = %+v rest=%v, want web-1 in flight and web-2 waiting", m.sweeping, m.sweepRest)
+	}
+	if got := ansiStrip(view(m)); !strings.Contains(got, "checking") || !strings.Contains(got, "esc stop") {
+		t.Fatalf("the fleet should show the probe and how to stop it:\n%s", got)
+	}
+
+	// esc drops the rest. the probe already dialing still records.
+	m = press(t, m, "esc")
+	if !m.sweeping || !m.sweepStop || len(m.sweepRest) != 0 {
+		t.Fatalf("esc did not stop the rest: sweeping=%v stop=%v rest=%v", m.sweeping, m.sweepStop, m.sweepRest)
+	}
+	m = step(t, m, checkDoneMsg{
+		node: "web-1", seq: m.checkSeq,
+		snap: facts.Node{Hostname: "web-1", CollectedAt: time.Now()},
+	})
+	if m.sweeping {
+		t.Fatal("the stopped check started another probe")
+	}
+	n, err := s.GetNode("web-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n.LastCheck.At.IsZero() || n.LastCheck.Error != "" {
+		t.Fatalf("web-1 was not recorded: %+v", n.LastCheck)
+	}
+	n2, err := s.GetNode("web-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !n2.LastCheck.At.IsZero() {
+		t.Fatal("web-2 was probed after esc")
+	}
+	if m.toast == nil || !strings.Contains(m.toast.text, "stopped") {
+		t.Fatalf("toast = %+v, want the stopped summary", m.toast)
+	}
+
+	// a fresh check walks both, and a failure stays on that node
+	m.toast = nil
+	m = press(t, m, "c")
+	seq := m.checkSeq
+	m = step(t, m, checkDoneMsg{node: "web-1", seq: seq, err: errors.New("unreachable")})
+	if !m.sweeping || m.checkSeq == seq {
+		t.Fatalf("the second node did not start: sweeping=%v seq=%d was %d", m.sweeping, m.checkSeq, seq)
+	}
+	m = step(t, m, checkDoneMsg{
+		node: "web-2", seq: m.checkSeq,
+		snap: facts.Node{Hostname: "web-2", CollectedAt: time.Now()},
+	})
+	if m.sweeping {
+		t.Fatal("the check did not finish")
+	}
+	n, _ = s.GetNode("web-1")
+	if n.LastCheck.Error == "" {
+		t.Fatal("web-1's failure was not recorded")
+	}
+	n2, _ = s.GetNode("web-2")
+	if n2.LastCheck.Error != "" || n2.Facts.Hostname != "web-2" {
+		t.Fatalf("web-2 = %+v facts %+v", n2.LastCheck, n2.Facts)
+	}
+	if m.toast == nil || !strings.Contains(m.toast.text, "1 failed") {
+		t.Fatalf("toast = %+v, want the failure counted", m.toast)
+	}
+}
+
+func TestManagedNodeOffersTheUpgrade(t *testing.T) {
+	s := readyStore(t)
+	n := seedNode(t, s, "web-1")
+	n.Bootstrap = domain.Bootstrap{State: domain.BootstrapReady, Baseline: "0.0", Verdict: "ready", At: time.Now()}
+	n.Mode = domain.ModeAppHost
+	if err := s.UpdateNode(n); err != nil {
+		t.Fatal(err)
+	}
+	m := press(t, New(s), "n", "enter")
+	snap := richSnapshot("web-1")
+	snap.BaselineMarker = `{"baseline": "0.0", "appliedAt": "2025-01-01T00:00:00Z"}`
+	m = observe(t, m, "web-1", snap)
+
+	got := ansiStrip(view(m))
+	if !strings.Contains(got, "U upgrade") {
+		t.Errorf("a drifted managed node must offer the upgrade:\n%s", got)
+	}
+	if strings.Contains(got, "I setup") {
+		t.Errorf("a managed node must not offer first setup:\n%s", got)
+	}
+
+	m = press(t, m, "U")
+	if m.cur().kind != scNodePreflight || !m.upgradeFlow {
+		t.Fatalf("U did not open the upgrade audit: kind=%v flow=%v", m.cur().kind, m.upgradeFlow)
+	}
+	if !strings.Contains(m.loading.line, "upgrade") {
+		t.Fatalf("ceremony = %q", m.loading.line)
 	}
 }
 

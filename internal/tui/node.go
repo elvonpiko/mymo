@@ -21,7 +21,9 @@ const (
 	actApps
 	actInspect
 	actRemove
+	actEdit
 	actSetup
+	actUpgrade
 	actAppStatus
 	actAppLogs
 	actAppRestart
@@ -39,15 +41,21 @@ func nodeIsManaged(n domain.Node) bool {
 // actionDefs lists the observe page's actions, the first one offered
 // only while it can still be used: setup exists for a box that is
 // not yet a mymo node and disappears the moment it is one. A managed
-// node never sees it again — drift and upgrades are later work, not
-// a re-run of onboarding. Checking is not among these either:
-// entering the page is the check.
+// node never sees setup again. A recorded baseline other than the
+// one this mymo pins is an upgrade: the same plan and the same
+// typed-name gate, offered on its own key. Checking is not among
+// these either: entering the page is the check.
 func actionDefs(n domain.Node) []actionItem {
 	defs := make([]actionItem, 0, 5)
 	if !nodeIsManaged(n) {
 		defs = append(defs, actionItem{actSetup, "Initial setup",
 			"check · plan · apply — a mymo node, ready to deploy apps",
 			"I", "accent"})
+	}
+	if from, ok := upgradeFrom(n); ok {
+		defs = append(defs, actionItem{actUpgrade, "Upgrade",
+			"plan the delta from baseline " + from + " to " + baseline.Version + " — nothing runs until the name is typed",
+			"U", "accent"})
 	}
 	// Applications are what mymo manages on a box, and it manages
 	// nothing on a box it never set up: the verb arrives with the
@@ -58,9 +66,20 @@ func actionDefs(n domain.Node) []actionItem {
 	}
 	return append(defs,
 		actionItem{actSSH, "SSH", "open an interactive session on the node", "s", "plain"},
+		actionItem{actEdit, "Edit", "change the address, user, or key — the name, apps, and baseline stay", "e", "plain"},
 		actionItem{actInspect, "Inspect record", "the full stored state for this node", "i", "plain"},
 		actionItem{actRemove, "Remove", "forget this box — locally only; the box is not touched", "x", "warn"},
 	)
+}
+
+// upgradeFrom reports the baseline a managed node is recorded at
+// when this mymo pins a different one. Unmanaged nodes take the
+// setup path; a node already on the pin has nothing to upgrade.
+func upgradeFrom(n domain.Node) (string, bool) {
+	if !nodeIsManaged(n) {
+		return "", false
+	}
+	return facts.BaselineBehind(n.Facts.BaselineMarker, n.Bootstrap.Baseline)
 }
 
 // actionItem is one verb: the key that runs it, the words that

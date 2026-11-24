@@ -339,6 +339,51 @@ func TestAddNodeWorkflowCancel(t *testing.T) {
 	}
 }
 
+func TestEditKeepsAppsAndTheBaseline(t *testing.T) {
+	s := readyStore(t)
+	n := seedNode(t, s, "web-1")
+	n.Auth = domain.AuthAgent
+	n.Mode = domain.ModeAppHost
+	n.Bootstrap = domain.Bootstrap{State: domain.BootstrapReady, Baseline: "0.1", Verdict: "ready", At: time.Now()}
+	if err := s.UpdateNode(n); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddApp(domain.App{Name: "api", Node: "web-1", Type: domain.SourceImage, Image: "nginx:1.27", Port: 8080}); err != nil {
+		t.Fatal(err)
+	}
+	m := New(s)
+	m.selNode = n
+	m.addNode = addNodeState{
+		editing: true,
+		node:    n,
+		vals: &addNodeValues{
+			name: "web-1", host: "198.51.100.8", port: "2222", user: "mymo", choice: acAgent,
+		},
+	}
+	m.push(screen{kind: scEditNode, node: "web-1"})
+	m.completeEditForm()
+	next, _ := m.updateEditReview("c")
+	m = next.(Model)
+
+	got, err := s.GetNode("web-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Host != "198.51.100.8" || got.Port != 2222 || got.User != "mymo" {
+		t.Fatalf("connection = %s:%d user %s", got.Host, got.Port, got.User)
+	}
+	if got.Bootstrap.State != domain.BootstrapReady || got.Bootstrap.Baseline != "0.1" || got.Mode != domain.ModeAppHost {
+		t.Fatalf("the record moved: mode=%s bootstrap=%+v", got.Mode, got.Bootstrap)
+	}
+	apps, err := s.AppsOnNode("web-1")
+	if err != nil || len(apps) != 1 {
+		t.Fatalf("apps = %+v err=%v", apps, err)
+	}
+	if m.cur().kind == scEditNode {
+		t.Fatal("edit did not close")
+	}
+}
+
 func TestAddNodeReviewSavesNode(t *testing.T) {
 	s := readyStore(t)
 	m := New(s)
@@ -486,8 +531,15 @@ func TestToastExpiry(t *testing.T) {
 
 func TestSettingsScreen(t *testing.T) {
 	m := press(t, New(readyStore(t)), "s")
-	if got := view(m); !strings.Contains(got, "Settings") {
+	if got := view(m); !strings.Contains(got, "Settings") || !strings.Contains(got, "replay the intro") {
 		t.Fatalf("s did not open settings:\n%s", got)
+	}
+	m = press(t, m, "r")
+	if m.introDone {
+		t.Fatal("r did not replay the intro")
+	}
+	if got := view(m); !strings.Contains(got, "opinionated") && !strings.Contains(got, "mymo") {
+		t.Fatalf("intro replay did not render:\n%s", got)
 	}
 }
 

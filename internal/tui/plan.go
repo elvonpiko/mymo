@@ -17,7 +17,7 @@ func (m Model) planView() string {
 	n := m.selNode
 	w := m.contentWidth - 8 // the card's frame eats 8 columns
 	var b strings.Builder
-	b.WriteString(titleStyle.Render("Initial setup") + " " +
+	b.WriteString(titleStyle.Render(m.setupWord()) + " " +
 		faintStyle.Render("\u00b7 the plan \u00b7 "+n.Name+" \u00b7 baseline "+baseline.Version+" \u00b7 "+fmt.Sprint(len(m.planSteps))+" steps") + "\n\n")
 
 	for i, s := range m.planSteps {

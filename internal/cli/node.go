@@ -40,6 +40,8 @@ func runNode(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return runNodeList(stdout, stderr)
 	case "add":
 		return runNodeAdd(rest, stdout, stderr)
+	case "edit":
+		return runNodeEdit(rest, stdout, stderr)
 	case "inspect":
 		return runNodeInspect(rest, stdout, stderr)
 	case "check":
@@ -71,8 +73,9 @@ func nodeUsage() string {
 	b.WriteString("Usage:\n")
 	b.WriteString("  mymo node list                list known nodes\n")
 	b.WriteString("  mymo node add [flags]         add a node\n")
+	b.WriteString("  mymo node edit <name> [flags] change host, port, user, or auth — apps and baseline stay\n")
 	b.WriteString("  mymo node inspect <name>      show a node's stored record\n")
-	b.WriteString("  mymo node check <name>        probe a node over SSH and store what it finds\n")
+	b.WriteString("  mymo node check [name]        probe one node, or every node when the name is omitted\n")
 	b.WriteString("  mymo node preflight <name>    read-only audit before preparing as app host\n")
 	b.WriteString("  mymo node plan <name>         generate the preparation plan for review\n")
 	b.WriteString("  mymo node apply <name>        apply the confirmed plan (typing the name confirms)\n")

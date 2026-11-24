@@ -48,12 +48,22 @@ func runNodeApply(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		return exitErr
 	}
 
+	prepared := node.Bootstrap.State == domain.BootstrapReady || node.Bootstrap.State == domain.BootstrapVerified
+	from, behind := facts.BaselineBehind(node.Facts.BaselineMarker, node.Bootstrap.Baseline)
+	// a prepared node whose recorded baseline is behind this mymo
+	// may be upgraded. The typed name below is the gate. A prepared
+	// node already on the pinned baseline is refused: re-running
+	// setup is not how drift inside one baseline gets repaired.
+	upgrading := prepared && behind
 	switch node.Bootstrap.State {
 	case domain.BootstrapPlan, domain.BootstrapConfirmed, domain.BootstrapApplying:
 		// a plan exists (or a previous apply stopped early); the
 		// typed name below is the confirmation
 	default:
-		if node.Bootstrap.State == domain.BootstrapReady {
+		if upgrading {
+			break
+		}
+		if prepared {
 			fmt.Fprintf(stderr, "mymo node apply: %s is already prepared (baseline %s, verified)\n", node.Name, node.Bootstrap.Baseline)
 		} else {
 			fmt.Fprintf(stderr, "mymo node apply: generate the plan first — mymo node plan %s\n", node.Name)
@@ -61,7 +71,11 @@ func runNodeApply(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		return exitErr
 	}
 
-	fmt.Fprintf(stderr, "applying %s against baseline %s...\n", node.Name, baseline.Version)
+	if upgrading {
+		fmt.Fprintf(stderr, "upgrading %s from baseline %s to %s...\n", node.Name, from, baseline.Version)
+	} else {
+		fmt.Fprintf(stderr, "applying %s against baseline %s...\n", node.Name, baseline.Version)
+	}
 	client := ssh.New(node, knownHostsPath(store))
 	client.WithProgress(dialNarrator(stderr))
 	if err := client.Dial(ctx); err != nil {
@@ -141,12 +155,23 @@ func runNodeApply(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		Progress: func(line string) { fmt.Fprintln(stderr, "  "+line) },
 	}
 
-	// the states advance only forward: confirmed, then applying
-	if node.Bootstrap.State == domain.BootstrapPlan {
-		node.Bootstrap = domain.Bootstrap{State: domain.BootstrapConfirmed, Baseline: baseline.Version, Verdict: "confirmed", At: time.Now()}
-		_ = store.UpdateNode(node)
+	// the states advance only forward: confirmed, then applying.
+	// an upgrade of a node that is already prepared does not step
+	// backward through that lifecycle — a failure must not turn a
+	// ready app host back into an unfinished setup.
+	if !upgrading {
+		if node.Bootstrap.State == domain.BootstrapPlan {
+			node.Bootstrap = domain.Bootstrap{State: domain.BootstrapConfirmed, Baseline: baseline.Version, Verdict: "confirmed", At: time.Now()}
+			if err := store.UpdateNode(node); err != nil {
+				fmt.Fprintf(stderr, "mymo node apply: %v\n", err)
+				return exitErr
+			}
+		}
+		node.Bootstrap = domain.Bootstrap{State: domain.BootstrapApplying, Baseline: baseline.Version, Verdict: "applying", At: time.Now()}
+	} else {
+		node.Bootstrap.Verdict = "upgrading"
+		node.Bootstrap.At = time.Now()
 	}
-	node.Bootstrap = domain.Bootstrap{State: domain.BootstrapApplying, Baseline: baseline.Version, Verdict: "applying", At: time.Now()}
 	node.Facts = snapshot
 	node.LastCheck = domain.CheckState{At: time.Now()}
 	if err := store.UpdateNode(node); err != nil {
@@ -156,9 +181,15 @@ func runNodeApply(ctx context.Context, args []string, stdout, stderr io.Writer) 
 
 	res := apply.Apply(ctx, client, steps, opts)
 	if res.Failed {
-		node.Bootstrap.Verdict = "failed at " + res.FailedAt
+		if upgrading {
+			node.Bootstrap.Verdict = "upgrade stopped at " + res.FailedAt
+		} else {
+			node.Bootstrap.Verdict = "failed at " + res.FailedAt
+		}
 		node.Bootstrap.At = time.Now()
-		_ = store.UpdateNode(node)
+		if err := store.UpdateNode(node); err != nil {
+			fmt.Fprintf(stderr, "mymo node apply: the record could not be updated: %v\n", err)
+		}
 		printSetupReport(stderr, res, nil)
 		fmt.Fprintln(stderr, "\nthe steps after the failure were never attempted;")
 		fmt.Fprintln(stderr, "the operator's current access is untouched.")
@@ -170,9 +201,15 @@ func runNodeApply(ctx context.Context, args []string, stdout, stderr io.Writer) 
 
 	printSetupReport(stdout, res, checks)
 	if !verified {
-		node.Bootstrap.Verdict = "verify failed"
+		if upgrading {
+			node.Bootstrap.Verdict = "upgrade did not verify"
+		} else {
+			node.Bootstrap.Verdict = "verify failed"
+		}
 		node.Bootstrap.At = time.Now()
-		_ = store.UpdateNode(node)
+		if err := store.UpdateNode(node); err != nil {
+			fmt.Fprintf(stderr, "mymo node apply: the record could not be updated: %v\n", err)
+		}
 		fmt.Fprintln(stderr, "\nthe baseline ran but did not verify — mymo will not call this node ready.")
 		fmt.Fprintln(stderr, "fix what the rows above name, then check again.")
 		return exitErr
@@ -190,9 +227,15 @@ func runNodeApply(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		fmt.Fprintf(stderr, "mymo node apply: %v\n", err)
 		return exitErr
 	}
-	fmt.Fprintf(stdout, "\nmymo security baseline %s applied and verified on %s.\n", baseline.Version, node.Name)
+	if upgrading {
+		fmt.Fprintf(stdout, "\nbaseline %s is now recorded on %s.\n", baseline.Version, node.Name)
+	} else {
+		fmt.Fprintf(stdout, "\nmymo security baseline %s applied and verified on %s.\n", baseline.Version, node.Name)
+	}
 	fmt.Fprintf(stdout, "the mymo key is kept at %s\n", keyPath)
-	fmt.Fprintf(stdout, "promote to app host when ready: mymo node promote %s\n", node.Name)
+	if node.Mode != domain.ModeAppHost {
+		fmt.Fprintf(stdout, "promote to app host when ready: mymo node promote %s\n", node.Name)
+	}
 	return exitOK
 }
 

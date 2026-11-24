@@ -60,6 +60,7 @@ type addNodeState struct {
 	vals         *addNodeValues
 	node         domain.Node
 	firstContact bool
+	editing      bool
 	err          string
 }
 
@@ -157,7 +158,11 @@ func (m Model) updateAddForm(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m.addNode.form.State {
 	case huh.StateCompleted:
 		if m.addNode.stage == anForm {
-			m.completeAddForm()
+			if m.addNode.editing {
+				m.completeEditForm()
+			} else {
+				m.completeAddForm()
+			}
 		}
 	case huh.StateAborted:
 		m.pop()

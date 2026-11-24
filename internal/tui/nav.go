@@ -19,6 +19,7 @@ const (
 	scDeploy                            // deploy workflow entry point
 	scSettings                          // settings and about
 	scAddNode                           // add-node workflow (overlay)
+	scEditNode                          // edit how mymo reaches a node
 )
 
 // screen is one entry of the navigation stack.
@@ -42,7 +43,8 @@ func (m *Model) pop() {
 	if len(m.stack) <= 1 {
 		return
 	}
-	if m.stack[len(m.stack)-1].kind == scAddNode {
+	top := m.stack[len(m.stack)-1].kind
+	if top == scAddNode || top == scEditNode {
 		m.addNode = addNodeState{}
 	}
 	m.stack = m.stack[:len(m.stack)-1]
@@ -86,6 +88,8 @@ func (m *Model) crumbs() []string {
 			parts = append(parts, "settings")
 		case scAddNode:
 			parts = append(parts, "add node")
+		case scEditNode:
+			parts = append(parts, "edit")
 		}
 	}
 	return parts

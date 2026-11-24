@@ -77,6 +77,24 @@ func ParseBaselineMarker(raw string) (BaselineRecord, bool) {
 	return rec, rec.Baseline != "" && rec.AppliedAt != ""
 }
 
+// BaselineBehind reports the baseline a node is recorded at when that
+// is not the baseline this mymo pins. The marker is the box's own
+// word; recorded is the local bootstrap field, used only when no
+// marker has been collected yet. A marker that matches the pin wins
+// even if the local field is stale.
+func BaselineBehind(marker, recorded string) (from string, behind bool) {
+	if rec, ok := ParseBaselineMarker(marker); ok {
+		if rec.Baseline != baseline.Version {
+			return rec.Baseline, true
+		}
+		return "", false
+	}
+	if recorded != "" && recorded != baseline.Version {
+		return recorded, true
+	}
+	return "", false
+}
+
 // Probe runs the discovery command set over r and returns the parsed
 // snapshot. A transport failure aborts the probe with the transport's
 // structured error; commands that are merely absent (nonzero exit)

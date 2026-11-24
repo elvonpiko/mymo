@@ -120,6 +120,21 @@ func (m Model) handleCheckDone(msg checkDoneMsg) (tea.Model, tea.Cmd) {
 	}
 	m.reloadFleet()
 
+	// a fleet check records this probe and starts the next node.
+	// one SSH at a time: the queue does not dial ahead.
+	if m.sweeping && msg.seq == m.checkSeq {
+		closeClient()
+		if msg.err != nil {
+			m.sweepFail++
+		} else {
+			m.sweepOK++
+		}
+		if m.sweepStop || len(m.sweepRest) == 0 {
+			return m, m.finishSweep()
+		}
+		return m, m.probeNext(m.sweepRest)
+	}
+
 	onPage := m.cur().kind == scNode && m.cur().node == msg.node && !m.loading.active
 	if !onPage {
 		closeClient()
@@ -152,6 +167,79 @@ func (m Model) handleCheckDone(msg checkDoneMsg) (tea.Model, tea.Cmd) {
 	return m, m.sampleLive(m.liveSeq)
 }
 
+// startSweep probes every node, in fleet order, one connection at a
+// time. The row being probed says "checking"; the others keep the
+// health they already had until their turn.
+func (m *Model) startSweep() tea.Cmd {
+	names := make([]string, 0, len(m.nodes))
+	for _, n := range m.nodes {
+		names = append(names, n.Name)
+	}
+	m.sweeping = true
+	m.sweepStop = false
+	m.sweepOK = 0
+	m.sweepFail = 0
+	return m.probeNext(names)
+}
+
+// probeNext dials the head of the queue and remembers the tail.
+func (m *Model) probeNext(names []string) tea.Cmd {
+	if len(names) == 0 {
+		return m.finishSweep()
+	}
+	var node domain.Node
+	found := false
+	for _, n := range m.nodes {
+		if n.Name == names[0] {
+			node = n
+			found = true
+			break
+		}
+	}
+	m.sweepRest = append([]string(nil), names[1:]...)
+	if !found {
+		m.sweepFail++
+		if len(m.sweepRest) == 0 {
+			return m.finishSweep()
+		}
+		return m.probeNext(m.sweepRest)
+	}
+	m.fleetSetChecking(node.Name)
+	m.checkSeq++
+	return m.beginCheck(node, m.checkSeq)
+}
+
+// finishSweep ends the walk and says what the probes recorded.
+func (m *Model) finishSweep() tea.Cmd {
+	ok, failed, stopped := m.sweepOK, m.sweepFail, m.sweepStop
+	m.sweeping = false
+	m.sweepStop = false
+	m.sweepRest = nil
+	m.fleetSetChecking("")
+	text := fmt.Sprintf("checked %d", ok+failed)
+	kind := toastOK
+	if failed > 0 {
+		text += fmt.Sprintf(" · %d failed", failed)
+		kind = toastWarn
+	}
+	if stopped {
+		text += " · stopped"
+	}
+	return m.notify(text, kind)
+}
+
+// abandonSweep drops a fleet check because the user left the page.
+// The probe already dialing still records; nothing further starts.
+func (m *Model) abandonSweep() {
+	if !m.sweeping {
+		return
+	}
+	m.sweeping = false
+	m.sweepStop = false
+	m.sweepRest = nil
+	m.fleetSetChecking("")
+}
+
 // pfDoneMsg reports the app-host preflight for the node the audit
 // was started for: a fresh snapshot plus the deep read-only scan, or
 // why the audit could not complete.
@@ -172,10 +260,16 @@ func (m Model) runPreflight() (tea.Model, tea.Cmd) {
 	}
 	n := m.selNode
 	m.push(screen{kind: scNodePreflight, node: n.Name})
+	line := "auditing " + n.Name + " over SSH"
+	detail := "preflight is read-only · nothing is modified"
+	if m.upgradeFlow {
+		line = "auditing " + n.Name + " for an upgrade"
+		detail = "baseline " + baseline.Version + " · read-only · nothing is modified"
+	}
 	m.loading = loadingState{
 		active: true,
-		line:   "auditing " + n.Name + " over SSH",
-		detail: "preflight is read-only · nothing is modified",
+		line:   line,
+		detail: detail,
 		start:  time.Now(),
 	}
 	m.layout()
@@ -309,7 +403,7 @@ func (m Model) runPlan() (tea.Model, tea.Cmd) {
 	if m.pfVerdict == preflight.Decide && !m.pfDecided {
 		return m, m.notify("decisions are yours: fix the box, or press d to proceed", toastWarn)
 	}
-	if m.pfVerdict != preflight.Pass && m.pfVerdict != preflight.Adopt && m.pfVerdict != preflight.Decide {
+	if m.pfVerdict != preflight.Pass && m.pfVerdict != preflight.Adopt && m.pfVerdict != preflight.Upgrade && m.pfVerdict != preflight.Decide {
 		return m, m.notify("resolve the decisions above, then plan", toastWarn)
 	}
 	n := m.selNode

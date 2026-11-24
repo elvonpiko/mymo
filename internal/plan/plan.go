@@ -143,7 +143,35 @@ func Generate(ctx context.Context, r preflight.Runner, n domain.Node, f facts.No
 		caddyStep(f, a),
 		stateStep(),
 	}
+	// an upgrade does not trust the previous baseline's convergence
+	// checks: a check that only proves "the file exists" would skip
+	// the new baseline's bytes. Steps that write files reconcile
+	// them; writeFile still keeps a file whose bytes already match.
+	if from, ok := upgradeFrom(a); ok {
+		for i := range steps {
+			if len(steps[i].Files) > 0 {
+				steps[i].Check = nil
+			}
+			if steps[i].Control == "state-dir" {
+				steps[i].Detail = "upgrade baseline " + from + " → " + baseline.Version + " — rewrite the marker"
+			}
+		}
+	}
 	return steps, nil
+}
+
+// upgradeFrom reports the recorded baseline when the audit shows
+// mymo's own older marker. A marker without mymo's sudoers rule is
+// someone else's state and stays a decision, not an upgrade.
+func upgradeFrom(a preflight.Audit) (string, bool) {
+	rec, ok := facts.ParseBaselineMarker(a.MymoMarker)
+	if !ok || rec.Baseline == baseline.Version {
+		return "", false
+	}
+	if a.MymoSudoers != baseline.MymoSudoersRule {
+		return "", false
+	}
+	return rec.Baseline, true
 }
 
 // captureDistro reads the distribution id and codename the official
@@ -424,7 +452,14 @@ const caddyCloudsmithAside = "rm -f /etc/apt/sources.list.d/caddy-stable.list.pr
 // box with 402 Payment Required. A version pinned by digest is
 // deterministic; a rolling repo is not.
 func caddyStep(f facts.Node, a preflight.Audit) Step {
-	if caddyAdoptable(f, a) {
+	// a baseline upgrade that pins a different caddy reinstalls it.
+	// adopting the binary that is already there would leave the old
+	// release in place and call the upgrade done.
+	repin := false
+	if _, upgrading := upgradeFrom(a); upgrading && f.Caddy != "" && !strings.Contains(f.Caddy, baseline.CaddyVersion) {
+		repin = true
+	}
+	if caddyAdoptable(f, a) && !repin {
 		return Step{
 			Control: "caddy",
 			Title:   "caddy \u2014 adopt",
@@ -479,7 +514,7 @@ func caddyStep(f facts.Node, a preflight.Audit) Step {
 			{"apt-get", "update"},
 			{"apt-get", "install", "-y", "ca-certificates", "curl", "tar"},
 			{"sh", "-c", "getent group caddy >/dev/null || groupadd --system caddy"},
-			{"useradd", "--system", "--gid", "caddy", "--create-home", "--home-dir", "/var/lib/caddy", "--shell", "/usr/sbin/nologin", "--comment", "Caddy web server", "caddy"},
+			{"sh", "-c", "id caddy >/dev/null 2>&1 || useradd --system --gid caddy --create-home --home-dir /var/lib/caddy --shell /usr/sbin/nologin --comment 'Caddy web server' caddy"},
 			{"curl", "-fsSL", url, "-o", "/tmp/caddy.tar.gz"},
 			{"sh", "-c", "echo '" + asset.SHA512 + "  /tmp/caddy.tar.gz' | sha512sum -c -"},
 			{"sh", "-c", "tar -xzf /tmp/caddy.tar.gz -C /tmp caddy && install -m 0755 /tmp/caddy /usr/bin/caddy && rm -f /tmp/caddy /tmp/caddy.tar.gz"},

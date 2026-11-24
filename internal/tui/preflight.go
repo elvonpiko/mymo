@@ -16,7 +16,7 @@ import (
 // j/k — the verdict and the way forward are pinned, because a page
 // that clips its own conclusion is a page that lies.
 func (m Model) preflightView() string {
-	head := titleStyle.Render("Initial setup") + " " +
+	head := titleStyle.Render(m.setupWord()) + " " +
 		faintStyle.Render("\u00b7 the check \u00b7 baseline "+baseline.Version) + "\n\n"
 
 	rows, rowCount := m.pfRowsText()
@@ -27,6 +27,8 @@ func (m Model) preflightView() string {
 	// is for plain text, and the verdict carries its color
 	tail := "\n" + pfVerdictLine(m.pfVerdict) + "\n"
 	switch m.pfVerdict {
+	case preflight.Upgrade:
+		tail += "\n" + faintStyle.Render("read-only — the plan is the delta \u00b7 nothing runs until the name is typed \u00b7 enter to see it")
 	case preflight.Pass, preflight.Adopt:
 		tail += "\n" + faintStyle.Render("read-only — nothing on the box changes \u00b7 enter to see the plan")
 	case preflight.Decide:
@@ -104,7 +106,7 @@ func (m Model) pfRowsText() (string, int) {
 
 // pfWindowRows is how many lines the findings may occupy.
 func (m Model) pfWindowRows() int {
-	head := titleStyle.Render("Initial setup") + " " +
+	head := titleStyle.Render(m.setupWord()) + " " +
 		faintStyle.Render("\u00b7 the check \u00b7 baseline "+baseline.Version) + "\n\n"
 	window := m.contentHeight - 2 - lipgloss.Height(head) - 2 - 2
 	if window < 1 {
@@ -144,6 +146,8 @@ func (m Model) pfRow(c preflight.Check, detailW int) string {
 		glyph, g = "\u2713", okStyle
 	case preflight.Adopt:
 		glyph, g = "\u2713", adoptStyle
+	case preflight.Upgrade:
+		glyph, g = "\u2191", warnStyle
 	case preflight.Decide:
 		glyph, g = "!", warnStyle
 	default:
@@ -184,6 +188,8 @@ func pfVerdictLine(v preflight.Outcome) string {
 	switch v {
 	case preflight.Adopt:
 		style, word = adoptStyle, "mymo recognizes its own work here — the plan keeps what exists"
+	case preflight.Upgrade:
+		style, word = warnStyle, "recorded baseline is behind the one mymo pins — the plan is the delta"
 	case preflight.Decide:
 		style, word = warnStyle, "a few findings stand between this box and the plan — each names its fix"
 	case preflight.Abort:
@@ -204,6 +210,15 @@ func (m Model) wizardPanelFit(inner string) string {
 	}
 	return lipgloss.Place(m.contentWidth, m.contentHeight,
 		lipgloss.Center, lipgloss.Center, panel)
+}
+
+// setupWord is the wizard's name: an upgrade of a prepared node,
+// or the first preparation of a box that is not one yet.
+func (m Model) setupWord() string {
+	if m.upgradeFlow || m.pfVerdict == preflight.Upgrade {
+		return "Upgrade"
+	}
+	return "Initial setup"
 }
 
 // wrapPlain wraps plain text at word boundaries to width w.

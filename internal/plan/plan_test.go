@@ -677,3 +677,44 @@ func TestSecurityUpdatesConvergeOnTheSwitch(t *testing.T) {
 	}
 	t.Fatal("no unattended-upgrades step in the plan")
 }
+
+// An older recorded baseline is an upgrade: file-writing steps drop
+// the previous baseline's convergence check so the new bytes land,
+// and a caddy whose version is not the pin is reinstalled rather
+// than adopted.
+func TestGenerateUpgradeRepinsFilesAndCaddy(t *testing.T) {
+	audit := cleanAudit()
+	audit.MymoUserUsed = true
+	audit.MymoDirUsed = true
+	audit.MymoSudoers = baseline.MymoSudoersRule
+	audit.MymoMarker = `{"baseline": "0.0", "appliedAt": "2025-01-01T00:00:00Z"}`
+	snap := cleanSnapshot()
+	snap.Caddy = "v0.0.1 h1:old"
+	steps, err := Generate(context.Background(), ubuntuRunner(), cleanNode(), snap, audit, false)
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	for _, s := range steps {
+		if len(s.Files) > 0 && len(s.Check) > 0 {
+			t.Errorf("upgrade step %s kept a convergence check over files it must rewrite: %v", s.Control, s.Check)
+		}
+		if s.Control == "state-dir" && !strings.Contains(s.Detail, "0.0") {
+			t.Errorf("state step detail = %q, want the recorded baseline", s.Detail)
+		}
+		if s.Control == "caddy" {
+			if s.Title == "caddy — adopt" {
+				t.Fatal("an old caddy was adopted instead of repinned")
+			}
+			joined := ""
+			for _, argv := range s.Exec {
+				joined += strings.Join(argv, " ") + "\n"
+			}
+			if !strings.Contains(joined, baseline.CaddyVersion) {
+				t.Errorf("caddy upgrade does not fetch %s:\n%s", baseline.CaddyVersion, joined)
+			}
+			if !strings.Contains(joined, "id caddy") {
+				t.Errorf("caddy useradd must stay idempotent on a box that already has the user:\n%s", joined)
+			}
+		}
+	}
+}

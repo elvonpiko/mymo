@@ -387,11 +387,11 @@ func TestEvaluateMymoStateFingerprint(t *testing.T) {
 			want: Adopt, detail: "apply resumes where it stopped",
 		},
 		{
-			name: "a different recorded baseline decides",
+			name: "a different recorded baseline is an upgrade",
 			s: Audit{UID: 0, Firewall: "absent", Listeners: map[int]string{},
 				MymoUserUsed: true, MymoDirUsed: true,
 				MymoSudoers: baseline.MymoSudoersRule, MymoMarker: marker("0.0")},
-			want: Decide, detail: "upgrades are explicit",
+			want: Upgrade, detail: "supersedes it",
 		},
 		{
 			name: "a marker without mymo's rule decides",

@@ -74,6 +74,7 @@ type fleetKeymap struct {
 	quit     key.Binding
 	apps     key.Binding
 	deploy   key.Binding
+	check    key.Binding
 }
 
 func newFleetKeymap() fleetKeymap {
@@ -89,18 +90,35 @@ func newFleetKeymap() fleetKeymap {
 		quit:     key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
 		apps:     key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "apps")),
 		deploy:   key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "deploy")),
+		check:    key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "check")),
 	}
 }
+
+// sweepKeymap is the fleet's while a check is walking the nodes:
+// esc stops the rest, and the probe already dialing still records.
+type sweepKeymap struct {
+	cancel key.Binding
+}
+
+func newSweepKeymap() sweepKeymap {
+	return sweepKeymap{
+		cancel: key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "stop")),
+	}
+}
+
+func (k sweepKeymap) ShortHelp() []key.Binding { return []key.Binding{k.cancel} }
+
+func (k sweepKeymap) FullHelp() [][]key.Binding { return [][]key.Binding{{k.cancel}} }
 
 // ShortHelp keeps only the page's distinctive keys; arrows are
 // universal list knowledge and the rest waits behind ?.
 func (k fleetKeymap) ShortHelp() []key.Binding {
-	return []key.Binding{k.open, k.add, k.remove, k.apps, k.help, k.quit}
+	return []key.Binding{k.open, k.check, k.add, k.remove, k.apps, k.help, k.quit}
 }
 
 func (k fleetKeymap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.navigate, k.open, k.filter, k.back},
+		{k.navigate, k.open, k.check, k.filter, k.back},
 		{k.add, k.apps, k.deploy, k.settings},
 		{k.help, k.quit},
 	}
@@ -210,8 +228,10 @@ type nodeKeymap struct {
 	navigate key.Binding
 	ssh      key.Binding
 	setup    key.Binding
+	upgrade  key.Binding
 	apps     key.Binding
 	inspect  key.Binding
+	edit     key.Binding
 	remove   key.Binding
 	back     key.Binding
 	help     key.Binding
@@ -223,8 +243,10 @@ func newNodeKeymap() nodeKeymap {
 		navigate: key.NewBinding(key.WithKeys("up", "down"), key.WithHelp("↑↓", "navigate")),
 		ssh:      key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "ssh")),
 		setup:    key.NewBinding(key.WithKeys("I"), key.WithHelp("I", "setup")),
+		upgrade:  key.NewBinding(key.WithKeys("U"), key.WithHelp("U", "upgrade")),
 		apps:     key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "apps")),
 		inspect:  key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "record")),
+		edit:     key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit")),
 		remove:   key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "remove")),
 		back:     key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "home")),
 		help:     key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
@@ -235,12 +257,12 @@ func newNodeKeymap() nodeKeymap {
 // ShortHelp keeps only the page's distinctive keys; everything else
 // waits behind ?.
 func (k nodeKeymap) ShortHelp() []key.Binding {
-	return []key.Binding{k.setup, k.ssh, k.apps, k.inspect, k.remove, k.help, k.quit}
+	return []key.Binding{k.setup, k.upgrade, k.ssh, k.edit, k.apps, k.inspect, k.remove, k.help, k.quit}
 }
 
 func (k nodeKeymap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.navigate, k.ssh, k.setup, k.apps, k.inspect, k.remove},
+		{k.navigate, k.ssh, k.setup, k.upgrade, k.edit, k.apps, k.inspect, k.remove},
 		{k.back},
 		{k.help, k.quit},
 	}
@@ -419,6 +441,32 @@ func (k deployReportKeymap) ShortHelp() []key.Binding {
 
 func (k deployReportKeymap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{{k.open}}
+}
+
+// settingsKeymap is the about page: back, and the intro replay the
+// page itself offers.
+type settingsKeymap struct {
+	replay key.Binding
+	back   key.Binding
+	help   key.Binding
+	quit   key.Binding
+}
+
+func newSettingsKeymap() settingsKeymap {
+	return settingsKeymap{
+		replay: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "intro")),
+		back:   key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
+		help:   key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
+		quit:   key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
+	}
+}
+
+func (k settingsKeymap) ShortHelp() []key.Binding {
+	return []key.Binding{k.replay, k.back, k.help, k.quit}
+}
+
+func (k settingsKeymap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{{k.replay, k.back}, {k.help, k.quit}}
 }
 
 func newSimpleKeymap() simpleKeymap {

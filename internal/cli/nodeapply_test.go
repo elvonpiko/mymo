@@ -73,6 +73,45 @@ func TestNodeApplyRefusesAReadyNode(t *testing.T) {
 	}
 }
 
+func TestNodeApplyOpensAnUpgradeForAnOlderBaseline(t *testing.T) {
+	s := newSession(t)
+	seededNode(t, s, "web-1", domain.Bootstrap{
+		State: domain.BootstrapReady, Baseline: "0.0", At: time.Now(),
+	})
+	// the upgrade dials; point it at a closed port so the refusal
+	// is the connection, not a hang on a black-holed address
+	store, err := state.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := store.GetNode("web-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	n.Host = "127.0.0.1"
+	n.Port = 1
+	if err := store.UpdateNode(n); err != nil {
+		t.Fatal(err)
+	}
+	code, _, errb := s.run(t, "node", "apply", "web-1")
+	if code != exitErr {
+		t.Fatalf("code=%d, want %d", code, exitErr)
+	}
+	if strings.Contains(errb, "already prepared") {
+		t.Fatalf("an older baseline was refused as already prepared:\n%s", errb)
+	}
+	if !strings.Contains(errb, "upgrading web-1 from baseline 0.0 to "+baseline.Version) {
+		t.Errorf("err = %q, want the upgrade line", errb)
+	}
+	got, err := store.GetNode("web-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Bootstrap.State != domain.BootstrapReady || got.Bootstrap.Baseline != "0.0" {
+		t.Errorf("a failed dial changed the record: %+v", got.Bootstrap)
+	}
+}
+
 func TestNodePromoteRequiresReady(t *testing.T) {
 	s := newSession(t)
 	seededNode(t, s, "web-1", domain.Bootstrap{})

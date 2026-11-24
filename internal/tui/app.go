@@ -89,6 +89,10 @@ type Model struct {
 	pfChecks  []preflight.Check
 	pfVerdict preflight.Outcome
 	pfDecided bool
+	// upgradeFlow is set when the open audit is an upgrade of a
+	// node that is already prepared, so the pages say Upgrade
+	// rather than Initial setup
+	upgradeFlow bool
 	// pfScroll walks the check rows when the card cannot hold them
 	// all at once: the rows move, the verdict and the way forward
 	// stay pinned
@@ -158,6 +162,16 @@ type Model struct {
 	auditBusy bool
 
 	addNode addNodeState
+
+	// a fleet check walks the nodes one SSH at a time. sweepRest is
+	// what has not started yet; the name in flight is the row marked
+	// checking. esc drops the rest, and the probe already dialing
+	// still records when it lands.
+	sweeping  bool
+	sweepStop bool
+	sweepRest []string
+	sweepOK   int
+	sweepFail int
 
 	descShown int  // letters of the description revealed so far
 	descAnim  bool // whether the typewriter is running
@@ -456,7 +470,11 @@ func (m Model) inputActive() bool {
 }
 
 func (m Model) formActive() bool {
-	return m.cur().kind == scAddNode && m.addNode.stage == anForm && m.addNode.form != nil
+	if m.addNode.stage != anForm || m.addNode.form == nil {
+		return false
+	}
+	k := m.cur().kind
+	return k == scAddNode || k == scEditNode
 }
 
 // updateKeys routes workspace key presses.
@@ -502,6 +520,7 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// left behind mid-act (esc and q still serve there)
 	if str == "h" && !m.loading.active && m.introDone && m.cur().kind != scHome {
 		m.stopLive()
+		m.abandonSweep()
 		m.confirmRemove = false
 		m.stack = []screen{{kind: scHome}}
 		return m, nil
@@ -641,6 +660,11 @@ func (m Model) updateScreenKeys(msg tea.KeyPressMsg, str string) (tea.Model, tea
 			return m.updateInstalling(str)
 		}
 		return m.updateAddReview(str)
+	case scEditNode:
+		if m.addNode.stage == anForm {
+			return m, nil
+		}
+		return m.updateEditReview(str)
 	case scApps, scNodeApps:
 		return m.updateAppsKeys(s, str)
 	case scAppDetail:
@@ -651,6 +675,14 @@ func (m Model) updateScreenKeys(msg tea.KeyPressMsg, str string) (tea.Model, tea
 		return m.updateAppRollbackKeys(s, str)
 	case scDeploy:
 		return m.updateDeployKeys(str)
+	case scSettings:
+		if str == "r" {
+			m.introDone = false
+			m.introStep = 0
+			m.introErr = ""
+			return m, m.nextIntroTick()
+		}
+		return m.updateSimpleKeys(s.kind, str)
 	default:
 		return m.updateSimpleKeys(s.kind, str)
 	}
@@ -749,23 +781,39 @@ func (m Model) updateFleetKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "q":
 		return m, tea.Quit
 	case "esc":
+		if m.sweeping && !m.sweepStop {
+			m.sweepStop = true
+			m.sweepRest = nil
+			return m, nil
+		}
+		m.abandonSweep()
 		m.pop()
 		return m, nil
+	case "c":
+		if m.sweeping || m.fleetEmpty() {
+			return m, nil
+		}
+		return m, m.startSweep()
 	case "N":
+		m.abandonSweep()
 		return m.addNodeScreen()
 	case "a":
+		m.abandonSweep()
 		m.reloadApps()
 		m.appCursor = 0
 		m.push(screen{kind: scApps})
 		return m, nil
 	case "d":
+		m.abandonSweep()
 		m.openDeploy()
 		return m, nil
 	case "s":
+		m.abandonSweep()
 		m.push(screen{kind: scSettings})
 		return m, nil
 	case "enter":
 		if item, ok := m.fleet.SelectedItem().(fleetItem); ok {
+			m.abandonSweep()
 			cmd := m.openNode(item.node)
 			return m, cmd
 		}
@@ -774,6 +822,7 @@ func (m Model) updateFleetKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// the same removal gate every page offers under the same
 		// key: y forgets the box, esc keeps it
 		if item, ok := m.fleet.SelectedItem().(fleetItem); ok {
+			m.abandonSweep()
 			m.selNode = item.node
 			m.confirmRemove = true
 		}
@@ -809,6 +858,13 @@ func (m Model) updateNodeKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// the key exists exactly when the action does: a managed
 		// node has no setup to offer and no I to press
 		if !nodeIsManaged(m.selNode) {
+			m.upgradeFlow = false
+			return m.runPreflight()
+		}
+		return m, nil
+	case "U":
+		if _, ok := upgradeFrom(m.selNode); ok {
+			m.upgradeFlow = true
 			return m.runPreflight()
 		}
 		return m, nil
@@ -821,6 +877,8 @@ func (m Model) updateNodeKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.push(screen{kind: scNodeApps, node: m.selNode.Name})
 		}
 		return m, nil
+	case "e":
+		return m.startEditNode()
 	case "i":
 		return m.runAction(actionItem{id: actInspect})
 	case "x":
@@ -902,9 +960,16 @@ func (m Model) runAction(a actionItem) (tea.Model, tea.Cmd) {
 		m.push(screen{kind: scNodeApps, node: m.selNode.Name})
 	case actInspect:
 		m.push(screen{kind: scNodeInspect, node: m.selNode.Name})
+	case actEdit:
+		next, cmd := m.startEditNode()
+		return next, cmd
 	case actRemove:
 		m.confirmRemove = true
 	case actSetup:
+		m.upgradeFlow = false
+		return m.runPreflight()
+	case actUpgrade:
+		m.upgradeFlow = true
 		return m.runPreflight()
 	}
 	return m, nil
@@ -1115,6 +1180,8 @@ func (m Model) workspaceView() string {
 			content = m.settingsView()
 		case scAddNode:
 			content = m.addView()
+		case scEditNode:
+			content = m.editView()
 		}
 	}
 	return m.frame(content, m.footerRow())
@@ -1274,18 +1341,22 @@ func (m Model) keymap() help.KeyMap {
 		if m.confirmRemove {
 			return newConfirmKeymap()
 		}
+		if m.sweeping && !m.sweepStop {
+			return newSweepKeymap()
+		}
 		if m.loadErr != nil {
 			return newSimpleKeymap()
 		}
 		km := newFleetKeymap()
 		if m.fleetEmpty() {
 			// keys exist exactly when actions do: with no rows
-			// there is nothing to open, remove, or filter — the
-			// footer says only what works
+			// there is nothing to open, remove, filter, or check —
+			// the footer says only what works
 			km.open.SetEnabled(false)
 			km.remove.SetEnabled(false)
 			km.filter.SetEnabled(false)
 			km.navigate.SetEnabled(false)
+			km.check.SetEnabled(false)
 		}
 		return km
 	case scNode:
@@ -1300,6 +1371,8 @@ func (m Model) keymap() help.KeyMap {
 		}
 		km := newNodeKeymap()
 		km.setup.SetEnabled(!nodeIsManaged(m.selNode))
+		_, upgrading := upgradeFrom(m.selNode)
+		km.upgrade.SetEnabled(upgrading)
 		// applications are a mymo-node's verb: the key exists
 		// exactly when the action does
 		km.apps.SetEnabled(nodeIsManaged(m.selNode))
@@ -1312,7 +1385,7 @@ func (m Model) keymap() help.KeyMap {
 		// enter is only honest advice when the verdict allows it; a
 		// blocked audit drops the key from the footer, not from the
 		// screen
-		km.plan.SetEnabled(m.pfVerdict == preflight.Pass || m.pfVerdict == preflight.Adopt)
+		km.plan.SetEnabled(m.pfVerdict == preflight.Pass || m.pfVerdict == preflight.Adopt || m.pfVerdict == preflight.Upgrade)
 		// the decision key exists exactly when the verdict leaves
 		// one to take
 		km.decide.SetEnabled(m.pfVerdict == preflight.Decide)
@@ -1335,6 +1408,11 @@ func (m Model) keymap() help.KeyMap {
 			return newLoadingKeymap()
 		}
 		return newAddReviewKeymap()
+	case scEditNode:
+		if m.addNode.stage == anForm {
+			return newFormKeymap()
+		}
+		return newAddReviewKeymap()
 	case scApps, scNodeApps:
 		return newAppsKeymap()
 	case scAppDetail:
@@ -1355,6 +1433,8 @@ func (m Model) keymap() help.KeyMap {
 		return newAppRollbackKeymap()
 	case scDeploy:
 		return m.deployKeymap()
+	case scSettings:
+		return newSettingsKeymap()
 	default:
 		return newSimpleKeymap()
 	}
@@ -1401,6 +1481,7 @@ func (m Model) helpVerbRows() []string {
 		add("d", "Deploy", "build, ship, and verify a release", "plain")
 		add("/", "Filter", "find a box by name", "plain")
 		add("enter", "Open", "observe the highlighted box", "plain")
+		add("c", "Check", "probe every node, one SSH at a time", "plain")
 	case scNode:
 		for _, a := range actionDefs(m.selNode) {
 			add(a.key, a.title, a.desc, a.tone)

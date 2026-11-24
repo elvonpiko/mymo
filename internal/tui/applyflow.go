@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"time"
@@ -105,8 +106,21 @@ func (m Model) runApply() (tea.Model, tea.Cmd) {
 		m.pauseLive()
 	}
 	m.auditBusy = true
-	m.advanceBootstrap(n.Name, domain.BootstrapConfirmed, "confirmed")
-	m.advanceBootstrap(n.Name, domain.BootstrapApplying, "applying")
+	// the record has to move before the box does. a failed write
+	// stops the run: the engine must not change a server whose
+	// lifecycle mymo could not record.
+	if err := m.advanceBootstrap(n.Name, domain.BootstrapConfirmed, "confirmed"); err != nil {
+		m.auditBusy = false
+		m.loading = loadingState{}
+		m.pop()
+		return m, m.notify("could not record the confirmation: "+err.Error(), toastErr)
+	}
+	if err := m.advanceBootstrap(n.Name, domain.BootstrapApplying, "applying"); err != nil {
+		m.auditBusy = false
+		m.loading = loadingState{}
+		m.pop()
+		return m, m.notify("could not record the apply: "+err.Error(), toastErr)
+	}
 
 	name := n.Name
 	steps := m.planSteps
@@ -201,11 +215,14 @@ func (m Model) handleApplyDone(msg applyDoneMsg) (tea.Model, tea.Cmd) {
 		m.auditBusy = false
 		m.loading = loadingState{}
 		m.layout()
-		m.reopenBootstrap(msg.node, "apply stopped at "+msg.res.FailedAt+" — preflight again to resume")
+		note := "the apply stopped — the report says where"
 		if m.cur().kind != scNodeApplyReport {
-			return m, m.notify("the apply stopped at "+msg.res.FailedAt+" — walk back to see why", toastErr)
+			note = "the apply stopped at " + msg.res.FailedAt + " — walk back to see why"
 		}
-		return m, m.notify("the apply stopped — the report says where", toastErr)
+		if err := m.reopenBootstrap(msg.node, "apply stopped at "+msg.res.FailedAt+" — preflight again to resume"); err != nil {
+			note = "the apply stopped, and the record could not be updated: " + err.Error()
+		}
+		return m, m.notify(note, toastErr)
 	}
 
 	// success: verify the effective state over the same connection
@@ -287,11 +304,18 @@ func (m Model) handleVerifyDone(msg verifyDoneMsg) (tea.Model, tea.Cmd) {
 	// would start the story in its middle
 	m.arScroll = 0
 	if !msg.ok {
-		m.reopenBootstrap(msg.node, "verify failed — preflight again to resume")
-		return m, m.notify("the baseline ran but did not verify — mymo will not call this node ready", toastErr)
+		note := "the baseline ran but did not verify — mymo will not call this node ready"
+		if err := m.reopenBootstrap(msg.node, "verify failed — preflight again to resume"); err != nil {
+			note = "verify failed, and the record could not be updated: " + err.Error()
+		}
+		return m, m.notify(note, toastErr)
 	}
-	m.adoptMymoAccess(msg.node)
-	m.advanceBootstrap(msg.node, domain.BootstrapReady, "ready")
+	if err := m.adoptMymoAccess(msg.node); err != nil {
+		return m, m.notify("verified on the box, but the access record could not be saved: "+err.Error(), toastErr)
+	}
+	if err := m.advanceBootstrap(msg.node, domain.BootstrapReady, "ready"); err != nil {
+		return m, m.notify("verified on the box, but the baseline record could not be saved: "+err.Error(), toastErr)
+	}
 	return m, m.notify("mymo security baseline applied and verified", toastOK)
 }
 
@@ -302,87 +326,97 @@ func (m Model) handleVerifyDone(msg verifyDoneMsg) (tea.Model, tea.Cmd) {
 // naming it knocks as a stranger on the very next visit. Only a
 // verified success adopts: a failed or unverified run keeps the
 // original access, because that is the door still standing.
-func (m *Model) adoptMymoAccess(name string) {
+func (m *Model) adoptMymoAccess(name string) error {
 	if m.store == nil {
-		return
+		return errors.New("state store unavailable")
 	}
 	n, err := m.store.GetNode(name)
 	if err != nil {
-		return
+		return err
 	}
 	n.User = baseline.MymoUser
 	n.Auth = domain.AuthKey
 	n.KeyPath = mymoTUIKeyPath(m.store, name)
 	n.Facts.User = baseline.MymoUser
-	_ = m.store.UpdateNode(n)
+	return m.store.UpdateNode(n)
 }
 
 // advanceBootstrap moves the node's lifecycle record forward — never
 // backward — and refreshes what the fleet knows.
-func (m *Model) advanceBootstrap(name string, to domain.BootstrapState, verdict string) {
+func (m *Model) advanceBootstrap(name string, to domain.BootstrapState, verdict string) error {
 	if m.store == nil {
-		return
+		return errors.New("state store unavailable")
 	}
 	n, err := m.store.GetNode(name)
 	if err != nil {
-		return
+		return err
 	}
 	if domain.BootstrapRank(to) < domain.BootstrapRank(n.Bootstrap.State) {
-		return
+		return nil
 	}
 	n.Bootstrap = domain.Bootstrap{State: to, Baseline: baseline.Version, Verdict: verdict, At: time.Now()}
 	if err := m.store.UpdateNode(n); err != nil {
-		return
+		return err
 	}
 	m.reloadFleet()
 	if m.selNode.Name == name {
 		m.selNode = n
 	}
+	return nil
 }
 
-// reopenBootstrap rolls a failed run back to the start of the flow.
-// The lifecycle never steps back on success; failure is the one
-// honest exception: an apply that stopped must be re-audited, because
-// the box is whatever it is now — and preflight, not the plan, is
-// what reads it. Without this, a failed apply would strand the
-// record at "applying" with no way back in.
-func (m *Model) reopenBootstrap(name, verdict string) {
+// reopenBootstrap rolls a failed first setup back to the start of
+// the flow. The lifecycle never steps back on success; failure of
+// a first setup is the one honest exception: an apply that stopped
+// must be re-audited, because the box is whatever it is now — and
+// preflight, not the plan, is what reads it. Without this, a failed
+// apply would strand the record at "applying" with no way back in.
+// A node that was already prepared stays prepared: an upgrade that
+// stops does not un-make the app host.
+func (m *Model) reopenBootstrap(name, verdict string) error {
 	if m.store == nil {
-		return
+		return errors.New("state store unavailable")
 	}
 	n, err := m.store.GetNode(name)
 	if err != nil {
-		return
+		return err
 	}
-	n.Bootstrap = domain.Bootstrap{State: domain.BootstrapPreflight, Verdict: verdict, At: time.Now()}
+	if nodeIsManaged(n) {
+		n.Bootstrap.Verdict = verdict
+		n.Bootstrap.At = time.Now()
+	} else {
+		n.Bootstrap = domain.Bootstrap{State: domain.BootstrapPreflight, Verdict: verdict, At: time.Now()}
+	}
 	if err := m.store.UpdateNode(n); err != nil {
-		return
+		return err
 	}
 	m.reloadFleet()
 	if m.selNode.Name == name {
 		m.selNode = n
 	}
+	return nil
 }
 
 // setBootstrapVerdict records what happened without moving the
 // state.
-func (m *Model) setBootstrapVerdict(name, verdict string) {
+func (m *Model) setBootstrapVerdict(name, verdict string) error {
 	if m.store == nil {
-		return
+		return errors.New("state store unavailable")
 	}
 	n, err := m.store.GetNode(name)
 	if err != nil {
-		return
+		return err
 	}
 	n.Bootstrap.Verdict = verdict
 	n.Bootstrap.At = time.Now()
 	if err := m.store.UpdateNode(n); err != nil {
-		return
+		return err
 	}
 	m.reloadFleet()
 	if m.selNode.Name == name {
 		m.selNode = n
 	}
+	return nil
 }
 
 // mymoTUIKeyPath is the mymo key pair's home for one node.
@@ -438,15 +472,30 @@ func (m Model) arTail(w int, scrollable bool) string {
 			tail += warnStyle.Render(line) + "\n"
 		}
 		// the resume is the design: fix the box's problem (often its
-		// own network or mirror), and setup picks up where it stopped
-		tail += faintStyle.Render("run setup again when the box is fixed — it resumes where it stopped") + "\n"
+		// own network or mirror), and setup picks up where it stopped.
+		// an upgrade that stopped leaves the node prepared.
+		if m.upgradeFlow {
+			tail += faintStyle.Render("the node stays prepared — run the upgrade again when the box is fixed") + "\n"
+		} else {
+			tail += faintStyle.Render("run setup again when the box is fixed — it resumes where it stopped") + "\n"
+		}
 	case len(m.applyChecks) > 0 && !everyCheckHeld(m.applyChecks):
 		// the apply finished; some live probe did not hold
-		tail += errStyle.Render("the baseline ran but did not verify — mymo will not call this node ready") + "\n"
-		tail += faintStyle.Render("fix what the rows above name, then check again") + "\n"
+		if m.upgradeFlow {
+			tail += errStyle.Render("the upgrade ran but did not verify — the node stays on its previous baseline") + "\n"
+			tail += faintStyle.Render("fix what the rows above name, then upgrade again") + "\n"
+		} else {
+			tail += errStyle.Render("the baseline ran but did not verify — mymo will not call this node ready") + "\n"
+			tail += faintStyle.Render("fix what the rows above name, then check again") + "\n"
+		}
 	case len(m.applyChecks) > 0 && m.selNode.Bootstrap.State == domain.BootstrapReady:
-		tail += okStyle.Render("mymo security baseline applied and verified") + "\n"
-		tail += faintStyle.Render("promote to app host when ready: mymo node promote "+m.selNode.Name) + "\n"
+		if m.upgradeFlow {
+			tail += okStyle.Render("baseline "+baseline.Version+" applied and verified") + "\n"
+			tail += faintStyle.Render("this node stays prepared — the recorded baseline is now "+baseline.Version) + "\n"
+		} else {
+			tail += okStyle.Render("mymo security baseline applied and verified") + "\n"
+			tail += faintStyle.Render("promote to app host when ready: mymo node promote "+m.selNode.Name) + "\n"
+		}
 	default:
 		tail += faintStyle.Render("the report stays in the node's lifecycle record — enter opens the node") + "\n"
 	}
@@ -462,7 +511,7 @@ func (m Model) arHead() string {
 	if m.applyResult.Failed {
 		verdict = "stopped at " + m.applyResult.FailedAt
 	}
-	return titleStyle.Render("Initial setup") + " " +
+	return titleStyle.Render(m.setupWord()) + " " +
 		faintStyle.Render("\u00b7 the report \u00b7 "+m.selNode.Name+" \u00b7 "+verdict) + "\n\n"
 }
 

@@ -298,6 +298,39 @@ func TestFailedApplyReopensTheFlow(t *testing.T) {
 	}
 }
 
+func TestFailedUpgradeKeepsAPreparedNode(t *testing.T) {
+	s, err0 := state.OpenDir(t.TempDir())
+	if err0 != nil {
+		t.Fatal(err0)
+	}
+	n := domain.Node{Name: "web-1", Host: "203.0.113.10", Port: 22, User: "mymo",
+		Auth: domain.AuthKey, KeyPath: "/keys/web-1.key", Mode: domain.ModeAppHost,
+		Bootstrap: domain.Bootstrap{State: domain.BootstrapReady, Baseline: "0.0", Verdict: "ready"}}
+	if err := s.AddNode(n); err != nil {
+		t.Fatal(err)
+	}
+	m := New(s)
+	m.upgradeFlow = true
+	m.selNode = n
+	next, _ := m.handleApplyDone(applyDoneMsg{node: "web-1",
+		res: apply.Result{Failed: true, FailedAt: "caddy"}})
+	m = next.(Model)
+
+	after, err := s.GetNode("web-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Bootstrap.State != domain.BootstrapReady || after.Bootstrap.Baseline != "0.0" {
+		t.Fatalf("upgrade failure changed the record: %+v", after.Bootstrap)
+	}
+	if !strings.Contains(after.Bootstrap.Verdict, "caddy") {
+		t.Fatalf("verdict = %q, want where the upgrade stopped", after.Bootstrap.Verdict)
+	}
+	if after.Mode != domain.ModeAppHost {
+		t.Fatalf("mode = %s, want app-host", after.Mode)
+	}
+}
+
 // TestAddWizardPointsHomeWhenTheNameIsTaken proves the other fix the
 // second live test forced: adding a node whose name already exists
 // was a dead end — the operator removed the node and re-added it

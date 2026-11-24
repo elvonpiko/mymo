@@ -15,15 +15,17 @@ func TestPrintPreflightRendersVerdicts(t *testing.T) {
 		{Group: "ports", Title: "ports", Outcome: preflight.Decide, Detail: "80 nginx, 443 free — Caddy is mymo's only proxy",
 			Fix: "stop or disable whatever holds the ports above (systemctl stop/disable), or use a different host — then check again"},
 		{Group: "docker", Title: "docker", Outcome: preflight.Adopt, Detail: "official docker-ce — mymo can adopt and manage it"},
+		{Group: "mymo", Title: "mymo state", Outcome: preflight.Upgrade, Detail: "baseline 0.0 is recorded; 0.1 supersedes it"},
 	}
 	var buf bytes.Buffer
 	printPreflight(&buf, "web-1", checks, preflight.Decide)
 	out := buf.String()
 	for _, want := range []string{
 		"preflight · web-1 · baseline 0.1",
-		"OK     platform", "Ubuntu 24.04.5 LTS",
-		"DECIDE ports", "80 nginx", "fix · stop or disable whatever holds the ports",
-		"ADOPT  docker", "adopt and manage it",
+		"OK      platform", "Ubuntu 24.04.5 LTS",
+		"DECIDE  ports", "80 nginx", "fix · stop or disable whatever holds the ports",
+		"ADOPT   docker", "adopt and manage it",
+		"UPGRADE mymo state", "supersedes it",
 		"verdict: decide", "follow the fixes above, then check again",
 	} {
 		if !strings.Contains(out, want) {
