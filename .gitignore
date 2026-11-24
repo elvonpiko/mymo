@@ -1,7 +1,6 @@
 # Binaries
 /mymo
 dist/
-screenshots/demo.mp4
 
 # Test and coverage artifacts
 *.test
